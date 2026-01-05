@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://your-railway-backend.up.railway.app/api/:path*"
+      "destination": "https://nba-value-production.up.railway.app/api/:path*"
     },
     {
       "source": "/(.*)",
