@@ -12,7 +12,7 @@ from src.celery_app import celery_app
 from src.database import async_session_maker
 from src.services.data.odds_api import OddsAPIClient
 from src.services.data.balldontlie import BallDontLieClient
-from src.models import Game, Team, TeamStats, OddsSnapshot
+from src.models import Game as GameModel, Team as TeamModel, TeamStats, OddsSnapshot
 
 logger = structlog.get_logger()
 
@@ -128,7 +128,7 @@ async def _ingest_odds_async() -> dict:
                 home_abbrev = get_team_abbrev(home_team)
                 away_abbrev = get_team_abbrev(away_team)
 
-                game_stmt = insert(Game).values(
+                game_stmt = insert(GameModel).values(
                     game_id=game_id,
                     league="NBA",
                     season=2025,  # Current season
@@ -260,24 +260,25 @@ async def _update_nba_stats_async() -> dict:
         games_fetched = 0
 
         async with async_session_maker() as session:
-            # Fetch and store teams
+            # Fetch and store teams (returns list of Team dataclasses)
             teams_data = await client.get_teams()
 
             for team in teams_data:
-                team_stmt = insert(Team).values(
-                    team_id=team["abbreviation"],
-                    external_id=team["id"],
-                    full_name=team["full_name"],
-                    abbreviation=team["abbreviation"],
-                    city=team["city"],
-                    name=team["name"],
-                    conference=team["conference"],
-                    division=team["division"],
+                # team is a dataclass, access via attributes
+                team_stmt = insert(TeamModel).values(
+                    team_id=team.abbreviation,
+                    external_id=team.id,
+                    full_name=team.full_name,
+                    abbreviation=team.abbreviation,
+                    city=team.city,
+                    name=team.name,
+                    conference=team.conference,
+                    division=team.division,
                 ).on_conflict_do_update(
                     index_elements=["team_id"],
                     set_={
-                        "external_id": team["id"],
-                        "full_name": team["full_name"],
+                        "external_id": team.id,
+                        "full_name": team.full_name,
                         "updated_at": datetime.utcnow(),
                     }
                 )
@@ -289,31 +290,26 @@ async def _update_nba_stats_async() -> dict:
             start_date = today - timedelta(days=30)  # Last 30 days
 
             games_data = await client.get_games(
-                start_date=start_date.isoformat(),
-                end_date=today.isoformat(),
+                start_date=start_date,
+                end_date=today,
             )
             games_fetched = len(games_data)
 
             # Update game results in our database
             for game in games_data:
-                if game.get("status") == "Final" and game.get("home_team_score"):
-                    home_team = game["home_team"]
-                    away_team = game["visitor_team"]
-
-                    # Try to find and update matching game
-                    # Note: We'd need to match by teams and date since IDs differ
-                    game_date = datetime.fromisoformat(game["date"].replace("Z", "+00:00")).date()
-
+                # game is a Game dataclass
+                if game.status == "Final" and game.home_team_score:
+                    # Update matching game in our database
                     stmt = (
-                        update(Game)
+                        update(GameModel)
                         .where(
-                            Game.game_date == game_date,
-                            Game.home_team_id == home_team["abbreviation"],
-                            Game.away_team_id == away_team["abbreviation"],
+                            GameModel.game_date == game.date,
+                            GameModel.home_team_id == game.home_team.abbreviation,
+                            GameModel.away_team_id == game.away_team.abbreviation,
                         )
                         .values(
-                            home_score=game["home_team_score"],
-                            away_score=game["visitor_team_score"],
+                            home_score=game.home_team_score,
+                            away_score=game.away_team_score,
                             status="final",
                             updated_at=datetime.utcnow(),
                         )
@@ -412,7 +408,7 @@ async def _sync_game_results_async() -> dict:
     try:
         async with async_session_maker() as session:
             # Find games that are scheduled or in_progress
-            stmt = select(Game).where(Game.status.in_(["scheduled", "in_progress"]))
+            stmt = select(GameModel).where(GameModel.status.in_(["scheduled", "in_progress"]))
             result = await session.execute(stmt)
             pending_games = result.scalars().all()
 
@@ -424,31 +420,26 @@ async def _sync_game_results_async() -> dict:
             yesterday = today - timedelta(days=1)
 
             games_data = await client.get_games(
-                start_date=yesterday.isoformat(),
-                end_date=today.isoformat(),
+                start_date=yesterday,
+                end_date=today,
             )
 
             games_updated = 0
             for api_game in games_data:
-                if api_game.get("status") == "Final":
-                    home_team = api_game["home_team"]["abbreviation"]
-                    away_team = api_game["visitor_team"]["abbreviation"]
-                    game_date = datetime.fromisoformat(
-                        api_game["date"].replace("Z", "+00:00")
-                    ).date()
-
+                # api_game is a Game dataclass
+                if api_game.status == "Final" and api_game.home_team_score:
                     # Update matching game
                     stmt = (
-                        update(Game)
+                        update(GameModel)
                         .where(
-                            Game.game_date == game_date,
-                            Game.home_team_id == home_team,
-                            Game.away_team_id == away_team,
-                            Game.status != "final",
+                            GameModel.game_date == api_game.date,
+                            GameModel.home_team_id == api_game.home_team.abbreviation,
+                            GameModel.away_team_id == api_game.away_team.abbreviation,
+                            GameModel.status != "final",
                         )
                         .values(
-                            home_score=api_game["home_team_score"],
-                            away_score=api_game["visitor_team_score"],
+                            home_score=api_game.home_team_score,
+                            away_score=api_game.away_team_score,
                             status="final",
                             updated_at=datetime.utcnow(),
                         )
