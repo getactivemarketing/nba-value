@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+.venv/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+coverage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite3
+
+# ML artifacts
+*.joblib
+*.pkl
+*.onnx
+models/
+
+# Secrets
+*.pem
+*.key
+credentials.json
+
+# Docker
+docker-compose.override.yml
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Jupyter
+.ipynb_checkpoints/

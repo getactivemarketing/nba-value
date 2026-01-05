@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  db:
+    image: timescale/timescaledb:latest-pg15
+    environment:
+      POSTGRES_USER: ${DB_USER:-betting}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-betting_dev}
+      POSTGRES_DB: ${DB_NAME:-nba_betting}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U betting"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-betting}:${DB_PASSWORD:-betting_dev}@db:5432/${DB_NAME:-nba_betting}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-prod}
+      ODDS_API_KEY: ${ODDS_API_KEY:-}
+      BALLDONTLIE_API_KEY: ${BALLDONTLIE_API_KEY:-}
+      ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/src:/app/src  # Hot reload in dev
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-betting}:${DB_PASSWORD:-betting_dev}@db:5432/${DB_NAME:-nba_betting}
+      REDIS_URL: redis://redis:6379/0
+      ODDS_API_KEY: ${ODDS_API_KEY:-}
+      BALLDONTLIE_API_KEY: ${BALLDONTLIE_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A src.celery_app worker --loglevel=info
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-betting}:${DB_PASSWORD:-betting_dev}@db:5432/${DB_NAME:-nba_betting}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - celery-worker
+    command: celery -A src.celery_app beat --loglevel=info
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
