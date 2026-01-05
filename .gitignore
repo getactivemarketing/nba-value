@@ -50,7 +50,9 @@ Thumbs.db
 *.joblib
 *.pkl
 *.onnx
-models/
+/models/
+ml_models/
+!**/src/models/
 
 # Secrets
 *.pem
