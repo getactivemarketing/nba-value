@@ -1,12 +1,12 @@
 """Admin API endpoints for manual tasks."""
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.tasks.ingestion import (
-    ingest_odds,
-    update_nba_stats,
-    sync_game_results,
+    _ingest_odds_async,
+    _update_nba_stats_async,
+    _sync_game_results_async,
 )
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -20,7 +20,7 @@ class TaskResult(BaseModel):
 
 
 @router.post("/ingest/odds", response_model=TaskResult)
-async def trigger_odds_ingestion(background_tasks: BackgroundTasks) -> TaskResult:
+async def trigger_odds_ingestion() -> TaskResult:
     """
     Manually trigger odds ingestion from The Odds API.
 
@@ -28,10 +28,10 @@ async def trigger_odds_ingestion(background_tasks: BackgroundTasks) -> TaskResul
     in the database. Normally runs automatically every 15 minutes.
     """
     try:
-        # Run synchronously for immediate feedback
-        result = ingest_odds()
+        # Run the async function directly
+        result = await _ingest_odds_async()
         return TaskResult(
-            status="completed",
+            status=result.get("status", "unknown"),
             message=f"Ingested odds for {result.get('games_fetched', 0)} games, "
                     f"{result.get('snapshots_stored', 0)} snapshots stored. "
                     f"API requests remaining: {result.get('api_requests_remaining', 'unknown')}",
@@ -41,7 +41,7 @@ async def trigger_odds_ingestion(background_tasks: BackgroundTasks) -> TaskResul
 
 
 @router.post("/ingest/stats", response_model=TaskResult)
-async def trigger_stats_update(background_tasks: BackgroundTasks) -> TaskResult:
+async def trigger_stats_update() -> TaskResult:
     """
     Manually trigger NBA stats update from BALLDONTLIE.
 
@@ -49,9 +49,9 @@ async def trigger_stats_update(background_tasks: BackgroundTasks) -> TaskResult:
     Normally runs automatically once per day.
     """
     try:
-        result = update_nba_stats()
+        result = await _update_nba_stats_async()
         return TaskResult(
-            status="completed",
+            status=result.get("status", "unknown"),
             message=f"Updated {result.get('teams_updated', 0)} teams, "
                     f"fetched {result.get('games_fetched', 0)} games.",
         )
@@ -60,16 +60,16 @@ async def trigger_stats_update(background_tasks: BackgroundTasks) -> TaskResult:
 
 
 @router.post("/sync/results", response_model=TaskResult)
-async def trigger_results_sync(background_tasks: BackgroundTasks) -> TaskResult:
+async def trigger_results_sync() -> TaskResult:
     """
     Manually sync game results for completed games.
 
     Updates final scores for any games that have finished.
     """
     try:
-        result = sync_game_results()
+        result = await _sync_game_results_async()
         return TaskResult(
-            status="completed",
+            status=result.get("status", "unknown"),
             message=f"Updated {result.get('games_updated', 0)} game results.",
         )
     except Exception as e:
