@@ -50,10 +50,12 @@ async def trigger_stats_update() -> TaskResult:
     """
     try:
         result = await _update_nba_stats_async()
+        error_msg = result.get("error", "")
         return TaskResult(
             status=result.get("status", "unknown"),
             message=f"Updated {result.get('teams_updated', 0)} teams, "
-                    f"fetched {result.get('games_fetched', 0)} games.",
+                    f"fetched {result.get('games_fetched', 0)} games."
+                    + (f" Error: {error_msg}" if error_msg else ""),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
