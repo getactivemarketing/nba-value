@@ -36,7 +36,8 @@ COPY alembic.ini .
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
 
-EXPOSE 8000
+# Railway sets PORT dynamically
+EXPOSE ${PORT:-8000}
 
-# Default command (can be overridden for celery workers)
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form so $PORT env var gets expanded
+CMD uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}
