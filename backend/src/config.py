@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     environment: Literal["development", "staging", "production"] = "development"
     debug: bool = False
 
-    # Database
+    # Database (raw from env, may need conversion)
     database_url: str = "postgresql+asyncpg://betting:betting_dev@localhost:5432/nba_betting"
 
     # Redis
@@ -37,8 +37,13 @@ class Settings(BaseSettings):
     # API Settings
     api_v1_prefix: str = "/api/v1"
 
-    # CORS
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    # CORS - include production URLs
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://nba-value.vercel.app",
+        "https://*.vercel.app",
+    ]
 
     # Logging
     log_level: str = "INFO"
@@ -46,6 +51,15 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
+
+    @property
+    def async_database_url(self) -> str:
+        """Convert database URL to async driver format."""
+        url = self.database_url
+        # Railway uses postgresql://, SQLAlchemy async needs postgresql+asyncpg://
+        if url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
 
 
 @lru_cache

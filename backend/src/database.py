@@ -7,9 +7,9 @@ from sqlalchemy.orm import DeclarativeBase
 
 from src.config import settings
 
-# Create async engine
+# Create async engine (use async_database_url for Railway compatibility)
 engine = create_async_engine(
-    settings.database_url,
+    settings.async_database_url,
     echo=settings.debug,
     pool_pre_ping=True,
     pool_size=10,
