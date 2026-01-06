@@ -29,8 +29,8 @@ export const api = {
     if (filters.minValueScore) params.append('min_value_score', String(filters.minValueScore));
     if (filters.minConfidence) params.append('min_confidence', String(filters.minConfidence));
 
-    const response = await client.get<Market[]>(`/markets?${params}`);
-    return response.data;
+    const response = await client.get<{ markets: Market[] }>(`/markets?${params}`);
+    return response.data.markets;
   },
 
   async getLiveMarkets(algorithm: Algorithm = 'a'): Promise<Market[]> {
