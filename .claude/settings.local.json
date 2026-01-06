@@ -17,7 +17,9 @@
       "Bash(git remote add:*)",
       "Bash(git remote:*)",
       "Bash(curl:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(pip install:*)",
+      "Bash(grep:*)"
     ]
   }
 }

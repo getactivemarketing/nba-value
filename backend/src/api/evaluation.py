@@ -74,7 +74,7 @@ async def get_calibration_curves(
 @router.get("/evaluation/performance", response_model=list[PerformanceByBucketResponse])
 async def get_performance_by_bucket(
     algorithm: str = "a",
-    bucket_type: str = Query("score", regex="^(score|edge|confidence)$"),
+    bucket_type: str = Query("score", pattern="^(score|edge|confidence)$"),
     db: AsyncSession = Depends(get_db),
 ) -> list[PerformanceByBucketResponse]:
     """
@@ -88,7 +88,7 @@ async def get_performance_by_bucket(
 
 @router.get("/trends")
 async def get_trends(
-    trend_type: str = Query("team", regex="^(team|market|time|situational)$"),
+    trend_type: str = Query("team", pattern="^(team|market|time|situational)$"),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     """

@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="NBA Value Betting API",
     description="Sharp-focused betting intelligence platform with Value Score ranking",
-    version="0.1.0",
+    version="0.2.0",  # Phase 2: Model Layer
     lifespan=lifespan,
     docs_url="/docs" if not settings.is_production else None,
     redoc_url="/redoc" if not settings.is_production else None,
