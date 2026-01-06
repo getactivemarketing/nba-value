@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 
 from src.celery_app import celery_app
@@ -78,6 +78,18 @@ async def _run_pre_game_scoring_async() -> dict:
                 # Build feature dicts from stats
                 home_features = _stats_to_features(home_stats, "home")
                 away_features = _stats_to_features(away_stats, "away")
+
+                # Delete old predictions and scores for this game's markets
+                market_ids = [m.market_id for m in game.markets if m.is_active]
+                if market_ids:
+                    # Delete old value scores first (foreign key constraint)
+                    await session.execute(
+                        delete(ValueScore).where(ValueScore.market_id.in_(market_ids))
+                    )
+                    # Delete old predictions
+                    await session.execute(
+                        delete(ModelPrediction).where(ModelPrediction.market_id.in_(market_ids))
+                    )
 
                 # Score each market for this game
                 for market in game.markets:
