@@ -9,6 +9,7 @@ from src.tasks.ingestion import (
     _sync_game_results_async,
 )
 from src.tasks.scoring import _run_pre_game_scoring_async
+from src.tasks.stats_calculation import _calculate_team_stats_async
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -97,6 +98,27 @@ async def trigger_scoring() -> TaskResult:
             status=result.get("status", "unknown"),
             message=f"Scored {result.get('markets_scored', 0)} markets "
                     f"across {result.get('games_processed', 0)} games. "
+                    f"Errors: {result.get('errors', 0)}",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/stats/calculate", response_model=TaskResult)
+async def trigger_stats_calculation() -> TaskResult:
+    """
+    Calculate rolling team statistics from completed games.
+
+    This will:
+    1. Query all completed games this season
+    2. Calculate rolling stats for each team (record, win%, net rating, etc.)
+    3. Store results in team_stats table
+    """
+    try:
+        result = await _calculate_team_stats_async()
+        return TaskResult(
+            status=result.get("status", "unknown"),
+            message=f"Updated stats for {result.get('teams_updated', 0)} teams. "
                     f"Errors: {result.get('errors', 0)}",
         )
     except Exception as e:
