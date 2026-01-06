@@ -6,21 +6,22 @@ from decimal import Decimal
 from collections import defaultdict
 
 import structlog
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from src.celery_app import celery_app
 from src.database import async_session_maker
-from src.models import Game, Team, TeamStats
+from src.models import Team, TeamStats
+from src.services.data.balldontlie import BallDontLieClient
 
 logger = structlog.get_logger()
 
 
 async def _calculate_team_stats_async() -> dict:
     """
-    Calculate rolling team statistics from completed games.
+    Calculate rolling team statistics from BallDontLie API.
 
-    For each team, calculates:
+    Fetches historical game data and calculates:
     - Overall record (W-L)
     - Last 10 win percentage
     - Points per game (season and L10)
@@ -35,51 +36,65 @@ async def _calculate_team_stats_async() -> dict:
     teams_updated = 0
     errors = 0
 
+    # Fetch historical games from BallDontLie API
+    client = BallDontLieClient()
+
+    logger.info("Fetching historical games from BallDontLie API...")
+    all_games = await client.get_games(
+        start_date=season_start,
+        end_date=today,
+        seasons=[2025],  # 2025-26 season
+    )
+
+    # Filter to only completed games with scores
+    completed_games = [
+        g for g in all_games
+        if g.status == "Final" and g.home_team_score and g.away_team_score
+    ]
+
+    logger.info(f"Found {len(completed_games)} completed games this season")
+
+    if not completed_games:
+        logger.warning("No completed games found - team stats cannot be calculated")
+        return {
+            "teams_updated": 0,
+            "errors": 0,
+            "status": "no_games",
+            "message": "No completed games found this season",
+        }
+
     async with async_session_maker() as session:
-        # Get all teams
+        # Get all teams from our database
         teams_query = select(Team)
         teams_result = await session.execute(teams_query)
         teams = list(teams_result.scalars().all())
 
-        # Get all completed games this season
-        games_query = (
-            select(Game)
-            .where(Game.status == "final")
-            .where(Game.game_date >= season_start)
-            .order_by(Game.game_date.desc())
-        )
-        games_result = await session.execute(games_query)
-        all_games = list(games_result.scalars().all())
-
-        logger.info(f"Processing {len(teams)} teams with {len(all_games)} completed games")
-
-        # Group games by team
+        # Group games by team (using abbreviation as key)
         team_games = defaultdict(list)
-        for game in all_games:
-            if game.home_score is not None and game.away_score is not None:
-                # Add game from home team perspective
-                team_games[game.home_team_id].append({
-                    'date': game.game_date,
-                    'is_home': True,
-                    'points_for': game.home_score,
-                    'points_against': game.away_score,
-                    'won': game.home_score > game.away_score,
-                })
-                # Add game from away team perspective
-                team_games[game.away_team_id].append({
-                    'date': game.game_date,
-                    'is_home': False,
-                    'points_for': game.away_score,
-                    'points_against': game.home_score,
-                    'won': game.away_score > game.home_score,
-                })
+        for game in completed_games:
+            # Add game from home team perspective
+            team_games[game.home_team.abbreviation].append({
+                'date': game.date,
+                'is_home': True,
+                'points_for': game.home_team_score,
+                'points_against': game.away_team_score,
+                'won': game.home_team_score > game.away_team_score,
+            })
+            # Add game from away team perspective
+            team_games[game.away_team.abbreviation].append({
+                'date': game.date,
+                'is_home': False,
+                'points_for': game.away_team_score,
+                'points_against': game.home_team_score,
+                'won': game.away_team_score > game.home_team_score,
+            })
 
         for team in teams:
             try:
-                games = team_games.get(team.team_id, [])
+                games = team_games.get(team.abbreviation, [])
 
                 if not games:
-                    # No games yet, skip
+                    # No games yet for this team, skip
                     continue
 
                 # Sort by date (most recent first)
@@ -92,18 +107,17 @@ async def _calculate_team_stats_async() -> dict:
                 # Last 10 games
                 last_10 = games[:10]
                 wins_l10 = sum(1 for g in last_10 if g['won'])
-                win_pct_10 = Decimal(str(wins_l10 / len(last_10))) if last_10 else None
+                win_pct_10 = Decimal(str(round(wins_l10 / len(last_10), 3))) if last_10 else None
 
                 # Points per game (season)
-                ppg_season = Decimal(str(sum(g['points_for'] for g in games) / len(games)))
-                opp_ppg_season = Decimal(str(sum(g['points_against'] for g in games) / len(games)))
+                ppg_season = Decimal(str(round(sum(g['points_for'] for g in games) / len(games), 2)))
+                opp_ppg_season = Decimal(str(round(sum(g['points_against'] for g in games) / len(games), 2)))
 
                 # Points per game (last 10)
-                ppg_10 = Decimal(str(sum(g['points_for'] for g in last_10) / len(last_10))) if last_10 else None
-                opp_ppg_10 = Decimal(str(sum(g['points_against'] for g in last_10) / len(last_10))) if last_10 else None
+                ppg_10 = Decimal(str(round(sum(g['points_for'] for g in last_10) / len(last_10), 2))) if last_10 else None
+                opp_ppg_10 = Decimal(str(round(sum(g['points_against'] for g in last_10) / len(last_10), 2))) if last_10 else None
 
                 # Net rating approximation (using PPG differential as proxy)
-                # Real net rating would need possession data
                 net_rtg_season = ppg_season - opp_ppg_season if ppg_season and opp_ppg_season else None
                 net_rtg_10 = ppg_10 - opp_ppg_10 if ppg_10 and opp_ppg_10 else None
 
@@ -114,8 +128,8 @@ async def _calculate_team_stats_async() -> dict:
                 home_wins = sum(1 for g in home_games if g['won'])
                 away_wins = sum(1 for g in away_games if g['won'])
 
-                home_win_pct = Decimal(str(home_wins / len(home_games))) if home_games else None
-                away_win_pct = Decimal(str(away_wins / len(away_games))) if away_games else None
+                home_win_pct = Decimal(str(round(home_wins / len(home_games), 3))) if home_games else None
+                away_win_pct = Decimal(str(round(away_wins / len(away_games), 3))) if away_games else None
 
                 # Rest days calculation
                 days_rest = None
@@ -178,9 +192,10 @@ async def _calculate_team_stats_async() -> dict:
 
                 logger.debug(
                     "Updated team stats",
-                    team=team.team_id,
+                    team=team.abbreviation,
                     record=f"{wins}-{losses}",
                     win_pct_10=float(win_pct_10) if win_pct_10 else None,
+                    net_rtg_10=float(net_rtg_10) if net_rtg_10 else None,
                 )
 
             except Exception as e:
@@ -191,6 +206,7 @@ async def _calculate_team_stats_async() -> dict:
 
     return {
         "teams_updated": teams_updated,
+        "games_processed": len(completed_games),
         "errors": errors,
         "status": "completed",
     }
