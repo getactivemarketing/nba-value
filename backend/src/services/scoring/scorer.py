@@ -149,14 +149,14 @@ class ScoringService:
             p_true = float(p_calibrated)
 
         # Step 4: De-vig market odds to get market probability
+        # devig_two_way_odds returns (prob1, prob2) where prob1 is for odds_decimal
+        # odds_decimal is already for the outcome we're betting on (home/away/over/under)
+        # So p_market directly represents the market's probability for this outcome
+        # NO FLIP NEEDED - the devig already gives us the correct probability
         p_market, _ = devig_two_way_odds(
             input_data.odds_decimal,
             input_data.opposite_odds,
         )
-
-        # Adjust for outcome direction
-        if "away" in input_data.outcome_label.lower() or "under" in input_data.outcome_label.lower():
-            p_market = 1 - p_market
 
         # Step 5: Calculate raw edge
         raw_edge = p_true - p_market
