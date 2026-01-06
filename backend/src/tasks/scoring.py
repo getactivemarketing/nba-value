@@ -195,6 +195,7 @@ def _stats_to_features(stats: TeamStats | None, prefix: str) -> dict[str, float]
             f"{prefix}_drtg_10": None,
             f"{prefix}_drtg_season": None,
             f"{prefix}_net_rtg_10": 0.0,  # Neutral
+            f"{prefix}_net_rtg_season": 0.0,
             f"{prefix}_pace_10": 100.0,
             f"{prefix}_rest_days": 1,
             f"{prefix}_b2b": 0,
@@ -211,6 +212,7 @@ def _stats_to_features(stats: TeamStats | None, prefix: str) -> dict[str, float]
         f"{prefix}_drtg_20": float(stats.drtg_20) if stats.drtg_20 else None,
         f"{prefix}_drtg_season": float(stats.drtg_season) if stats.drtg_season else None,
         f"{prefix}_net_rtg_10": float(stats.net_rtg_10) if stats.net_rtg_10 else 0.0,
+        f"{prefix}_net_rtg_season": float(stats.net_rtg_season) if stats.net_rtg_season else 0.0,
         f"{prefix}_pace_10": float(stats.pace_10) if stats.pace_10 else 100.0,
         f"{prefix}_rest_days": stats.days_rest if stats.days_rest else 1,
         f"{prefix}_b2b": 1 if stats.is_back_to_back else 0,

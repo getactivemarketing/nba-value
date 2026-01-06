@@ -112,33 +112,42 @@ class MOVModel:
         """
         Generate baseline prediction when model is not trained.
 
-        Uses simple efficiency differential formula:
-        MOV ≈ (home_net_rtg - away_net_rtg) * 0.3 + home_court_advantage
+        Uses a blend of recent (L10) and season-long net ratings:
+        - 60% weight on L10 (recency matters)
+        - 40% weight on season (overall talent level)
 
+        MOV ≈ (home_blended_net - away_blended_net) * 0.3 + home_court_advantage
         Home court advantage in NBA is roughly 2-3 points.
         """
         HOME_COURT_ADV = 2.5
+        L10_WEIGHT = 0.6
+        SEASON_WEIGHT = 0.4
 
-        # Try to get net rating directly (preferred) or calculate from ortg/drtg
-        home_net = features.get("home_net_rtg_10")
-        away_net = features.get("away_net_rtg_10")
+        def get_blended_net(prefix: str) -> float:
+            """Get blended net rating for a team (L10 + season)."""
+            net_l10 = features.get(f"{prefix}_net_rtg_10")
+            net_season = features.get(f"{prefix}_net_rtg_season")
 
-        # Fallback to calculating from ortg/drtg if net_rtg not available
-        if home_net is None:
-            home_ortg = features.get("home_ortg_10") or features.get("home_ortg_season")
-            home_drtg = features.get("home_drtg_10") or features.get("home_drtg_season")
-            if home_ortg is not None and home_drtg is not None:
-                home_net = home_ortg - home_drtg
-            else:
-                home_net = 0.0  # Neutral if no data
+            # If we have both, blend them
+            if net_l10 is not None and net_season is not None:
+                return L10_WEIGHT * net_l10 + SEASON_WEIGHT * net_season
 
-        if away_net is None:
-            away_ortg = features.get("away_ortg_10") or features.get("away_ortg_season")
-            away_drtg = features.get("away_drtg_10") or features.get("away_drtg_season")
-            if away_ortg is not None and away_drtg is not None:
-                away_net = away_ortg - away_drtg
-            else:
-                away_net = 0.0  # Neutral if no data
+            # If only one is available, use it
+            if net_l10 is not None:
+                return net_l10
+            if net_season is not None:
+                return net_season
+
+            # Fallback to calculating from ortg/drtg
+            ortg = features.get(f"{prefix}_ortg_10") or features.get(f"{prefix}_ortg_season")
+            drtg = features.get(f"{prefix}_drtg_10") or features.get(f"{prefix}_drtg_season")
+            if ortg is not None and drtg is not None:
+                return ortg - drtg
+
+            return 0.0  # Neutral if no data
+
+        home_net = get_blended_net("home")
+        away_net = get_blended_net("away")
 
         # Simple MOV estimate
         # Each point of net rating differential ≈ 0.3 points per game
