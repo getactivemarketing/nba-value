@@ -1,11 +1,20 @@
-import { useAlgorithmComparison } from '@/hooks/useEvaluation';
+import { useState } from 'react';
+import { useAlgorithmComparison, usePerformanceByBucket } from '@/hooks/useEvaluation';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { PerformanceBucketsChart, EmptyChart } from '@/components/Charts';
+
+type Metric = 'win_rate' | 'roi' | 'clv_avg';
 
 export function Evaluation() {
+  const [metric, setMetric] = useState<Metric>('win_rate');
+
   const { data: comparison, isLoading: comparisonLoading } = useAlgorithmComparison();
-  // Performance buckets will be used when we add detailed charts
-  // const { data: performanceA } = usePerformanceByBucket('a', 'score');
-  // const { data: performanceB } = usePerformanceByBucket('b', 'score');
+  const { data: performanceA, isLoading: perfALoading } = usePerformanceByBucket('a', 'score');
+  const { data: performanceB, isLoading: perfBLoading } = usePerformanceByBucket('b', 'score');
+
+  const isLoadingPerformance = perfALoading || perfBLoading;
+  const hasPerformanceData =
+    performanceA && performanceA.length > 0 && performanceB && performanceB.length > 0;
 
   return (
     <div className="space-y-6">
@@ -140,12 +149,48 @@ export function Evaluation() {
 
           {/* Performance by Bucket */}
           <div className="card">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Performance by Value Score Bucket
-            </h2>
-            <p className="text-sm text-gray-500">
-              Coming soon: Detailed breakdown by score ranges
-            </p>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Performance by Value Score Bucket
+              </h2>
+
+              <div className="flex rounded-lg overflow-hidden border border-gray-200">
+                {(['win_rate', 'roi', 'clv_avg'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setMetric(m)}
+                    className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                      metric === m
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-white text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    {m === 'win_rate' ? 'Win Rate' : m === 'roi' ? 'ROI' : 'CLV'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {isLoadingPerformance && (
+              <div className="flex justify-center py-8">
+                <LoadingSpinner />
+              </div>
+            )}
+
+            {!isLoadingPerformance && hasPerformanceData && (
+              <PerformanceBucketsChart
+                dataAlgoA={performanceA}
+                dataAlgoB={performanceB}
+                metric={metric}
+              />
+            )}
+
+            {!isLoadingPerformance && !hasPerformanceData && (
+              <EmptyChart
+                message="Need more completed bets to show performance breakdown"
+                height={300}
+              />
+            )}
           </div>
         </>
       )}

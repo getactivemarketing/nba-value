@@ -3,6 +3,7 @@ import { useBetDetail, useBetHistory } from '@/hooks/useMarkets';
 import { ValueScoreBadge } from '@/components/ui/ValueScoreBadge';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
+import { ScoreHistoryChart, EmptyChart } from '@/components/Charts';
 
 export function BetDetail() {
   const { marketId } = useParams<{ marketId: string }>();
@@ -167,15 +168,23 @@ export function BetDetail() {
         </div>
       </div>
 
-      {/* History placeholder */}
-      {history && history.length > 0 && (
-        <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Score History</h2>
-          <p className="text-sm text-gray-500">
-            {history.length} snapshots over the last 24 hours
-          </p>
-        </div>
-      )}
+      {/* Score History Chart */}
+      <div className="card">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Score History</h2>
+        {history && history.length > 0 ? (
+          <>
+            <p className="text-sm text-gray-500 mb-4">
+              {history.length} snapshots over the last 24 hours
+            </p>
+            <ScoreHistoryChart data={history} />
+          </>
+        ) : (
+          <EmptyChart
+            message="No historical data available yet"
+            height={250}
+          />
+        )}
+      </div>
     </div>
   );
 }
