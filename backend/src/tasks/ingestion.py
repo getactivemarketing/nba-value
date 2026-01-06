@@ -12,7 +12,7 @@ from src.celery_app import celery_app
 from src.database import async_session_maker
 from src.services.data.odds_api import OddsAPIClient
 from src.services.data.balldontlie import BallDontLieClient
-from src.models import Game as GameModel, Team as TeamModel, TeamStats, OddsSnapshot
+from src.models import Game as GameModel, Team as TeamModel, TeamStats, OddsSnapshot, Market
 
 logger = structlog.get_logger()
 
@@ -147,6 +147,8 @@ async def _ingest_odds_async() -> dict:
                 await session.execute(game_stmt)
                 games_processed += 1
 
+                markets_created = 0
+
                 # Process each bookmaker
                 for bookmaker in game_data.get("bookmakers", []):
                     book_key = bookmaker["key"]
@@ -178,6 +180,28 @@ async def _ingest_odds_async() -> dict:
                                     )
                                     snapshot_data["home_ml_prob"] = Decimal(str(round(home_prob, 4)))
 
+                                    # Create Market records for home and away ML
+                                    for side, ml_data in [("home", home_ml), ("away", away_ml)]:
+                                        market_id = f"{game_id}_{book_key}_ml_{side}"
+                                        market_stmt = insert(Market).values(
+                                            market_id=market_id,
+                                            game_id=game_id,
+                                            market_type="moneyline",
+                                            outcome_label=f"{side}_ml",
+                                            line=None,
+                                            odds_decimal=Decimal(str(ml_data.get("price", 1.91))),
+                                            book=book_key,
+                                            is_active=True,
+                                        ).on_conflict_do_update(
+                                            index_elements=["market_id"],
+                                            set_={
+                                                "odds_decimal": Decimal(str(ml_data.get("price", 1.91))),
+                                                "updated_at": datetime.utcnow(),
+                                            }
+                                        )
+                                        await session.execute(market_stmt)
+                                        markets_created += 1
+
                         elif market_key == "spreads":
                             # Spread
                             home_spread = outcomes.get(home_team, {})
@@ -194,6 +218,29 @@ async def _ingest_odds_async() -> dict:
                                     )
                                     snapshot_data["home_spread_prob"] = Decimal(str(round(home_prob, 4)))
 
+                                    # Create Market records for home and away spread
+                                    for side, spread_data in [("home", home_spread), ("away", away_spread)]:
+                                        market_id = f"{game_id}_{book_key}_spread_{side}"
+                                        market_stmt = insert(Market).values(
+                                            market_id=market_id,
+                                            game_id=game_id,
+                                            market_type="spread",
+                                            outcome_label=f"{side}_spread",
+                                            line=Decimal(str(spread_data.get("point", 0))),
+                                            odds_decimal=Decimal(str(spread_data.get("price", 1.91))),
+                                            book=book_key,
+                                            is_active=True,
+                                        ).on_conflict_do_update(
+                                            index_elements=["market_id"],
+                                            set_={
+                                                "line": Decimal(str(spread_data.get("point", 0))),
+                                                "odds_decimal": Decimal(str(spread_data.get("price", 1.91))),
+                                                "updated_at": datetime.utcnow(),
+                                            }
+                                        )
+                                        await session.execute(market_stmt)
+                                        markets_created += 1
+
                         elif market_key == "totals":
                             # Totals
                             over = outcomes.get("Over", {})
@@ -208,6 +255,29 @@ async def _ingest_odds_async() -> dict:
                                         over["price"], under["price"]
                                     )
                                     snapshot_data["over_prob"] = Decimal(str(round(over_prob, 4)))
+
+                                    # Create Market records for over and under
+                                    for side, total_data in [("over", over), ("under", under)]:
+                                        market_id = f"{game_id}_{book_key}_total_{side}"
+                                        market_stmt = insert(Market).values(
+                                            market_id=market_id,
+                                            game_id=game_id,
+                                            market_type="total",
+                                            outcome_label=side,
+                                            line=Decimal(str(total_data.get("point", 0))),
+                                            odds_decimal=Decimal(str(total_data.get("price", 1.91))),
+                                            book=book_key,
+                                            is_active=True,
+                                        ).on_conflict_do_update(
+                                            index_elements=["market_id"],
+                                            set_={
+                                                "line": Decimal(str(total_data.get("point", 0))),
+                                                "odds_decimal": Decimal(str(total_data.get("price", 1.91))),
+                                                "updated_at": datetime.utcnow(),
+                                            }
+                                        )
+                                        await session.execute(market_stmt)
+                                        markets_created += 1
 
                     # Store snapshot
                     snapshot_stmt = insert(OddsSnapshot).values(**snapshot_data)
