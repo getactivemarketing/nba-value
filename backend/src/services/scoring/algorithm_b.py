@@ -4,13 +4,13 @@ import numpy as np
 from dataclasses import dataclass
 
 # Edge scale per market type (to be tuned via backtesting)
-# Higher values = more differentiation at larger edges
-# Increased to handle large model edges until MOV model is calibrated
+# These represent "typical good edge" - a 5% edge should give ~76% value score
+# Realistic betting edges are 2-5%, not 20-30%
 EDGE_SCALE = {
-    "spread": 0.30,
-    "moneyline": 0.25,
-    "total": 0.28,
-    "prop": 0.20,
+    "spread": 0.05,
+    "moneyline": 0.04,
+    "total": 0.05,
+    "prop": 0.03,
 }
 
 
