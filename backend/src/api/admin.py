@@ -3,6 +3,9 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from datetime import datetime, timezone, timedelta
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
 from src.tasks.ingestion import (
     _ingest_odds_async,
     _update_nba_stats_async,
@@ -120,6 +123,83 @@ async def trigger_stats_calculation() -> TaskResult:
             status=result.get("status", "unknown"),
             message=f"Updated stats for {result.get('teams_updated', 0)} teams. "
                     f"Errors: {result.get('errors', 0)}",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/backfill/games")
+async def backfill_historical_games(days: int = 30) -> TaskResult:
+    """
+    Backfill historical games from BallDontLie API for backtesting.
+
+    This will:
+    1. Fetch games from the past N days
+    2. Store them with final scores in the games table
+    3. Create placeholder game_ids matching our format
+    """
+    from hashlib import md5
+    from src.database import async_session_maker
+    from src.services.data.balldontlie import BallDontLieClient
+    from src.models import Game as GameModel
+
+    try:
+        client = BallDontLieClient()
+        today = datetime.now(timezone.utc).date()
+        start_date = today - timedelta(days=days)
+
+        games_data = await client.get_games(
+            start_date=start_date,
+            end_date=today,
+        )
+
+        games_added = 0
+        games_updated = 0
+
+        async with async_session_maker() as session:
+            for game in games_data:
+                # Only include completed games
+                if game.status != "Final" or not game.home_team_score:
+                    continue
+
+                # Generate a consistent game_id based on date and teams
+                game_key = f"{game.date}_{game.home_team.abbreviation}_{game.away_team.abbreviation}"
+                game_id = md5(game_key.encode()).hexdigest()
+
+                # Create tip time from date (assume 7pm ET for historical)
+                tip_time = datetime.combine(game.date, datetime.min.time().replace(hour=23))
+                tip_time = tip_time.replace(tzinfo=timezone.utc)
+
+                game_stmt = pg_insert(GameModel).values(
+                    game_id=game_id,
+                    league="NBA",
+                    season=2025,
+                    game_date=game.date,
+                    tip_time_utc=tip_time,
+                    home_team_id=game.home_team.abbreviation,
+                    away_team_id=game.away_team.abbreviation,
+                    home_score=game.home_team_score,
+                    away_score=game.away_team_score,
+                    status="final",
+                ).on_conflict_do_update(
+                    index_elements=["game_id"],
+                    set_={
+                        "home_score": game.home_team_score,
+                        "away_score": game.away_team_score,
+                        "status": "final",
+                        "updated_at": datetime.utcnow(),
+                    }
+                )
+
+                result = await session.execute(game_stmt)
+                if result.rowcount > 0:
+                    games_added += 1
+
+            await session.commit()
+
+        return TaskResult(
+            status="success",
+            message=f"Backfilled {games_added} completed games from the past {days} days.",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

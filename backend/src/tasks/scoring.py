@@ -190,10 +190,11 @@ def _stats_to_features(stats: TeamStats | None, prefix: str) -> dict[str, float]
     if stats is None:
         # Return reasonable defaults
         return {
-            f"{prefix}_ortg_10": 110.0,
-            f"{prefix}_ortg_season": 110.0,
-            f"{prefix}_drtg_10": 110.0,
-            f"{prefix}_drtg_season": 110.0,
+            f"{prefix}_ortg_10": None,  # None so model knows data is missing
+            f"{prefix}_ortg_season": None,
+            f"{prefix}_drtg_10": None,
+            f"{prefix}_drtg_season": None,
+            f"{prefix}_net_rtg_10": 0.0,  # Neutral
             f"{prefix}_pace_10": 100.0,
             f"{prefix}_rest_days": 1,
             f"{prefix}_b2b": 0,
@@ -201,14 +202,15 @@ def _stats_to_features(stats: TeamStats | None, prefix: str) -> dict[str, float]
         }
 
     return {
-        f"{prefix}_ortg_5": float(stats.ortg_5) if stats.ortg_5 else 110.0,
-        f"{prefix}_ortg_10": float(stats.ortg_10) if stats.ortg_10 else 110.0,
-        f"{prefix}_ortg_20": float(stats.ortg_20) if stats.ortg_20 else 110.0,
-        f"{prefix}_ortg_season": float(stats.ortg_season) if stats.ortg_season else 110.0,
-        f"{prefix}_drtg_5": float(stats.drtg_5) if stats.drtg_5 else 110.0,
-        f"{prefix}_drtg_10": float(stats.drtg_10) if stats.drtg_10 else 110.0,
-        f"{prefix}_drtg_20": float(stats.drtg_20) if stats.drtg_20 else 110.0,
-        f"{prefix}_drtg_season": float(stats.drtg_season) if stats.drtg_season else 110.0,
+        f"{prefix}_ortg_5": float(stats.ortg_5) if stats.ortg_5 else None,
+        f"{prefix}_ortg_10": float(stats.ortg_10) if stats.ortg_10 else None,
+        f"{prefix}_ortg_20": float(stats.ortg_20) if stats.ortg_20 else None,
+        f"{prefix}_ortg_season": float(stats.ortg_season) if stats.ortg_season else None,
+        f"{prefix}_drtg_5": float(stats.drtg_5) if stats.drtg_5 else None,
+        f"{prefix}_drtg_10": float(stats.drtg_10) if stats.drtg_10 else None,
+        f"{prefix}_drtg_20": float(stats.drtg_20) if stats.drtg_20 else None,
+        f"{prefix}_drtg_season": float(stats.drtg_season) if stats.drtg_season else None,
+        f"{prefix}_net_rtg_10": float(stats.net_rtg_10) if stats.net_rtg_10 else 0.0,
         f"{prefix}_pace_10": float(stats.pace_10) if stats.pace_10 else 100.0,
         f"{prefix}_rest_days": stats.days_rest if stats.days_rest else 1,
         f"{prefix}_b2b": 1 if stats.is_back_to_back else 0,

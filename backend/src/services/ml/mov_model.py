@@ -113,21 +113,32 @@ class MOVModel:
         Generate baseline prediction when model is not trained.
 
         Uses simple efficiency differential formula:
-        MOV ≈ (home_ortg - home_drtg) - (away_ortg - away_drtg) + home_court_advantage
+        MOV ≈ (home_net_rtg - away_net_rtg) * 0.3 + home_court_advantage
 
         Home court advantage in NBA is roughly 2-3 points.
         """
         HOME_COURT_ADV = 2.5
 
-        # Try to get efficiency ratings (prefer 10-game rolling)
-        home_ortg = features.get("home_ortg_10") or features.get("home_ortg_season", 110)
-        home_drtg = features.get("home_drtg_10") or features.get("home_drtg_season", 110)
-        away_ortg = features.get("away_ortg_10") or features.get("away_ortg_season", 110)
-        away_drtg = features.get("away_drtg_10") or features.get("away_drtg_season", 110)
+        # Try to get net rating directly (preferred) or calculate from ortg/drtg
+        home_net = features.get("home_net_rtg_10")
+        away_net = features.get("away_net_rtg_10")
 
-        # Net rating differential
-        home_net = home_ortg - home_drtg
-        away_net = away_ortg - away_drtg
+        # Fallback to calculating from ortg/drtg if net_rtg not available
+        if home_net is None:
+            home_ortg = features.get("home_ortg_10") or features.get("home_ortg_season")
+            home_drtg = features.get("home_drtg_10") or features.get("home_drtg_season")
+            if home_ortg is not None and home_drtg is not None:
+                home_net = home_ortg - home_drtg
+            else:
+                home_net = 0.0  # Neutral if no data
+
+        if away_net is None:
+            away_ortg = features.get("away_ortg_10") or features.get("away_ortg_season")
+            away_drtg = features.get("away_drtg_10") or features.get("away_drtg_season")
+            if away_ortg is not None and away_drtg is not None:
+                away_net = away_ortg - away_drtg
+            else:
+                away_net = 0.0  # Neutral if no data
 
         # Simple MOV estimate
         # Each point of net rating differential ≈ 0.3 points per game
