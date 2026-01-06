@@ -31,11 +31,13 @@ async def trigger_odds_ingestion() -> TaskResult:
     try:
         # Run the async function directly
         result = await _ingest_odds_async()
+        error_msg = result.get("error", "")
         return TaskResult(
             status=result.get("status", "unknown"),
             message=f"Ingested odds for {result.get('games_fetched', 0)} games, "
                     f"{result.get('snapshots_stored', 0)} snapshots stored. "
-                    f"API requests remaining: {result.get('api_requests_remaining', 'unknown')}",
+                    f"API requests remaining: {result.get('api_requests_remaining', 'unknown')}"
+                    + (f" Error: {error_msg}" if error_msg else ""),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
