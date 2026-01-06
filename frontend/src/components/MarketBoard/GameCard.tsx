@@ -91,6 +91,10 @@ function getConsensusLine(markets: Market[], type: string): { line: number | nul
 function TeamTrendsRow({ team, trends }: { team: string; trends?: TeamTrends }) {
   if (!trends) return null;
 
+  // Check if we have any meaningful data
+  const hasData = trends.record !== '0-0' || trends.win_pct_l10 !== null || trends.net_rtg_l10 !== null;
+  if (!hasData) return null;
+
   return (
     <div className="flex items-center justify-between text-xs">
       <span className="font-medium text-gray-700 w-12">{team}</span>
@@ -184,8 +188,9 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
         </div>
       </div>
 
-      {/* Team Trends */}
-      {(homeTrends || awayTrends) && (
+      {/* Team Trends - only show if we have meaningful data */}
+      {(homeTrends?.record !== '0-0' || awayTrends?.record !== '0-0' ||
+        homeTrends?.win_pct_l10 !== null || awayTrends?.win_pct_l10 !== null) && (
         <div className="mb-3 p-2 bg-slate-50 rounded-lg space-y-1">
           <TeamTrendsRow team={awayTeam} trends={awayTrends} />
           <TeamTrendsRow team={homeTeam} trends={homeTrends} />
