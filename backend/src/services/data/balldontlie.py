@@ -135,7 +135,7 @@ class BallDontLieClient:
             team_ids: Filter by team IDs
             seasons: Filter by seasons (e.g., [2024, 2025])
         """
-        params = {}
+        params = {"per_page": 100}
         if start_date:
             params["start_date"] = start_date.isoformat()
         if end_date:
@@ -145,38 +145,51 @@ class BallDontLieClient:
         if seasons:
             params["seasons[]"] = seasons
 
-        data = await self._get("games", params)
-
         games = []
-        for g in data["data"]:
-            games.append(
-                Game(
-                    id=g["id"],
-                    date=date.fromisoformat(g["date"][:10]),
-                    season=g["season"],
-                    status=g["status"],
-                    home_team=Team(
-                        id=g["home_team"]["id"],
-                        name=g["home_team"]["name"],
-                        full_name=g["home_team"]["full_name"],
-                        abbreviation=g["home_team"]["abbreviation"],
-                        city=g["home_team"]["city"],
-                        conference=g["home_team"]["conference"],
-                        division=g["home_team"]["division"],
-                    ),
-                    away_team=Team(
-                        id=g["visitor_team"]["id"],
-                        name=g["visitor_team"]["name"],
-                        full_name=g["visitor_team"]["full_name"],
-                        abbreviation=g["visitor_team"]["abbreviation"],
-                        city=g["visitor_team"]["city"],
-                        conference=g["visitor_team"]["conference"],
-                        division=g["visitor_team"]["division"],
-                    ),
-                    home_team_score=g.get("home_team_score"),
-                    away_team_score=g.get("visitor_team_score"),
+        cursor = None
+
+        # Paginate through all results
+        while True:
+            if cursor:
+                params["cursor"] = cursor
+
+            data = await self._get("games", params)
+
+            for g in data["data"]:
+                games.append(
+                    Game(
+                        id=g["id"],
+                        date=date.fromisoformat(g["date"][:10]),
+                        season=g["season"],
+                        status=g["status"],
+                        home_team=Team(
+                            id=g["home_team"]["id"],
+                            name=g["home_team"]["name"],
+                            full_name=g["home_team"]["full_name"],
+                            abbreviation=g["home_team"]["abbreviation"],
+                            city=g["home_team"]["city"],
+                            conference=g["home_team"]["conference"],
+                            division=g["home_team"]["division"],
+                        ),
+                        away_team=Team(
+                            id=g["visitor_team"]["id"],
+                            name=g["visitor_team"]["name"],
+                            full_name=g["visitor_team"]["full_name"],
+                            abbreviation=g["visitor_team"]["abbreviation"],
+                            city=g["visitor_team"]["city"],
+                            conference=g["visitor_team"]["conference"],
+                            division=g["visitor_team"]["division"],
+                        ),
+                        home_team_score=g.get("home_team_score"),
+                        away_team_score=g.get("visitor_team_score"),
+                    )
                 )
-            )
+
+            # Check for next page
+            meta = data.get("meta", {})
+            cursor = meta.get("next_cursor")
+            if not cursor:
+                break
 
         return games
 
