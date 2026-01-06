@@ -506,9 +506,17 @@ async def get_upcoming_games(
                 }
 
             record = f"{stats.wins}-{stats.losses}"
-            home_record = f"{stats.home_wins or 0}-{stats.home_losses or 0}"
-            away_record = f"{stats.away_wins or 0}-{stats.away_losses or 0}"
-            l10_record = f"{stats.wins_l10 or 0}-{stats.losses_l10 or 0}"
+            # Use getattr for new columns that might not exist during migration
+            home_wins = getattr(stats, 'home_wins', None) or 0
+            home_losses = getattr(stats, 'home_losses', None) or 0
+            away_wins = getattr(stats, 'away_wins', None) or 0
+            away_losses = getattr(stats, 'away_losses', None) or 0
+            wins_l10 = getattr(stats, 'wins_l10', None) or 0
+            losses_l10 = getattr(stats, 'losses_l10', None) or 0
+
+            home_record = f"{home_wins}-{home_losses}"
+            away_record = f"{away_wins}-{away_losses}"
+            l10_record = f"{wins_l10}-{losses_l10}"
             net_rtg = float(stats.net_rtg_10) if stats.net_rtg_10 else None
             rest = stats.days_rest
             b2b = stats.is_back_to_back or False
