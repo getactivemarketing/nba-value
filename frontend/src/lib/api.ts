@@ -100,11 +100,12 @@ export const api = {
 
 export interface TeamTrends {
   record: string;
-  win_pct_l10: number | null;
+  home_record: string;
+  away_record: string;
+  l10_record: string;
   net_rtg_l10: number | null;
   rest_days: number | null;
   is_b2b: boolean;
-  home_away_pct: number | null;
 }
 
 export interface GameWithTrends {

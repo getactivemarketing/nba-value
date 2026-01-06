@@ -55,7 +55,15 @@ class TeamStats(Base):
     # Win/Loss context
     wins: Mapped[int] = mapped_column(Integer, default=0)
     losses: Mapped[int] = mapped_column(Integer, default=0)
+    wins_l10: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    losses_l10: Mapped[int | None] = mapped_column(Integer, nullable=True)
     win_pct_10: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)
+
+    # Home/Away record
+    home_wins: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    home_losses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    away_wins: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    away_losses: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Rest and schedule context
     days_rest: Mapped[int | None] = mapped_column(Integer, nullable=True)

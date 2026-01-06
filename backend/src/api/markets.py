@@ -497,32 +497,30 @@ async def get_upcoming_games(
             if not stats:
                 return {
                     "record": "0-0",
-                    "win_pct_l10": None,
+                    "home_record": "0-0",
+                    "away_record": "0-0",
+                    "l10_record": "0-0",
                     "net_rtg_l10": None,
                     "rest_days": None,
                     "is_b2b": False,
-                    "home_away_pct": None,
                 }
 
             record = f"{stats.wins}-{stats.losses}"
-            win_pct_l10 = float(stats.win_pct_10) if stats.win_pct_10 else None
+            home_record = f"{stats.home_wins or 0}-{stats.home_losses or 0}"
+            away_record = f"{stats.away_wins or 0}-{stats.away_losses or 0}"
+            l10_record = f"{stats.wins_l10 or 0}-{stats.losses_l10 or 0}"
             net_rtg = float(stats.net_rtg_10) if stats.net_rtg_10 else None
             rest = stats.days_rest
             b2b = stats.is_back_to_back or False
 
-            # Get relevant home/away win %
-            if is_home:
-                ha_pct = float(stats.home_win_pct) if stats.home_win_pct else None
-            else:
-                ha_pct = float(stats.away_win_pct) if stats.away_win_pct else None
-
             return {
                 "record": record,
-                "win_pct_l10": win_pct_l10,
+                "home_record": home_record,
+                "away_record": away_record,
+                "l10_record": l10_record,
                 "net_rtg_l10": net_rtg,
                 "rest_days": rest,
                 "is_b2b": b2b,
-                "home_away_pct": ha_pct,
             }
 
         response = []

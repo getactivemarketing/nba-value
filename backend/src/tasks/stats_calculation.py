@@ -121,12 +121,17 @@ async def _calculate_team_stats_async() -> dict:
                 net_rtg_season = ppg_season - opp_ppg_season if ppg_season and opp_ppg_season else None
                 net_rtg_10 = ppg_10 - opp_ppg_10 if ppg_10 and opp_ppg_10 else None
 
+                # Last 10 record (as wins-losses, not just percentage)
+                losses_l10 = len(last_10) - wins_l10 if last_10 else None
+
                 # Home/Away splits
                 home_games = [g for g in games if g['is_home']]
                 away_games = [g for g in games if not g['is_home']]
 
                 home_wins = sum(1 for g in home_games if g['won'])
+                home_losses = len(home_games) - home_wins
                 away_wins = sum(1 for g in away_games if g['won'])
+                away_losses = len(away_games) - away_wins
 
                 home_win_pct = Decimal(str(round(home_wins / len(home_games), 3))) if home_games else None
                 away_win_pct = Decimal(str(round(away_wins / len(away_games), 3))) if away_games else None
@@ -155,7 +160,13 @@ async def _calculate_team_stats_async() -> dict:
                     games_played=len(games),
                     wins=wins,
                     losses=losses,
+                    wins_l10=wins_l10,
+                    losses_l10=losses_l10,
                     win_pct_10=win_pct_10,
+                    home_wins=home_wins,
+                    home_losses=home_losses,
+                    away_wins=away_wins,
+                    away_losses=away_losses,
                     ppg_10=ppg_10,
                     ppg_season=ppg_season,
                     opp_ppg_10=opp_ppg_10,
@@ -173,7 +184,13 @@ async def _calculate_team_stats_async() -> dict:
                         'games_played': len(games),
                         'wins': wins,
                         'losses': losses,
+                        'wins_l10': wins_l10,
+                        'losses_l10': losses_l10,
                         'win_pct_10': win_pct_10,
+                        'home_wins': home_wins,
+                        'home_losses': home_losses,
+                        'away_wins': away_wins,
+                        'away_losses': away_losses,
                         'ppg_10': ppg_10,
                         'ppg_season': ppg_season,
                         'opp_ppg_10': opp_ppg_10,

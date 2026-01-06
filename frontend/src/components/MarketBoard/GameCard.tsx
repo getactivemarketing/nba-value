@@ -126,7 +126,6 @@ function TeamLogo({ team, size = 48 }: { team: string; size?: number }) {
 
 export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, homeTrends, awayTrends }: GameCardProps) {
   const { date, time } = formatGameTime(tipTime);
-  const [showDetails, setShowDetails] = useState(false);
 
   // Get spread values for each team
   const awaySpread = getTeamSpreadValue(markets, awayTeam, false, algorithm);
@@ -136,8 +135,14 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
   const spreadLine = getConsensusLine(markets, 'spread');
   const totalLine = getTotalLine(markets);
 
+  // Get best market for linking
+  const bestMarketId = awaySpread?.marketId || homeSpread?.marketId || '';
+
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <Link
+      to={bestMarketId ? `/bet/${bestMarketId}` : '#'}
+      className="block bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
+    >
       {/* Dark Header */}
       <div className="bg-slate-800 text-white px-4 py-2 text-sm font-medium tracking-wide">
         {awayTeam} @ {homeTeam}
@@ -196,21 +201,19 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
           </div>
         </div>
 
-        {/* Team Stats */}
+        {/* Team Stats - Covers Style */}
         <div className="mt-4 pt-4 border-t border-gray-100">
           <div className="grid grid-cols-3 gap-4 text-xs">
             {/* Away Stats */}
             <div className="space-y-1">
               {awayTrends && (
                 <>
-                  <div className="text-gray-500">
-                    ({awayTrends.record} {awayTrends.is_b2b ? '' : 'Road'})
+                  <div className="text-gray-600">
+                    <span className="text-gray-400">({awayTrends.away_record} Road)</span>
                   </div>
-                  {awayTrends.win_pct_l10 !== null && (
-                    <div className="text-gray-500">
-                      L10: {Math.round(awayTrends.win_pct_l10 * 10)}-{10 - Math.round(awayTrends.win_pct_l10 * 10)}
-                    </div>
-                  )}
+                  <div className="text-gray-600">
+                    <span className="text-gray-400">({awayTrends.l10_record} L10)</span>
+                  </div>
                   {awayTrends.is_b2b && (
                     <div className="text-amber-600 font-medium">B2B</div>
                   )}
@@ -229,14 +232,12 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
             <div className="text-right space-y-1">
               {homeTrends && (
                 <>
-                  <div className="text-gray-500">
-                    ({homeTrends.record} Home)
+                  <div className="text-gray-600">
+                    <span className="text-gray-400">({homeTrends.home_record} Home)</span>
                   </div>
-                  {homeTrends.win_pct_l10 !== null && (
-                    <div className="text-gray-500">
-                      L10: {Math.round(homeTrends.win_pct_l10 * 10)}-{10 - Math.round(homeTrends.win_pct_l10 * 10)}
-                    </div>
-                  )}
+                  <div className="text-gray-600">
+                    <span className="text-gray-400">({homeTrends.l10_record} L10)</span>
+                  </div>
                   {homeTrends.is_b2b && (
                     <div className="text-amber-600 font-medium">B2B</div>
                   )}
@@ -244,95 +245,32 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
               )}
             </div>
           </div>
-        </div>
 
-        {/* Action Buttons */}
-        <div className="mt-4 flex items-center gap-4">
-          <button
-            onClick={() => setShowDetails(!showDetails)}
-            className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium rounded transition-colors"
-          >
-            Matchup
-          </button>
-
-          <div className="flex items-center gap-4 text-sm">
-            <button className="text-gray-600 hover:text-gray-900 font-medium">
-              Consensus
-            </button>
-            <Link
-              to={`/bet/${awaySpread?.marketId || homeSpread?.marketId || ''}`}
-              className="text-gray-600 hover:text-gray-900 font-medium"
-            >
-              Picks
-            </Link>
-            <button
-              onClick={() => setShowDetails(!showDetails)}
-              className="text-gray-600 hover:text-gray-900 font-medium flex items-center gap-1"
-            >
-              Line Moves
-              <svg className={`w-4 h-4 transition-transform ${showDetails ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        {/* Expanded Details */}
-        {showDetails && (
-          <div className="mt-4 pt-4 border-t border-gray-100">
-            <h4 className="font-semibold text-gray-900 mb-3">Best Lines by Book</h4>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-gray-500 border-b">
-                    <th className="pb-2 font-medium">Book</th>
-                    <th className="pb-2 font-medium text-center">Spread</th>
-                    <th className="pb-2 font-medium text-center">ML</th>
-                    <th className="pb-2 font-medium text-center">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {['draftkings', 'fanduel', 'betmgm', 'betus'].map(book => {
-                    const bookMarkets = markets.filter(m => m.book === book);
-                    if (bookMarkets.length === 0) return null;
-
-                    const spread = bookMarkets.find(m => m.market_type === 'spread');
-                    const ml = bookMarkets.find(m => m.market_type === 'moneyline');
-                    const total = bookMarkets.find(m => m.market_type === 'total');
-
-                    return (
-                      <tr key={book} className="border-b border-gray-50">
-                        <td className="py-2 font-medium capitalize">{book}</td>
-                        <td className="py-2 text-center">
-                          {spread && (
-                            <Link to={`/bet/${spread.market_id}`} className="hover:text-blue-600">
-                              {formatLine(spread.line)} ({(spread.odds_american ?? 0) > 0 ? '+' : ''}{spread.odds_american})
-                            </Link>
-                          )}
-                        </td>
-                        <td className="py-2 text-center">
-                          {ml && (
-                            <Link to={`/bet/${ml.market_id}`} className="hover:text-blue-600">
-                              {(ml.odds_american ?? 0) > 0 ? '+' : ''}{ml.odds_american}
-                            </Link>
-                          )}
-                        </td>
-                        <td className="py-2 text-center">
-                          {total && (
-                            <Link to={`/bet/${total.market_id}`} className="hover:text-blue-600">
-                              {total.outcome_label === 'over' ? 'O' : 'U'} {total.line}
-                            </Link>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          {/* Overall Records Row */}
+          <div className="mt-3 flex justify-between text-sm">
+            <div className="text-gray-700 font-medium">
+              {awayTrends?.record || '0-0'}
+            </div>
+            <div className="text-gray-400 text-xs">Overall</div>
+            <div className="text-gray-700 font-medium">
+              {homeTrends?.record || '0-0'}
             </div>
           </div>
-        )}
+
+          {/* Net Rating Row */}
+          {(awayTrends?.net_rtg_l10 != null || homeTrends?.net_rtg_l10 != null) && (
+            <div className="mt-1 flex justify-between text-sm">
+              <div className={`font-medium ${(awayTrends?.net_rtg_l10 ?? 0) > 0 ? 'text-green-600' : (awayTrends?.net_rtg_l10 ?? 0) < 0 ? 'text-red-500' : 'text-gray-500'}`}>
+                {awayTrends?.net_rtg_l10 != null ? `${(awayTrends?.net_rtg_l10 ?? 0) > 0 ? '+' : ''}${(awayTrends?.net_rtg_l10 ?? 0).toFixed(1)}` : '-'}
+              </div>
+              <div className="text-gray-400 text-xs">Net Rtg L10</div>
+              <div className={`font-medium ${(homeTrends?.net_rtg_l10 ?? 0) > 0 ? 'text-green-600' : (homeTrends?.net_rtg_l10 ?? 0) < 0 ? 'text-red-500' : 'text-gray-500'}`}>
+                {homeTrends?.net_rtg_l10 != null ? `${(homeTrends?.net_rtg_l10 ?? 0) > 0 ? '+' : ''}${(homeTrends?.net_rtg_l10 ?? 0).toFixed(1)}` : '-'}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </Link>
   );
 }
