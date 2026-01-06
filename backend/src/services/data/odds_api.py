@@ -188,40 +188,6 @@ class OddsAPIClient:
 
         return best_odds
 
-    def calculate_market_consensus(
-        self, snapshots: list[OddsSnapshot]
-    ) -> dict[str, dict]:
-        """
-        Calculate consensus odds and variance across books.
-
-        Args:
-            snapshots: List of OddsSnapshot objects
-
-        Returns:
-            Dict with mean, std, and count per market
-        """
-        from collections import defaultdict
-        import statistics
-
-        market_odds: dict[str, list[float]] = defaultdict(list)
-
-        for snapshot in snapshots:
-            key = f"{snapshot.game_id}_{snapshot.market_type}_{snapshot.outcome_label}"
-            market_odds[key].append(snapshot.odds_decimal)
-
-        consensus = {}
-        for key, odds_list in market_odds.items():
-            consensus[key] = {
-                "mean": statistics.mean(odds_list),
-                "std": statistics.stdev(odds_list) if len(odds_list) > 1 else 0,
-                "count": len(odds_list),
-                "min": min(odds_list),
-                "max": max(odds_list),
-            }
-
-        return consensus
-
-
 async def test_odds_api():
     """Test function to verify API connection."""
     client = OddsAPIClient()

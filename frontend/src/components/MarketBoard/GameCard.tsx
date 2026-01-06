@@ -201,72 +201,45 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
           </div>
         </div>
 
-        {/* Team Stats - Covers Style */}
+        {/* Team Stats */}
         <div className="mt-4 pt-4 border-t border-gray-100">
-          <div className="grid grid-cols-3 gap-4 text-xs">
-            {/* Away Stats */}
-            <div className="space-y-1">
-              {awayTrends && (
-                <>
-                  <div className="text-gray-600">
-                    <span className="text-gray-400">({awayTrends.away_record} Road)</span>
-                  </div>
-                  <div className="text-gray-600">
-                    <span className="text-gray-400">({awayTrends.l10_record} L10)</span>
-                  </div>
-                  {awayTrends.is_b2b && (
-                    <div className="text-amber-600 font-medium">B2B</div>
-                  )}
-                </>
-              )}
-            </div>
+          {/* Stats Table */}
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            {/* Header Row */}
+            <div className="font-medium text-gray-500">{awayTeam}</div>
+            <div className="text-center font-medium text-gray-500"></div>
+            <div className="text-right font-medium text-gray-500">{homeTeam}</div>
 
-            {/* Center Stats Labels */}
-            <div className="text-center space-y-1 text-gray-500 font-medium">
-              <div>Win/Loss</div>
-              <div>Last 10</div>
-              <div>Net Rtg</div>
-            </div>
+            {/* Overall Record */}
+            <div className="font-semibold text-gray-800">{awayTrends?.record || '0-0'}</div>
+            <div className="text-center text-gray-400">Record</div>
+            <div className="text-right font-semibold text-gray-800">{homeTrends?.record || '0-0'}</div>
 
-            {/* Home Stats */}
-            <div className="text-right space-y-1">
-              {homeTrends && (
-                <>
-                  <div className="text-gray-600">
-                    <span className="text-gray-400">({homeTrends.home_record} Home)</span>
-                  </div>
-                  <div className="text-gray-600">
-                    <span className="text-gray-400">({homeTrends.l10_record} L10)</span>
-                  </div>
-                  {homeTrends.is_b2b && (
-                    <div className="text-amber-600 font-medium">B2B</div>
-                  )}
-                </>
-              )}
+            {/* Home/Road Record */}
+            <div className="text-gray-600">{awayTrends?.away_record || '0-0'} <span className="text-gray-400">Road</span></div>
+            <div className="text-center text-gray-400">Split</div>
+            <div className="text-right text-gray-600"><span className="text-gray-400">Home</span> {homeTrends?.home_record || '0-0'}</div>
+
+            {/* L10 Record */}
+            <div className="text-gray-600">{awayTrends?.l10_record || '0-0'}</div>
+            <div className="text-center text-gray-400">L10</div>
+            <div className="text-right text-gray-600">{homeTrends?.l10_record || '0-0'}</div>
+
+            {/* Net Rating L10 */}
+            <div className={`font-medium ${(awayTrends?.net_rtg_l10 ?? 0) > 0 ? 'text-green-600' : (awayTrends?.net_rtg_l10 ?? 0) < 0 ? 'text-red-500' : 'text-gray-500'}`}>
+              {awayTrends?.net_rtg_l10 != null ? `${(awayTrends?.net_rtg_l10 ?? 0) > 0 ? '+' : ''}${(awayTrends?.net_rtg_l10 ?? 0).toFixed(1)}` : '-'}
+            </div>
+            <div className="text-center text-gray-400">Net Rtg</div>
+            <div className={`text-right font-medium ${(homeTrends?.net_rtg_l10 ?? 0) > 0 ? 'text-green-600' : (homeTrends?.net_rtg_l10 ?? 0) < 0 ? 'text-red-500' : 'text-gray-500'}`}>
+              {homeTrends?.net_rtg_l10 != null ? `${(homeTrends?.net_rtg_l10 ?? 0) > 0 ? '+' : ''}${(homeTrends?.net_rtg_l10 ?? 0).toFixed(1)}` : '-'}
             </div>
           </div>
 
-          {/* Overall Records Row */}
-          <div className="mt-3 flex justify-between text-sm">
-            <div className="text-gray-700 font-medium">
-              {awayTrends?.record || '0-0'}
-            </div>
-            <div className="text-gray-400 text-xs">Overall</div>
-            <div className="text-gray-700 font-medium">
-              {homeTrends?.record || '0-0'}
-            </div>
-          </div>
-
-          {/* Net Rating Row */}
-          {(awayTrends?.net_rtg_l10 != null || homeTrends?.net_rtg_l10 != null) && (
-            <div className="mt-1 flex justify-between text-sm">
-              <div className={`font-medium ${(awayTrends?.net_rtg_l10 ?? 0) > 0 ? 'text-green-600' : (awayTrends?.net_rtg_l10 ?? 0) < 0 ? 'text-red-500' : 'text-gray-500'}`}>
-                {awayTrends?.net_rtg_l10 != null ? `${(awayTrends?.net_rtg_l10 ?? 0) > 0 ? '+' : ''}${(awayTrends?.net_rtg_l10 ?? 0).toFixed(1)}` : '-'}
-              </div>
-              <div className="text-gray-400 text-xs">Net Rtg L10</div>
-              <div className={`font-medium ${(homeTrends?.net_rtg_l10 ?? 0) > 0 ? 'text-green-600' : (homeTrends?.net_rtg_l10 ?? 0) < 0 ? 'text-red-500' : 'text-gray-500'}`}>
-                {homeTrends?.net_rtg_l10 != null ? `${(homeTrends?.net_rtg_l10 ?? 0) > 0 ? '+' : ''}${(homeTrends?.net_rtg_l10 ?? 0).toFixed(1)}` : '-'}
-              </div>
+          {/* B2B Indicators */}
+          {(awayTrends?.is_b2b || homeTrends?.is_b2b) && (
+            <div className="mt-2 flex justify-between text-xs">
+              <div>{awayTrends?.is_b2b && <span className="text-amber-600 font-medium">B2B</span>}</div>
+              <div>{homeTrends?.is_b2b && <span className="text-amber-600 font-medium">B2B</span>}</div>
             </div>
           )}
         </div>

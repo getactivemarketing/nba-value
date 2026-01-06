@@ -176,7 +176,7 @@ export function MarketBoard() {
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">NBA Scores & Matchups</h1>
+          <h1 className="text-3xl font-bold text-gray-900">NBA Market Board</h1>
         </div>
         <div className="flex items-center gap-4">
           {/* Filter dropdown placeholder */}
