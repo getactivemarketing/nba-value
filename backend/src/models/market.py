@@ -20,7 +20,7 @@ class Market(Base):
 
     __tablename__ = "markets"
 
-    market_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    market_id: Mapped[str] = mapped_column(String(100), primary_key=True)
     game_id: Mapped[str] = mapped_column(
         String(50), ForeignKey("games.game_id"), nullable=False
     )

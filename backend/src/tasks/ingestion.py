@@ -182,7 +182,8 @@ async def _ingest_odds_async() -> dict:
 
                                     # Create Market records for home and away ML
                                     for side, ml_data in [("home", home_ml), ("away", away_ml)]:
-                                        market_id = f"{game_id}_{book_key}_ml_{side}"
+                                        # Use shorter ID: last 8 chars of game_id + book + type + side
+                                        market_id = f"{game_id[-8:]}_{book_key[:6]}_ml_{side[0]}"
                                         market_stmt = insert(Market).values(
                                             market_id=market_id,
                                             game_id=game_id,
@@ -220,7 +221,7 @@ async def _ingest_odds_async() -> dict:
 
                                     # Create Market records for home and away spread
                                     for side, spread_data in [("home", home_spread), ("away", away_spread)]:
-                                        market_id = f"{game_id}_{book_key}_spread_{side}"
+                                        market_id = f"{game_id[-8:]}_{book_key[:6]}_sp_{side[0]}"
                                         market_stmt = insert(Market).values(
                                             market_id=market_id,
                                             game_id=game_id,
@@ -258,7 +259,7 @@ async def _ingest_odds_async() -> dict:
 
                                     # Create Market records for over and under
                                     for side, total_data in [("over", over), ("under", under)]:
-                                        market_id = f"{game_id}_{book_key}_total_{side}"
+                                        market_id = f"{game_id[-8:]}_{book_key[:6]}_tot_{side[0]}"
                                         market_stmt = insert(Market).values(
                                             market_id=market_id,
                                             game_id=game_id,
