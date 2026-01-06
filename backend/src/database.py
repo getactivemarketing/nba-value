@@ -23,6 +23,9 @@ async_session_maker = async_sessionmaker(
     expire_on_commit=False,
 )
 
+# Alias for convenience (context manager style)
+async_session = async_session_maker
+
 
 class Base(DeclarativeBase):
     """Base class for all database models."""
