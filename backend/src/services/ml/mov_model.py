@@ -150,8 +150,9 @@ class MOVModel:
         away_net = get_blended_net("away")
 
         # Simple MOV estimate
-        # Each point of net rating differential ≈ 0.3 points per game
-        predicted_mov = (home_net - away_net) * 0.3 + HOME_COURT_ADV
+        # Net rating IS points differential per game, so coefficient should be ~1.0
+        # Using 1.0 directly - the blending already provides regression to mean
+        predicted_mov = (home_net - away_net) * 1.0 + HOME_COURT_ADV
 
         # Adjust for rest
         home_rest = features.get("home_rest_days", 1)
