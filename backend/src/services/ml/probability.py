@@ -11,26 +11,33 @@ def mov_to_spread_prob(
     """
     Convert MOV prediction to spread cover probability.
 
-    The spread line represents what the home team needs to cover.
-    E.g., spread_line = -5.5 means home team is favored by 5.5 points
-    and needs to win by more than 5.5 to cover.
+    The spread line uses standard betting convention:
+    - spread_line = -6.5 means home is favored, must win by 7+ to cover
+    - spread_line = +6.5 means home is underdog, can lose by up to 6 and cover
 
-    P(home covers) = P(actual_margin > spread_line)
+    P(home covers) = P(actual_margin + spread_line > 0)
+                   = P(actual_margin > -spread_line)
+
+    For home favorite (-6.5): must win by MORE than 6.5
+    For home underdog (+6.5): must not lose by more than 6.5
 
     Args:
         predicted_mov: Predicted home margin of victory
-        spread_line: Spread line (negative = home favored)
+        spread_line: Spread line (negative = home favored, positive = home underdog)
         mov_std: Standard deviation of MOV predictions
 
     Returns:
         Probability that home team covers the spread (0 to 1)
     """
-    # Z-score: how many standard deviations is the spread from prediction
-    # If predicted_mov > spread_line, z > 0, higher prob of covering
-    z = (predicted_mov - spread_line) / mov_std
+    # For spread betting, home covers if: actual_margin + spread_line > 0
+    # E.g., home -6.5: covers if margin > 6.5 (need margin + (-6.5) > 0, so margin > 6.5)
+    # E.g., home +6.5: covers if margin > -6.5 (need margin + 6.5 > 0, so margin > -6.5)
+    #
+    # P(margin > -spread_line) = P(Z > (-spread_line - predicted_mov) / std)
+    #                          = 1 - CDF((-spread_line - predicted_mov) / std)
+    #                          = CDF((predicted_mov + spread_line) / std)
+    z = (predicted_mov + spread_line) / mov_std
 
-    # CDF gives P(Z < z), which is P(margin > spread_line) when
-    # margin ~ N(predicted_mov, mov_std)
     return float(stats.norm.cdf(z))
 
 
