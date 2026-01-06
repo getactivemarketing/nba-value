@@ -16,27 +16,63 @@ interface GameGroup {
   awayTrends?: TeamTrends;
 }
 
+// Generate dates for the date picker
+function getDateRange(): Date[] {
+  const dates: Date[] = [];
+  const today = new Date();
+
+  // 3 days before and 4 days after
+  for (let i = -3; i <= 4; i++) {
+    const date = new Date(today);
+    date.setDate(today.getDate() + i);
+    dates.push(date);
+  }
+
+  return dates;
+}
+
+function formatDateLabel(date: Date): { day: string; date: string } {
+  const today = new Date();
+  const isToday = date.toDateString() === today.toDateString();
+
+  if (isToday) {
+    return {
+      day: 'TODAY',
+      date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase(),
+    };
+  }
+
+  return {
+    day: date.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase(),
+    date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase(),
+  };
+}
+
 function GameCardSkeleton() {
   return (
-    <div className="card animate-pulse">
-      <div className="flex justify-between items-start mb-4">
-        <div>
-          <div className="h-6 bg-gray-200 rounded w-32 mb-2" />
-          <div className="h-4 bg-gray-100 rounded w-24" />
-        </div>
-        <div className="h-8 bg-gray-200 rounded-full w-12" />
-      </div>
-      <div className="space-y-3">
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="flex justify-between items-center py-2">
-            <div className="h-4 bg-gray-200 rounded w-20" />
-            <div className="flex space-x-8">
-              <div className="h-6 bg-gray-200 rounded-full w-10" />
-              <div className="h-6 bg-gray-200 rounded-full w-10" />
-              <div className="h-6 bg-gray-200 rounded-full w-10" />
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden animate-pulse">
+      <div className="bg-slate-800 h-10" />
+      <div className="p-4">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-14 h-14 bg-gray-200 rounded-full" />
+            <div>
+              <div className="h-6 bg-gray-200 rounded w-16 mb-2" />
+              <div className="h-8 bg-gray-200 rounded w-24" />
             </div>
           </div>
-        ))}
+          <div className="text-center">
+            <div className="h-4 bg-gray-200 rounded w-24 mb-2 mx-auto" />
+            <div className="h-4 bg-gray-100 rounded w-16 mx-auto" />
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <div className="h-6 bg-gray-200 rounded w-16 mb-2 ml-auto" />
+              <div className="h-8 bg-gray-200 rounded w-24" />
+            </div>
+            <div className="w-14 h-14 bg-gray-200 rounded-full" />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -44,6 +80,9 @@ function GameCardSkeleton() {
 
 export function MarketBoard() {
   const [algorithm, setAlgorithm] = useState<Algorithm>('b');
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+
+  const dates = useMemo(() => getDateRange(), []);
 
   const filters: Partial<Filters> = { algorithm };
   const debouncedFilters = useDebounce(filters, 300);
@@ -65,7 +104,7 @@ export function MarketBoard() {
     return map;
   }, [gamesWithTrends]);
 
-  // Group markets by game
+  // Group markets by game and filter by selected date
   const games = useMemo(() => {
     if (!markets || markets.length === 0) return [];
 
@@ -76,12 +115,10 @@ export function MarketBoard() {
       if (existing) {
         existing.markets.push(market);
       } else {
-        // Extract home/away from the market data
         const homeTeam = (market as any).home_team || 'HOME';
         const awayTeam = (market as any).away_team || 'AWAY';
         const tipTime = (market as any).tip_time || new Date().toISOString();
 
-        // Get trends for this game
         const trends = trendsMap.get(market.game_id);
 
         gameMap.set(market.game_id, {
@@ -96,32 +133,130 @@ export function MarketBoard() {
       }
     }
 
+    // Filter by selected date
+    const selectedDateStr = selectedDate.toDateString();
+    const filteredGames = Array.from(gameMap.values()).filter(game => {
+      const gameDate = new Date(game.tipTime);
+      return gameDate.toDateString() === selectedDateStr;
+    });
+
     // Sort by tip time
-    return Array.from(gameMap.values()).sort(
+    return filteredGames.sort(
       (a, b) => new Date(a.tipTime).getTime() - new Date(b.tipTime).getTime()
     );
-  }, [markets, trendsMap]);
+  }, [markets, trendsMap, selectedDate]);
+
+  // Count games for each date
+  const gameCountByDate = useMemo(() => {
+    if (!markets || markets.length === 0) return new Map<string, number>();
+
+    const gameMap = new Map<string, Set<string>>();
+
+    for (const market of markets) {
+      const tipTime = (market as any).tip_time;
+      if (tipTime) {
+        const dateStr = new Date(tipTime).toDateString();
+        if (!gameMap.has(dateStr)) {
+          gameMap.set(dateStr, new Set());
+        }
+        gameMap.get(dateStr)!.add(market.game_id);
+      }
+    }
+
+    const counts = new Map<string, number>();
+    gameMap.forEach((games, date) => {
+      counts.set(date, games.size);
+    });
+
+    return counts;
+  }, [markets]);
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Today's Games</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Value Scores by sportsbook
-          </p>
+          <h1 className="text-3xl font-bold text-gray-900">NBA Scores & Matchups</h1>
         </div>
-        <div className="flex items-center space-x-4">
-          {isFetching && !isLoading && (
-            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-          )}
+        <div className="flex items-center gap-4">
+          {/* Filter dropdown placeholder */}
+          <button className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+            </svg>
+            Filter
+          </button>
 
-          {/* Algorithm Toggle */}
+          {/* Search placeholder */}
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search"
+              className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Date Picker */}
+      <div className="flex items-center gap-1 bg-white rounded-lg border border-gray-200 p-1">
+        <button className="p-2 hover:bg-gray-100 rounded">
+          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+
+        {dates.map((date) => {
+          const { day, date: dateLabel } = formatDateLabel(date);
+          const isSelected = date.toDateString() === selectedDate.toDateString();
+          const gameCount = gameCountByDate.get(date.toDateString()) || 0;
+
+          return (
+            <button
+              key={date.toISOString()}
+              onClick={() => setSelectedDate(date)}
+              className={`flex-1 py-2 px-3 rounded-lg text-center transition-colors ${
+                isSelected
+                  ? 'bg-slate-800 text-white'
+                  : 'hover:bg-gray-100 text-gray-700'
+              }`}
+            >
+              <div className="text-xs font-medium">{day}</div>
+              <div className="text-xs">{dateLabel}</div>
+              {gameCount > 0 && (
+                <div className={`text-[10px] mt-0.5 ${isSelected ? 'text-gray-300' : 'text-gray-400'}`}>
+                  {gameCount} games
+                </div>
+              )}
+            </button>
+          );
+        })}
+
+        <button className="p-2 hover:bg-gray-100 rounded">
+          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+
+        {/* Calendar button */}
+        <button className="p-2 hover:bg-gray-100 rounded border-l border-gray-200 ml-1">
+          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Algorithm Toggle & Loading */}
+      <div className="flex justify-between items-center">
+        <div className="flex items-center gap-4">
+          <span className="text-sm text-gray-500">Value Algorithm:</span>
           <div className="flex rounded-lg overflow-hidden border border-gray-200">
             <button
               onClick={() => setAlgorithm('a')}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
                 algorithm === 'a'
                   ? 'bg-blue-600 text-white'
                   : 'bg-white text-gray-700 hover:bg-gray-50'
@@ -131,9 +266,9 @@ export function MarketBoard() {
             </button>
             <button
               onClick={() => setAlgorithm('b')}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
                 algorithm === 'b'
-                  ? 'bg-green-600 text-white'
+                  ? 'bg-emerald-600 text-white'
                   : 'bg-white text-gray-700 hover:bg-gray-50'
               }`}
             >
@@ -141,25 +276,29 @@ export function MarketBoard() {
             </button>
           </div>
         </div>
+
+        {isFetching && !isLoading && (
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            Updating...
+          </div>
+        )}
       </div>
 
       {/* Legend */}
-      <div className="flex flex-wrap gap-4 text-xs text-gray-500">
-        <div className="flex items-center space-x-2">
-          <div className="w-3 h-3 rounded-full bg-green-500" />
-          <span>80+ Strong Value</span>
+      <div className="flex flex-wrap gap-6 text-sm text-gray-500 bg-white rounded-lg border border-gray-200 p-3">
+        <span className="font-medium text-gray-700">Value Score:</span>
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-0.5 bg-emerald-600 text-white rounded text-xs font-semibold">70%+</span>
+          <span>Strong Value</span>
         </div>
-        <div className="flex items-center space-x-2">
-          <div className="w-3 h-3 rounded-full bg-green-400" />
-          <span>60-79 Good Value</span>
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-0.5 bg-amber-500 text-white rounded text-xs font-semibold">50-69%</span>
+          <span>Moderate</span>
         </div>
-        <div className="flex items-center space-x-2">
-          <div className="w-3 h-3 rounded-full bg-yellow-400" />
-          <span>40-59 Moderate</span>
-        </div>
-        <div className="flex items-center space-x-2">
-          <div className="w-3 h-3 rounded-full bg-gray-300" />
-          <span>&lt;40 Low Value</span>
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-0.5 bg-slate-400 text-white rounded text-xs font-semibold">&lt;50%</span>
+          <span>Low Value</span>
         </div>
       </div>
 
@@ -168,7 +307,7 @@ export function MarketBoard() {
 
       {/* Loading State */}
       {isLoading && (
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-2">
           {[1, 2, 3, 4].map((i) => (
             <GameCardSkeleton key={i} />
           ))}
@@ -177,17 +316,20 @@ export function MarketBoard() {
 
       {/* Empty State */}
       {!isLoading && !error && games.length === 0 && (
-        <div className="text-center py-12">
-          <p className="text-gray-500">No games scheduled for today</p>
+        <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
+          <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          <p className="text-gray-500 text-lg">No games scheduled for this date</p>
           <p className="text-sm text-gray-400 mt-1">
-            Check back later for upcoming games
+            Select another date or check back later
           </p>
         </div>
       )}
 
       {/* Game Cards */}
       {!isLoading && games.length > 0 && (
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-2">
           {games.map((game) => (
             <GameCard
               key={game.gameId}
