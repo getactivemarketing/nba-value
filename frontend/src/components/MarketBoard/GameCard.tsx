@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getTeamLogo, getTeamColor } from '@/lib/teamLogos';
 import type { Market, Algorithm } from '@/types/market';
-import type { TeamTrends } from '@/lib/api';
+import type { TeamTrends, GamePrediction } from '@/lib/api';
 
 interface GameCardProps {
   gameId: string;
@@ -13,6 +13,7 @@ interface GameCardProps {
   algorithm: Algorithm;
   homeTrends?: TeamTrends;
   awayTrends?: TeamTrends;
+  prediction?: GamePrediction | null;
 }
 
 function formatGameTime(tipTime: string): { date: string; time: string } {
@@ -124,7 +125,7 @@ function TeamLogo({ team, size = 48 }: { team: string; size?: number }) {
   );
 }
 
-export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, homeTrends, awayTrends }: GameCardProps) {
+export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, homeTrends, awayTrends, prediction }: GameCardProps) {
   const { date, time } = formatGameTime(tipTime);
 
   // Get spread values for each team
@@ -243,6 +244,57 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
             </div>
           )}
         </div>
+
+        {/* Prediction Section */}
+        {prediction && (
+          <div className="mt-4 pt-4 border-t border-gray-200 bg-gradient-to-r from-slate-50 to-slate-100 -mx-4 -mb-4 px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-slate-700">OUR PICK</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                  prediction.confidence === 'high'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : prediction.confidence === 'medium'
+                    ? 'bg-amber-100 text-amber-700'
+                    : 'bg-gray-100 text-gray-600'
+                }`}>
+                  {prediction.confidence === 'high' ? 'High Confidence' : prediction.confidence === 'medium' ? 'Medium' : 'Low'}
+                </span>
+              </div>
+            </div>
+
+            {/* Winner Prediction */}
+            <div className="flex items-center gap-2 mb-2">
+              <TeamLogo team={prediction.winner} size={24} />
+              <span className="font-bold text-gray-900">{prediction.winner} to win</span>
+              <span className="text-sm text-gray-500">({prediction.winner_prob}%)</span>
+            </div>
+
+            {/* Best Value Bet */}
+            {prediction.best_bet && prediction.best_bet.value_score >= 50 && (
+              <div className="text-sm mb-2">
+                <span className="text-gray-600">Best Value: </span>
+                <span className="font-semibold text-emerald-700">
+                  {prediction.best_bet.team} {prediction.best_bet.line != null ? (prediction.best_bet.line > 0 ? `+${prediction.best_bet.line}` : prediction.best_bet.line) : ''}
+                  {prediction.best_bet.type === 'moneyline' ? ' ML' : prediction.best_bet.type === 'total' ? ` (${prediction.best_bet.line})` : ''}
+                </span>
+                <span className="text-gray-500 ml-1">({prediction.best_bet.value_score}% value)</span>
+              </div>
+            )}
+
+            {/* Key Factors */}
+            {prediction.factors.length > 0 && (
+              <ul className="text-xs text-gray-600 space-y-0.5">
+                {prediction.factors.map((factor, i) => (
+                  <li key={i} className="flex items-start gap-1">
+                    <span className="text-slate-400">•</span>
+                    <span>{factor}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     </Link>
   );

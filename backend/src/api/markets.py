@@ -531,23 +531,176 @@ async def get_upcoming_games(
                 "is_b2b": b2b,
             }
 
+        # Get value scores for all games' markets
+        game_ids = [g.game_id for g in games]
+        value_scores_map = {}
+        if game_ids:
+            # Get latest value scores for each market
+            vs_query = (
+                select(ValueScore)
+                .join(ValueScore.market)
+                .join(ValueScore.prediction)
+                .where(Market.game_id.in_(game_ids))
+                .options(
+                    selectinload(ValueScore.market),
+                    selectinload(ValueScore.prediction),
+                )
+                .order_by(desc(ValueScore.calc_time))
+            )
+            vs_result = await session.execute(vs_query)
+            all_scores = vs_result.scalars().all()
+
+            # Group by game_id, keep only latest score per market
+            seen_markets = set()
+            for vs in all_scores:
+                if vs.market_id not in seen_markets:
+                    seen_markets.add(vs.market_id)
+                    game_id = vs.market.game_id
+                    if game_id not in value_scores_map:
+                        value_scores_map[game_id] = []
+                    value_scores_map[game_id].append(vs)
+
+        def build_prediction(game, home_abbr: str, away_abbr: str, home_trends: dict, away_trends: dict) -> dict | None:
+            """Build prediction dict for a game."""
+            scores = value_scores_map.get(game.game_id, [])
+            if not scores:
+                return None
+
+            # Find moneyline markets to determine winner
+            home_ml = None
+            away_ml = None
+            best_bet = None
+            best_score = 0
+
+            for vs in scores:
+                market = vs.market
+                prediction = vs.prediction
+                score = float(vs.algo_b_value_score or 0)
+
+                # Track best value bet
+                if score > best_score:
+                    best_score = score
+                    best_bet = {
+                        "type": market.market_type,
+                        "team": home_abbr if "home" in market.outcome_label else away_abbr,
+                        "line": float(market.line) if market.line else None,
+                        "value_score": round(score),
+                        "edge": round(float(prediction.raw_edge) * 100, 1) if prediction.raw_edge else 0,
+                        "p_true": round(float(prediction.p_true) * 100, 1) if prediction.p_true else 0,
+                        "p_market": round(float(prediction.p_market) * 100, 1) if prediction.p_market else 0,
+                    }
+
+                # Track moneyline for winner prediction
+                if market.market_type == "moneyline":
+                    if "home" in market.outcome_label:
+                        home_ml = {
+                            "p_true": float(prediction.p_true) if prediction.p_true else 0.5,
+                            "p_market": float(prediction.p_market) if prediction.p_market else 0.5,
+                        }
+                    else:
+                        away_ml = {
+                            "p_true": float(prediction.p_true) if prediction.p_true else 0.5,
+                            "p_market": float(prediction.p_market) if prediction.p_market else 0.5,
+                        }
+
+            # Determine winner from moneyline probabilities
+            if home_ml and away_ml:
+                home_prob = home_ml["p_true"]
+                away_prob = away_ml["p_true"]
+            else:
+                # Fallback: use net rating differential to estimate
+                home_net = home_trends.get("net_rtg_l10") or 0
+                away_net = away_trends.get("net_rtg_l10") or 0
+                # Simple logistic based on net rating diff + home court
+                diff = (home_net - away_net) * 0.03 + 0.03  # ~3% home court
+                home_prob = 0.5 + diff
+                away_prob = 1 - home_prob
+
+            winner = home_abbr if home_prob >= away_prob else away_abbr
+            winner_prob = max(home_prob, away_prob)
+
+            # Confidence level based on probability edge
+            if winner_prob >= 0.65:
+                confidence = "high"
+            elif winner_prob >= 0.55:
+                confidence = "medium"
+            else:
+                confidence = "low"
+
+            # Build explanation factors
+            factors = []
+
+            # 1. Net rating comparison
+            home_net = home_trends.get("net_rtg_l10")
+            away_net = away_trends.get("net_rtg_l10")
+            if home_net is not None and away_net is not None:
+                diff = home_net - away_net
+                if abs(diff) >= 1.0:
+                    better = home_abbr if diff > 0 else away_abbr
+                    factors.append(f"{better} +{abs(diff):.1f} Net Rating (L10)")
+
+            # 2. Rest/B2B advantage
+            home_rest = home_trends.get("rest_days") or 0
+            away_rest = away_trends.get("rest_days") or 0
+            home_b2b = home_trends.get("is_b2b", False)
+            away_b2b = away_trends.get("is_b2b", False)
+
+            if home_b2b and not away_b2b:
+                factors.append(f"{away_abbr} rest advantage (vs B2B)")
+            elif away_b2b and not home_b2b:
+                factors.append(f"{home_abbr} rest advantage (vs B2B)")
+            elif abs(home_rest - away_rest) >= 2:
+                better = home_abbr if home_rest > away_rest else away_abbr
+                factors.append(f"{better} +{abs(home_rest - away_rest)} days rest")
+
+            # 3. Model edge on best bet
+            if best_bet and best_bet["edge"] > 0:
+                factors.append(f"Model: {best_bet['p_true']:.0f}% vs Market: {best_bet['p_market']:.0f}% (+{best_bet['edge']:.1f}% edge)")
+
+            # 4. Record comparison if significant
+            home_l10 = home_trends.get("l10_record", "0-0")
+            away_l10 = away_trends.get("l10_record", "0-0")
+            try:
+                home_l10_wins = int(home_l10.split("-")[0])
+                away_l10_wins = int(away_l10.split("-")[0])
+                if abs(home_l10_wins - away_l10_wins) >= 3:
+                    better = home_abbr if home_l10_wins > away_l10_wins else away_abbr
+                    better_record = home_l10 if home_l10_wins > away_l10_wins else away_l10
+                    factors.append(f"{better} is {better_record} in L10")
+            except (ValueError, IndexError):
+                pass
+
+            return {
+                "winner": winner,
+                "winner_prob": round(winner_prob * 100),
+                "confidence": confidence,
+                "best_bet": best_bet,
+                "factors": factors[:4],  # Limit to 4 factors
+            }
+
         response = []
         for game in games:
             home = teams.get(game.home_team_id)
             away = teams.get(game.away_team_id)
 
+            home_abbr = home.abbreviation if home else game.home_team_id
+            away_abbr = away.abbreviation if away else game.away_team_id
+            home_trends = build_team_trends(game.home_team_id, is_home=True)
+            away_trends = build_team_trends(game.away_team_id, is_home=False)
+
             response.append({
                 "game_id": game.game_id,
-                "home_team": home.abbreviation if home else game.home_team_id,
-                "away_team": away.abbreviation if away else game.away_team_id,
+                "home_team": home_abbr,
+                "away_team": away_abbr,
                 "home_team_full": home.full_name if home else game.home_team_id,
                 "away_team_full": away.full_name if away else game.away_team_id,
                 "tip_time": game.tip_time_utc.isoformat(),
                 "time_to_tip_minutes": int((game.tip_time_utc - now).total_seconds() / 60),
                 "markets_count": len(game.markets),
                 "status": game.status,
-                "home_trends": build_team_trends(game.home_team_id, is_home=True),
-                "away_trends": build_team_trends(game.away_team_id, is_home=False),
+                "home_trends": home_trends,
+                "away_trends": away_trends,
+                "prediction": build_prediction(game, home_abbr, away_abbr, home_trends, away_trends),
             })
 
         return response

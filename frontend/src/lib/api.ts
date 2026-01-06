@@ -108,6 +108,24 @@ export interface TeamTrends {
   is_b2b: boolean;
 }
 
+export interface BestBet {
+  type: string;
+  team: string;
+  line: number | null;
+  value_score: number;
+  edge: number;
+  p_true: number;
+  p_market: number;
+}
+
+export interface GamePrediction {
+  winner: string;
+  winner_prob: number;
+  confidence: 'high' | 'medium' | 'low';
+  best_bet: BestBet | null;
+  factors: string[];
+}
+
 export interface GameWithTrends {
   game_id: string;
   home_team: string;
@@ -120,4 +138,5 @@ export interface GameWithTrends {
   status: string;
   home_trends: TeamTrends;
   away_trends: TeamTrends;
+  prediction: GamePrediction | null;
 }

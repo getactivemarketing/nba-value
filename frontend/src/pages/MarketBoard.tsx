@@ -4,7 +4,7 @@ import { useDebounce } from '@/hooks/useDebounce';
 import { GameCard } from '@/components/MarketBoard/GameCard';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
 import type { MarketFilters as Filters, Market, Algorithm } from '@/types/market';
-import type { TeamTrends } from '@/lib/api';
+import type { TeamTrends, GamePrediction } from '@/lib/api';
 
 interface GameGroup {
   gameId: string;
@@ -14,6 +14,7 @@ interface GameGroup {
   markets: Market[];
   homeTrends?: TeamTrends;
   awayTrends?: TeamTrends;
+  prediction?: GamePrediction | null;
 }
 
 // Generate dates for the date picker
@@ -90,14 +91,15 @@ export function MarketBoard() {
   const { data: markets, isLoading, error, isFetching } = useMarkets(debouncedFilters);
   const { data: gamesWithTrends } = useUpcomingGames(24);
 
-  // Create a map of game trends by game_id
+  // Create a map of game trends and predictions by game_id
   const trendsMap = useMemo(() => {
-    const map = new Map<string, { home: TeamTrends; away: TeamTrends }>();
+    const map = new Map<string, { home: TeamTrends; away: TeamTrends; prediction: GamePrediction | null }>();
     if (gamesWithTrends) {
       for (const game of gamesWithTrends) {
         map.set(game.game_id, {
           home: game.home_trends,
           away: game.away_trends,
+          prediction: game.prediction,
         });
       }
     }
@@ -129,6 +131,7 @@ export function MarketBoard() {
           markets: [market],
           homeTrends: trends?.home,
           awayTrends: trends?.away,
+          prediction: trends?.prediction,
         });
       }
     }
@@ -341,6 +344,7 @@ export function MarketBoard() {
               algorithm={algorithm}
               homeTrends={game.homeTrends}
               awayTrends={game.awayTrends}
+              prediction={game.prediction}
             />
           ))}
         </div>
