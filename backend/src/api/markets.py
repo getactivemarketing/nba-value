@@ -77,7 +77,7 @@ async def get_markets(
     market_type: str | None = Query(None, description="Filter by market type (spread, moneyline, total)"),
     min_value_score: float = Query(0, ge=0, le=100, description="Minimum Value Score"),
     min_confidence: float = Query(0, ge=0, le=2, description="Minimum confidence"),
-    limit: int = Query(50, ge=1, le=200, description="Maximum results"),
+    limit: int = Query(200, ge=1, le=500, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
 ) -> MarketBoardResponse:
     """
@@ -203,7 +203,7 @@ async def get_markets(
 @router.get("/markets/live", response_model=MarketBoardResponse)
 async def get_live_markets(
     algorithm: Literal["a", "b"] = Query("a", description="Which algorithm's score to sort by"),
-    limit: int = Query(50, ge=1, le=200, description="Maximum results"),
+    limit: int = Query(200, ge=1, le=500, description="Maximum results"),
 ) -> MarketBoardResponse:
     """
     Get markets for games starting within the next 24 hours.
