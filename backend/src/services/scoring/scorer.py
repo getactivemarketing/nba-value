@@ -261,13 +261,38 @@ class ScoringService:
         if market_type == "spread":
             if line is None:
                 line = 0.0
-            # For spread, line is from home perspective
-            prob = mov_to_spread_prob(
-                mov_pred.predicted_mov,
-                line,
-                mov_pred.mov_std,
-            )
-            return prob if is_home_perspective else (1 - prob)
+
+            # For spread betting, mov_to_spread_prob assumes line is from home perspective
+            # The database stores lines from each team's perspective:
+            # - home_spread: line is from home perspective (use directly)
+            # - away_spread: line is from away perspective (need to negate)
+            #
+            # Example: ORL @ WAS, ORL is -7.5 favorite
+            # - home_spread (WAS) has line = +7.5
+            # - away_spread (ORL) has line = -7.5
+            #
+            # To calculate P(away covers), we need:
+            # 1. Convert away line to home perspective: negate it (-7.5 → +7.5)
+            # 2. Calculate P(home covers +7.5) using mov_to_spread_prob
+            # 3. Return 1 - P(home covers) = P(away covers)
+
+            if is_home_perspective:
+                # Home spread: line already in home perspective
+                prob = mov_to_spread_prob(
+                    mov_pred.predicted_mov,
+                    line,
+                    mov_pred.mov_std,
+                )
+                return prob
+            else:
+                # Away spread: line is from away perspective, negate for home perspective
+                home_line = -line  # Convert away line to home equivalent
+                home_prob = mov_to_spread_prob(
+                    mov_pred.predicted_mov,
+                    home_line,
+                    mov_pred.mov_std,
+                )
+                return 1 - home_prob  # P(away covers) = 1 - P(home covers)
 
         elif market_type == "moneyline":
             prob = mov_to_moneyline_prob(
