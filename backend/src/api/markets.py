@@ -704,3 +704,318 @@ async def get_upcoming_games(
             })
 
         return response
+
+
+class BacktestResult(BaseModel):
+    """Results from backtesting predictions against actual outcomes."""
+
+    # Summary stats
+    total_games: int
+    total_predictions: int
+    days_analyzed: int
+
+    # Overall performance
+    overall_win_rate: float
+    overall_roi: float
+    total_profit_loss: float  # Assuming $100 per bet
+
+    # By market type
+    spread_stats: dict
+    moneyline_stats: dict
+    total_stats: dict
+
+    # By value score bucket
+    by_value_bucket: list[dict]
+
+    # Individual bet results for analysis
+    sample_bets: list[dict]
+
+    # Issues detected
+    issues: list[str]
+
+
+@router.get("/backtest")
+async def run_backtest(
+    days: int = Query(14, ge=1, le=90, description="Number of days to backtest"),
+    min_value_score: float = Query(50, ge=0, le=100, description="Min value score to consider a bet"),
+    algorithm: Literal["a", "b"] = Query("b", description="Algorithm to evaluate"),
+) -> BacktestResult:
+    """
+    Backtest the model against completed games.
+
+    Evaluates all predictions made for games that have final scores,
+    calculating win rate and ROI.
+    """
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=days)
+
+    async with async_session() as session:
+        # Get completed games with final scores
+        games_query = (
+            select(Game)
+            .where(Game.game_date >= start_date.date())
+            .where(Game.home_score.isnot(None))
+            .where(Game.away_score.isnot(None))
+            .options(selectinload(Game.markets))
+            .order_by(desc(Game.game_date))
+        )
+
+        result = await session.execute(games_query)
+        games = result.scalars().all()
+
+        if not games:
+            return BacktestResult(
+                total_games=0,
+                total_predictions=0,
+                days_analyzed=days,
+                overall_win_rate=0.0,
+                overall_roi=0.0,
+                total_profit_loss=0.0,
+                spread_stats={},
+                moneyline_stats={},
+                total_stats={},
+                by_value_bucket=[],
+                sample_bets=[],
+                issues=["No completed games found in the specified date range"],
+            )
+
+        # Get all value scores for these games
+        game_ids = [g.game_id for g in games]
+
+        vs_query = (
+            select(ValueScore)
+            .join(ValueScore.market)
+            .join(ValueScore.prediction)
+            .where(Market.game_id.in_(game_ids))
+            .options(
+                selectinload(ValueScore.market).selectinload(Market.game),
+                selectinload(ValueScore.prediction),
+            )
+        )
+
+        vs_result = await session.execute(vs_query)
+        all_scores = vs_result.scalars().all()
+
+        # Get unique most recent score per market
+        seen_markets = {}
+        for vs in all_scores:
+            if vs.market_id not in seen_markets or vs.calc_time > seen_markets[vs.market_id].calc_time:
+                seen_markets[vs.market_id] = vs
+
+        # Get team names for display
+        team_ids = set()
+        for g in games:
+            team_ids.add(g.home_team_id)
+            team_ids.add(g.away_team_id)
+
+        teams = {}
+        if team_ids:
+            teams_query = select(Team).where(Team.team_id.in_(team_ids))
+            teams_result = await session.execute(teams_query)
+            teams = {t.team_id: t for t in teams_result.scalars().all()}
+
+        # Evaluate each prediction
+        results = []
+        for market_id, vs in seen_markets.items():
+            market = vs.market
+            game = market.game
+            prediction = vs.prediction
+
+            # Get value score based on algorithm
+            if algorithm == "a":
+                value_score = float(vs.algo_a_value_score or 0)
+            else:
+                value_score = float(vs.algo_b_value_score or 0)
+
+            # Skip if below threshold
+            if value_score < min_value_score:
+                continue
+
+            # Calculate actual outcome
+            home_score = game.home_score
+            away_score = game.away_score
+            home_margin = home_score - away_score
+            total_points = home_score + away_score
+
+            # Determine if bet won
+            bet_won = False
+            bet_pushed = False
+            is_home = "home" in market.outcome_label.lower()
+
+            if market.market_type == "spread":
+                line = float(market.line) if market.line else 0
+                if is_home:
+                    # Home spread: home margin + line > 0 means home covered
+                    covered_margin = home_margin + line
+                else:
+                    # Away spread: -home_margin + line > 0 means away covered
+                    covered_margin = -home_margin + line
+
+                if covered_margin > 0:
+                    bet_won = True
+                elif covered_margin == 0:
+                    bet_pushed = True
+
+            elif market.market_type == "moneyline":
+                if is_home:
+                    bet_won = home_margin > 0
+                else:
+                    bet_won = home_margin < 0
+
+            elif market.market_type == "total":
+                line = float(market.line) if market.line else 0
+                is_over = "over" in market.outcome_label.lower()
+
+                if is_over:
+                    if total_points > line:
+                        bet_won = True
+                    elif total_points == line:
+                        bet_pushed = True
+                else:
+                    if total_points < line:
+                        bet_won = True
+                    elif total_points == line:
+                        bet_pushed = True
+
+            # Calculate profit/loss (assuming $100 bet)
+            odds_decimal = float(market.odds_decimal)
+            if bet_pushed:
+                profit = 0
+            elif bet_won:
+                profit = 100 * (odds_decimal - 1)
+            else:
+                profit = -100
+
+            # Get team names
+            home_team = teams.get(game.home_team_id)
+            away_team = teams.get(game.away_team_id)
+            home_abbr = home_team.abbreviation if home_team else game.home_team_id
+            away_abbr = away_team.abbreviation if away_team else game.away_team_id
+
+            # Determine bet team/side
+            if market.market_type == "total":
+                bet_side = "Over" if "over" in market.outcome_label.lower() else "Under"
+                bet_desc = f"{bet_side} {market.line}"
+            else:
+                bet_side = home_abbr if is_home else away_abbr
+                if market.market_type == "spread":
+                    bet_desc = f"{bet_side} {'+' if market.line and market.line > 0 else ''}{market.line}"
+                else:
+                    bet_desc = f"{bet_side} ML"
+
+            results.append({
+                "game_id": game.game_id,
+                "game_date": game.game_date.isoformat(),
+                "matchup": f"{away_abbr} @ {home_abbr}",
+                "final_score": f"{away_score}-{home_score}",
+                "market_type": market.market_type,
+                "bet": bet_desc,
+                "line": float(market.line) if market.line else None,
+                "odds_decimal": odds_decimal,
+                "value_score": value_score,
+                "p_true": float(prediction.p_true) * 100 if prediction.p_true else 0,
+                "p_market": float(prediction.p_market) * 100 if prediction.p_market else 0,
+                "edge": float(prediction.raw_edge) * 100 if prediction.raw_edge else 0,
+                "won": bet_won,
+                "pushed": bet_pushed,
+                "profit": profit,
+                "is_underdog": not is_home if market.market_type == "moneyline" else None,
+            })
+
+        if not results:
+            return BacktestResult(
+                total_games=len(games),
+                total_predictions=0,
+                days_analyzed=days,
+                overall_win_rate=0.0,
+                overall_roi=0.0,
+                total_profit_loss=0.0,
+                spread_stats={},
+                moneyline_stats={},
+                total_stats={},
+                by_value_bucket=[],
+                sample_bets=[],
+                issues=[f"No predictions above {min_value_score}% value score found"],
+            )
+
+        # Calculate stats
+        total_bets = len([r for r in results if not r["pushed"]])
+        wins = len([r for r in results if r["won"]])
+        total_profit = sum(r["profit"] for r in results)
+
+        overall_win_rate = (wins / total_bets * 100) if total_bets > 0 else 0
+        overall_roi = (total_profit / (total_bets * 100) * 100) if total_bets > 0 else 0
+
+        # By market type
+        def calc_type_stats(market_type: str) -> dict:
+            type_results = [r for r in results if r["market_type"] == market_type and not r["pushed"]]
+            if not type_results:
+                return {"bets": 0, "wins": 0, "win_rate": 0, "roi": 0, "profit": 0}
+
+            type_wins = len([r for r in type_results if r["won"]])
+            type_profit = sum(r["profit"] for r in type_results)
+            type_bets = len(type_results)
+
+            return {
+                "bets": type_bets,
+                "wins": type_wins,
+                "win_rate": round(type_wins / type_bets * 100, 1) if type_bets > 0 else 0,
+                "roi": round(type_profit / (type_bets * 100) * 100, 1) if type_bets > 0 else 0,
+                "profit": round(type_profit, 2),
+            }
+
+        # By value score bucket
+        buckets = [(50, 60), (60, 70), (70, 80), (80, 90), (90, 100)]
+        bucket_stats = []
+        for low, high in buckets:
+            bucket_results = [r for r in results if low <= r["value_score"] < high and not r["pushed"]]
+            if bucket_results:
+                b_wins = len([r for r in bucket_results if r["won"]])
+                b_profit = sum(r["profit"] for r in bucket_results)
+                b_bets = len(bucket_results)
+                bucket_stats.append({
+                    "bucket": f"{low}-{high}%",
+                    "bets": b_bets,
+                    "wins": b_wins,
+                    "win_rate": round(b_wins / b_bets * 100, 1) if b_bets > 0 else 0,
+                    "roi": round(b_profit / (b_bets * 100) * 100, 1) if b_bets > 0 else 0,
+                    "profit": round(b_profit, 2),
+                })
+
+        # Detect issues
+        issues = []
+
+        # Check underdog bias
+        ml_results = [r for r in results if r["market_type"] == "moneyline" and r["is_underdog"] is not None]
+        underdog_bets = [r for r in ml_results if r["is_underdog"]]
+        fav_bets = [r for r in ml_results if not r["is_underdog"]]
+
+        if len(underdog_bets) > len(fav_bets) * 2 and len(ml_results) >= 10:
+            issues.append(f"Underdog bias detected: {len(underdog_bets)} underdog bets vs {len(fav_bets)} favorite bets")
+
+        if overall_roi < -10:
+            issues.append(f"Significant negative ROI: {overall_roi:.1f}%")
+
+        # Check if high value scores perform worse than low
+        high_bucket = next((b for b in bucket_stats if b["bucket"] == "80-90%" or b["bucket"] == "90-100%"), None)
+        low_bucket = next((b for b in bucket_stats if b["bucket"] == "50-60%"), None)
+        if high_bucket and low_bucket and high_bucket["win_rate"] < low_bucket["win_rate"]:
+            issues.append(f"Calibration issue: High value bets ({high_bucket['win_rate']}% win rate) underperform low value bets ({low_bucket['win_rate']}%)")
+
+        # Sample recent bets for detailed review
+        sample_bets = sorted(results, key=lambda x: x["game_date"], reverse=True)[:20]
+
+        return BacktestResult(
+            total_games=len(games),
+            total_predictions=len(results),
+            days_analyzed=days,
+            overall_win_rate=round(overall_win_rate, 1),
+            overall_roi=round(overall_roi, 1),
+            total_profit_loss=round(total_profit, 2),
+            spread_stats=calc_type_stats("spread"),
+            moneyline_stats=calc_type_stats("moneyline"),
+            total_stats=calc_type_stats("total"),
+            by_value_bucket=bucket_stats,
+            sample_bets=sample_bets,
+            issues=issues,
+        )
