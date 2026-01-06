@@ -136,11 +136,17 @@ export function MarketBoard() {
       }
     }
 
-    // Filter by selected date
-    const selectedDateStr = selectedDate.toDateString();
+    // Filter by selected date (using local date comparison)
+    const selectedYear = selectedDate.getFullYear();
+    const selectedMonth = selectedDate.getMonth();
+    const selectedDay = selectedDate.getDate();
+
     const filteredGames = Array.from(gameMap.values()).filter(game => {
       const gameDate = new Date(game.tipTime);
-      return gameDate.toDateString() === selectedDateStr;
+      // Compare using local date components
+      return gameDate.getFullYear() === selectedYear &&
+             gameDate.getMonth() === selectedMonth &&
+             gameDate.getDate() === selectedDay;
     });
 
     // Sort by tip time
