@@ -5,12 +5,12 @@ from dataclasses import dataclass
 
 # Edge scale per market type (to be tuned via backtesting)
 # Higher values = more differentiation at larger edges
-# These values expect combined_edge values up to ~0.30 (30% edge)
+# Increased to handle large model edges until MOV model is calibrated
 EDGE_SCALE = {
-    "spread": 0.15,
-    "moneyline": 0.12,
-    "total": 0.14,
-    "prop": 0.10,
+    "spread": 0.30,
+    "moneyline": 0.25,
+    "total": 0.28,
+    "prop": 0.20,
 }
 
 

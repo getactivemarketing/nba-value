@@ -19,7 +19,14 @@
       "Bash(curl:*)",
       "Bash(cat:*)",
       "Bash(pip install:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(tree:*)",
+      "Bash(npx vercel:*)",
+      "Bash(railway up:*)",
+      "Bash(railway service:*)",
+      "Bash(railway status:*)",
+      "Bash(railway run:*)",
+      "Bash(railway shell:*)"
     ]
   }
 }
