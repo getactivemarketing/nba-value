@@ -10,7 +10,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 
 from src.database import async_session
-from src.models import Game, Market, ValueScore, ModelPrediction, Team
+from src.models import Game, Market, ValueScore, ModelPrediction, Team, TeamStats
 
 router = APIRouter()
 
@@ -445,9 +445,10 @@ async def get_markets_by_game(
 async def get_upcoming_games(
     hours: int = Query(24, ge=1, le=168, description="Hours ahead to look"),
 ) -> list[dict]:
-    """Get list of upcoming games with their market counts."""
+    """Get list of upcoming games with their market counts and team trends."""
     now = datetime.now(timezone.utc)
     cutoff = now + timedelta(hours=hours)
+    today = now.date()
 
     async with async_session() as session:
         query = (
@@ -469,10 +470,60 @@ async def get_upcoming_games(
             team_ids.add(g.away_team_id)
 
         teams = {}
+        team_stats_map = {}
         if team_ids:
+            # Get team info
             teams_query = select(Team).where(Team.team_id.in_(team_ids))
             teams_result = await session.execute(teams_query)
             teams = {t.team_id: t for t in teams_result.scalars().all()}
+
+            # Get latest team stats for each team
+            for team_id in team_ids:
+                stats_query = (
+                    select(TeamStats)
+                    .where(TeamStats.team_id == team_id)
+                    .where(TeamStats.stat_date <= today)
+                    .order_by(desc(TeamStats.stat_date))
+                    .limit(1)
+                )
+                stats_result = await session.execute(stats_query)
+                stats = stats_result.scalar_one_or_none()
+                if stats:
+                    team_stats_map[team_id] = stats
+
+        def build_team_trends(team_id: str, is_home: bool) -> dict:
+            """Build trends dict for a team."""
+            stats = team_stats_map.get(team_id)
+            if not stats:
+                return {
+                    "record": "0-0",
+                    "win_pct_l10": None,
+                    "net_rtg_l10": None,
+                    "rest_days": None,
+                    "is_b2b": False,
+                    "home_away_pct": None,
+                }
+
+            record = f"{stats.wins}-{stats.losses}"
+            win_pct_l10 = float(stats.win_pct_10) if stats.win_pct_10 else None
+            net_rtg = float(stats.net_rtg_10) if stats.net_rtg_10 else None
+            rest = stats.days_rest
+            b2b = stats.is_back_to_back or False
+
+            # Get relevant home/away win %
+            if is_home:
+                ha_pct = float(stats.home_win_pct) if stats.home_win_pct else None
+            else:
+                ha_pct = float(stats.away_win_pct) if stats.away_win_pct else None
+
+            return {
+                "record": record,
+                "win_pct_l10": win_pct_l10,
+                "net_rtg_l10": net_rtg,
+                "rest_days": rest,
+                "is_b2b": b2b,
+                "home_away_pct": ha_pct,
+            }
 
         response = []
         for game in games:
@@ -489,6 +540,8 @@ async def get_upcoming_games(
                 "time_to_tip_minutes": int((game.tip_time_utc - now).total_seconds() / 60),
                 "markets_count": len(game.markets),
                 "status": game.status,
+                "home_trends": build_team_trends(game.home_team_id, is_home=True),
+                "away_trends": build_team_trends(game.away_team_id, is_home=False),
             })
 
         return response

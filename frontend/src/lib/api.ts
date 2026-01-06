@@ -85,9 +85,38 @@ export const api = {
     return response.data;
   },
 
+  // Games
+  async getUpcomingGames(hours: number = 24): Promise<GameWithTrends[]> {
+    const response = await client.get<GameWithTrends[]>(`/games/upcoming?hours=${hours}`);
+    return response.data;
+  },
+
   // Health
   async healthCheck(): Promise<{ status: string }> {
     const response = await client.get<{ status: string }>('/health');
     return response.data;
   },
 };
+
+export interface TeamTrends {
+  record: string;
+  win_pct_l10: number | null;
+  net_rtg_l10: number | null;
+  rest_days: number | null;
+  is_b2b: boolean;
+  home_away_pct: number | null;
+}
+
+export interface GameWithTrends {
+  game_id: string;
+  home_team: string;
+  away_team: string;
+  home_team_full: string;
+  away_team_full: string;
+  tip_time: string;
+  time_to_tip_minutes: number;
+  markets_count: number;
+  status: string;
+  home_trends: TeamTrends;
+  away_trends: TeamTrends;
+}

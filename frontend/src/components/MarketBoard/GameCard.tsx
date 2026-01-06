@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ValueScoreBadge } from '@/components/ui/ValueScoreBadge';
 import type { Market, Algorithm } from '@/types/market';
+import type { TeamTrends } from '@/lib/api';
 
 // Books to display (in order)
 const DISPLAY_BOOKS = [
@@ -19,6 +20,8 @@ interface GameCardProps {
   tipTime: string;
   markets: Market[];
   algorithm: Algorithm;
+  homeTrends?: TeamTrends;
+  awayTrends?: TeamTrends;
 }
 
 function formatTipTime(tipTime: string): string {
@@ -45,6 +48,17 @@ function formatLine(line: number | null, showPlus = true): string {
   if (line === null) return '';
   if (showPlus && line > 0) return `+${line}`;
   return `${line}`;
+}
+
+function formatWinPct(pct: number | null): string {
+  if (pct === null) return '-';
+  return `${Math.round(pct * 100)}%`;
+}
+
+function formatNetRtg(rtg: number | null): string {
+  if (rtg === null) return '-';
+  const sign = rtg > 0 ? '+' : '';
+  return `${sign}${rtg.toFixed(1)}`;
 }
 
 interface BookValue {
@@ -74,7 +88,36 @@ function getConsensusLine(markets: Market[], type: string): { line: number | nul
   return { line: parseFloat(mostCommon[0]), count: mostCommon[1] };
 }
 
-export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm }: GameCardProps) {
+function TeamTrendsRow({ team, trends }: { team: string; trends?: TeamTrends }) {
+  if (!trends) return null;
+
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <span className="font-medium text-gray-700 w-12">{team}</span>
+      <div className="flex items-center gap-3 text-gray-600">
+        <span title="Record">{trends.record}</span>
+        <span title="Last 10 Win %" className={trends.win_pct_l10 && trends.win_pct_l10 >= 0.6 ? 'text-green-600' : trends.win_pct_l10 && trends.win_pct_l10 <= 0.4 ? 'text-red-500' : ''}>
+          L10: {formatWinPct(trends.win_pct_l10)}
+        </span>
+        <span title="Net Rating (Last 10)" className={trends.net_rtg_l10 && trends.net_rtg_l10 > 0 ? 'text-green-600' : trends.net_rtg_l10 && trends.net_rtg_l10 < 0 ? 'text-red-500' : ''}>
+          NRtg: {formatNetRtg(trends.net_rtg_l10)}
+        </span>
+        {trends.is_b2b && (
+          <span className="px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded text-[10px] font-medium" title="Back-to-back">
+            B2B
+          </span>
+        )}
+        {trends.rest_days !== null && trends.rest_days >= 3 && (
+          <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px] font-medium" title={`${trends.rest_days} days rest`}>
+            {trends.rest_days}D REST
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, homeTrends, awayTrends }: GameCardProps) {
   const minutesToTip = getMinutesToTip(tipTime);
   const tipTimeStr = formatTipTime(tipTime);
 
@@ -140,6 +183,14 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm }: Ga
           <ValueScoreBadge score={gameBestScore} size="lg" />
         </div>
       </div>
+
+      {/* Team Trends */}
+      {(homeTrends || awayTrends) && (
+        <div className="mb-3 p-2 bg-slate-50 rounded-lg space-y-1">
+          <TeamTrendsRow team={awayTeam} trends={awayTrends} />
+          <TeamTrendsRow team={homeTeam} trends={homeTrends} />
+        </div>
+      )}
 
       {/* Game Summary - Consensus Lines */}
       <div className="flex gap-4 mb-4 p-2 bg-gray-50 rounded-lg text-sm">

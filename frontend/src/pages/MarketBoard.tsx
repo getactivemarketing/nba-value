@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
-import { useMarkets } from '@/hooks/useMarkets';
+import { useMarkets, useUpcomingGames } from '@/hooks/useMarkets';
 import { useDebounce } from '@/hooks/useDebounce';
 import { GameCard } from '@/components/MarketBoard/GameCard';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
 import type { MarketFilters as Filters, Market, Algorithm } from '@/types/market';
+import type { TeamTrends } from '@/lib/api';
 
 interface GameGroup {
   gameId: string;
@@ -11,6 +12,8 @@ interface GameGroup {
   awayTeam: string;
   tipTime: string;
   markets: Market[];
+  homeTrends?: TeamTrends;
+  awayTrends?: TeamTrends;
 }
 
 function GameCardSkeleton() {
@@ -40,12 +43,27 @@ function GameCardSkeleton() {
 }
 
 export function MarketBoard() {
-  const [algorithm, setAlgorithm] = useState<Algorithm>('a');
+  const [algorithm, setAlgorithm] = useState<Algorithm>('b');
 
   const filters: Partial<Filters> = { algorithm };
   const debouncedFilters = useDebounce(filters, 300);
 
   const { data: markets, isLoading, error, isFetching } = useMarkets(debouncedFilters);
+  const { data: gamesWithTrends } = useUpcomingGames(24);
+
+  // Create a map of game trends by game_id
+  const trendsMap = useMemo(() => {
+    const map = new Map<string, { home: TeamTrends; away: TeamTrends }>();
+    if (gamesWithTrends) {
+      for (const game of gamesWithTrends) {
+        map.set(game.game_id, {
+          home: game.home_trends,
+          away: game.away_trends,
+        });
+      }
+    }
+    return map;
+  }, [gamesWithTrends]);
 
   // Group markets by game
   const games = useMemo(() => {
@@ -59,10 +77,12 @@ export function MarketBoard() {
         existing.markets.push(market);
       } else {
         // Extract home/away from the market data
-        // The API returns home_team and away_team on the market object
         const homeTeam = (market as any).home_team || 'HOME';
         const awayTeam = (market as any).away_team || 'AWAY';
         const tipTime = (market as any).tip_time || new Date().toISOString();
+
+        // Get trends for this game
+        const trends = trendsMap.get(market.game_id);
 
         gameMap.set(market.game_id, {
           gameId: market.game_id,
@@ -70,6 +90,8 @@ export function MarketBoard() {
           awayTeam,
           tipTime,
           markets: [market],
+          homeTrends: trends?.home,
+          awayTrends: trends?.away,
         });
       }
     }
@@ -78,7 +100,7 @@ export function MarketBoard() {
     return Array.from(gameMap.values()).sort(
       (a, b) => new Date(a.tipTime).getTime() - new Date(b.tipTime).getTime()
     );
-  }, [markets]);
+  }, [markets, trendsMap]);
 
   return (
     <div className="space-y-6">
@@ -175,6 +197,8 @@ export function MarketBoard() {
               tipTime={game.tipTime}
               markets={game.markets}
               algorithm={algorithm}
+              homeTrends={game.homeTrends}
+              awayTrends={game.awayTrends}
             />
           ))}
         </div>
