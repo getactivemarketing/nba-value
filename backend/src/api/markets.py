@@ -10,7 +10,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 
 from src.database import async_session
-from src.models import Game, Market, ValueScore, ModelPrediction, Team, TeamStats
+from src.models import Game, Market, ValueScore, ModelPrediction, Team, TeamStats, GameResult
 
 router = APIRouter()
 
@@ -1100,97 +1100,66 @@ async def get_game_history(
 
     Shows what happened vs what the lines were for backtesting analysis.
     """
-    from sqlalchemy import text
+    from datetime import date, timedelta
+
+    cutoff_date = date.today() - timedelta(days=days)
 
     async with async_session() as session:
-        # Build query with parameters
+        # Build query
+        query = (
+            select(GameResult)
+            .where(GameResult.game_date >= cutoff_date)
+            .order_by(desc(GameResult.game_date), GameResult.home_team_id)
+        )
+
         if team:
             team_upper = team.upper()
-            query = text("""
-                SELECT
-                    gr.game_id,
-                    gr.game_date,
-                    gr.home_team_id,
-                    gr.away_team_id,
-                    gr.home_score,
-                    gr.away_score,
-                    gr.total_score,
-                    gr.closing_spread,
-                    gr.closing_total,
-                    gr.actual_winner,
-                    gr.spread_result,
-                    gr.total_result,
-                    ht.full_name as home_team_full,
-                    at.full_name as away_team_full
-                FROM game_results gr
-                LEFT JOIN teams ht ON gr.home_team_id = ht.team_id
-                LEFT JOIN teams at ON gr.away_team_id = at.team_id
-                WHERE gr.game_date >= CURRENT_DATE - CAST(:days AS INTEGER) * INTERVAL '1 day'
-                AND (gr.home_team_id = :team OR gr.away_team_id = :team)
-                ORDER BY gr.game_date DESC, gr.home_team_id
-            """)
-            result = await session.execute(query, {"days": days, "team": team_upper})
-        else:
-            query = text("""
-                SELECT
-                    gr.game_id,
-                    gr.game_date,
-                    gr.home_team_id,
-                    gr.away_team_id,
-                    gr.home_score,
-                    gr.away_score,
-                    gr.total_score,
-                    gr.closing_spread,
-                    gr.closing_total,
-                    gr.actual_winner,
-                    gr.spread_result,
-                    gr.total_result,
-                    ht.full_name as home_team_full,
-                    at.full_name as away_team_full
-                FROM game_results gr
-                LEFT JOIN teams ht ON gr.home_team_id = ht.team_id
-                LEFT JOIN teams at ON gr.away_team_id = at.team_id
-                WHERE gr.game_date >= CURRENT_DATE - CAST(:days AS INTEGER) * INTERVAL '1 day'
-                ORDER BY gr.game_date DESC, gr.home_team_id
-            """)
-            result = await session.execute(query, {"days": days})
+            query = query.where(
+                (GameResult.home_team_id == team_upper) |
+                (GameResult.away_team_id == team_upper)
+            )
 
-        rows = result.fetchall()
+        result = await session.execute(query)
+        game_results = result.scalars().all()
+
+        # Get team names
+        teams_query = select(Team)
+        teams_result = await session.execute(teams_query)
+        teams = {t.team_id: t.full_name for t in teams_result.scalars().all()}
 
     # Format response
     games = []
-    for row in rows:
-        (game_id, game_date, home_team, away_team, home_score, away_score,
-         total_score, closing_spread, closing_total, actual_winner,
-         spread_result, total_result, home_full, away_full) = row
-
+    for gr in game_results:
         # Calculate margins
-        margin = (home_score - away_score) if home_score and away_score else None
+        margin = None
+        if gr.home_score is not None and gr.away_score is not None:
+            margin = gr.home_score - gr.away_score
+
         spread_margin = None
-        if margin is not None and closing_spread is not None:
-            spread_margin = margin + float(closing_spread)
+        if margin is not None and gr.closing_spread is not None:
+            spread_margin = margin + float(gr.closing_spread)
 
         total_margin = None
-        if total_score is not None and closing_total is not None:
-            total_margin = total_score - float(closing_total)
+        if gr.total_score is not None and gr.closing_total is not None:
+            total_margin = gr.total_score - float(gr.closing_total)
 
         games.append({
-            "game_id": game_id,
-            "game_date": game_date.isoformat() if game_date else None,
-            "home_team": home_team,
-            "away_team": away_team,
-            "home_team_full": home_full,
-            "away_team_full": away_full,
-            "home_score": home_score,
-            "away_score": away_score,
-            "total_score": total_score,
+            "game_id": gr.game_id,
+            "game_date": gr.game_date.isoformat() if gr.game_date else None,
+            "home_team": gr.home_team_id,
+            "away_team": gr.away_team_id,
+            "home_team_full": teams.get(gr.home_team_id, gr.home_team_id),
+            "away_team_full": teams.get(gr.away_team_id, gr.away_team_id),
+            "home_score": gr.home_score,
+            "away_score": gr.away_score,
+            "total_score": gr.total_score,
             "margin": margin,
-            "closing_spread": float(closing_spread) if closing_spread else None,
-            "closing_total": float(closing_total) if closing_total else None,
-            "actual_winner": actual_winner,
-            "spread_result": spread_result,
+            "closing_spread": float(gr.closing_spread) if gr.closing_spread else None,
+            "closing_total": float(gr.closing_total) if gr.closing_total else None,
+            "actual_winner": gr.actual_winner,
+            "spread_result": gr.spread_result,
             "spread_margin": round(spread_margin, 1) if spread_margin is not None else None,
-            "total_result": total_result,
+            "total_result": gr.total_result,
             "total_margin": round(total_margin, 1) if total_margin is not None else None,
         })
 
