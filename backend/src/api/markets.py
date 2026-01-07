@@ -1103,81 +1103,59 @@ async def get_game_history(
     from sqlalchemy import text
 
     async with async_session() as session:
-        # Query game_results table
-        query = """
-            SELECT
-                gr.game_id,
-                gr.game_date,
-                gr.home_team_id as home_team,
-                gr.away_team_id as away_team,
-                gr.home_score,
-                gr.away_score,
-                gr.total_score,
-                gr.closing_spread,
-                gr.closing_total,
-                gr.actual_winner,
-                gr.spread_result,
-                gr.total_result,
-                ht.full_name as home_team_full,
-                at.full_name as away_team_full
-            FROM game_results gr
-            LEFT JOIN teams ht ON gr.home_team_id = ht.team_id
-            LEFT JOIN teams at ON gr.away_team_id = at.team_id
-            WHERE gr.game_date >= CURRENT_DATE - INTERVAL '%s days'
-        """
-        params = [days]
-
+        # Build query with parameters
         if team:
-            query += " AND (gr.home_team_id = %s OR gr.away_team_id = %s)"
-            params.extend([team.upper(), team.upper()])
+            team_upper = team.upper()
+            query = text("""
+                SELECT
+                    gr.game_id,
+                    gr.game_date,
+                    gr.home_team_id,
+                    gr.away_team_id,
+                    gr.home_score,
+                    gr.away_score,
+                    gr.total_score,
+                    gr.closing_spread,
+                    gr.closing_total,
+                    gr.actual_winner,
+                    gr.spread_result,
+                    gr.total_result,
+                    ht.full_name as home_team_full,
+                    at.full_name as away_team_full
+                FROM game_results gr
+                LEFT JOIN teams ht ON gr.home_team_id = ht.team_id
+                LEFT JOIN teams at ON gr.away_team_id = at.team_id
+                WHERE gr.game_date >= CURRENT_DATE - CAST(:days AS INTEGER) * INTERVAL '1 day'
+                AND (gr.home_team_id = :team OR gr.away_team_id = :team)
+                ORDER BY gr.game_date DESC, gr.home_team_id
+            """)
+            result = await session.execute(query, {"days": days, "team": team_upper})
+        else:
+            query = text("""
+                SELECT
+                    gr.game_id,
+                    gr.game_date,
+                    gr.home_team_id,
+                    gr.away_team_id,
+                    gr.home_score,
+                    gr.away_score,
+                    gr.total_score,
+                    gr.closing_spread,
+                    gr.closing_total,
+                    gr.actual_winner,
+                    gr.spread_result,
+                    gr.total_result,
+                    ht.full_name as home_team_full,
+                    at.full_name as away_team_full
+                FROM game_results gr
+                LEFT JOIN teams ht ON gr.home_team_id = ht.team_id
+                LEFT JOIN teams at ON gr.away_team_id = at.team_id
+                WHERE gr.game_date >= CURRENT_DATE - CAST(:days AS INTEGER) * INTERVAL '1 day'
+                ORDER BY gr.game_date DESC, gr.home_team_id
+            """)
+            result = await session.execute(query, {"days": days})
 
-        query += " ORDER BY gr.game_date DESC, gr.home_team_id"
-
-        result = await session.execute(text(query % tuple(['%s'] * len(params))), dict(enumerate(params)))
-        # Use raw SQL with psycopg2 instead since we're having issues
-
-    # Use direct psycopg2 for simplicity
-    import psycopg2
-    import os
-
-    db_url = os.environ.get('DATABASE_URL', 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway')
-    conn = psycopg2.connect(db_url)
-    cur = conn.cursor()
-
-    query = """
-        SELECT
-            gr.game_id,
-            gr.game_date,
-            gr.home_team_id,
-            gr.away_team_id,
-            gr.home_score,
-            gr.away_score,
-            gr.total_score,
-            gr.closing_spread,
-            gr.closing_total,
-            gr.actual_winner,
-            gr.spread_result,
-            gr.total_result,
-            ht.full_name as home_team_full,
-            at.full_name as away_team_full
-        FROM game_results gr
-        LEFT JOIN teams ht ON gr.home_team_id = ht.team_id
-        LEFT JOIN teams at ON gr.away_team_id = at.team_id
-        WHERE gr.game_date >= CURRENT_DATE - INTERVAL '%s days'
-    """
-    params = [days]
-
-    if team:
-        query += " AND (gr.home_team_id = %s OR gr.away_team_id = %s)"
-        params.extend([team.upper(), team.upper()])
-
-    query += " ORDER BY gr.game_date DESC, gr.home_team_id"
-
-    cur.execute(query, params)
-    rows = cur.fetchall()
-
-    cur.close()
-    conn.close()
+        rows = result.fetchall()
 
     # Format response
     games = []
