@@ -166,7 +166,7 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
                   <>
                     <ValueBadge score={awaySpread.score} size="lg" />
                     <span className="text-lg font-semibold text-gray-700">
-                      {formatLine(spreadLine ? -spreadLine : awaySpread.line)}
+                      {formatLine(awaySpread.line)}
                     </span>
                   </>
                 )}
@@ -194,7 +194,7 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
                 {homeSpread && (
                   <>
                     <span className="text-lg font-semibold text-gray-700">
-                      {formatLine(spreadLine)}
+                      {formatLine(homeSpread.line)}
                     </span>
                     <ValueBadge score={homeSpread.score} size="lg" />
                   </>
@@ -313,7 +313,7 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
                 <span className="text-emerald-800 font-medium">Best Value: </span>
                 <span className="font-semibold text-emerald-700">
                   {prediction.best_bet.type === 'total'
-                    ? `${prediction.best_bet.team === homeTeam ? 'Over' : 'Under'} ${prediction.best_bet.line}`
+                    ? `${prediction.best_bet.team} ${prediction.best_bet.line}`
                     : `${prediction.best_bet.team} ML`
                   }
                 </span>

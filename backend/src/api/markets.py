@@ -650,9 +650,14 @@ async def get_upcoming_games(
                 # Track best value bet overall
                 if score > best_score:
                     best_score = score
+                    # For totals, team is "Over" or "Under"; for spreads/ML it's the team abbrev
+                    if market.market_type == "total":
+                        bet_team = "Over" if "over" in market.outcome_label.lower() else "Under"
+                    else:
+                        bet_team = home_abbr if "home" in market.outcome_label else away_abbr
                     best_bet = {
                         "type": market.market_type,
-                        "team": home_abbr if "home" in market.outcome_label else away_abbr,
+                        "team": bet_team,
                         "line": float(market.line) if market.line else None,
                         "value_score": round(score),
                         "edge": round(float(prediction.raw_edge) * 100, 1) if prediction.raw_edge else 0,
