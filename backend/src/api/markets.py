@@ -618,10 +618,10 @@ async def get_upcoming_games(
             })
 
             # 6. ATS Record (L10)
-            home_ats_wins = getattr(home_stats, 'ats_wins_l10', None) or 0 if home_stats else 0
-            home_ats_losses = getattr(home_stats, 'ats_losses_l10', None) or 0 if home_stats else 0
-            away_ats_wins = getattr(away_stats, 'ats_wins_l10', None) or 0 if away_stats else 0
-            away_ats_losses = getattr(away_stats, 'ats_losses_l10', None) or 0 if away_stats else 0
+            home_ats_wins = (getattr(home_stats, 'ats_wins_l10', None) or 0) if home_stats else 0
+            home_ats_losses = (getattr(home_stats, 'ats_losses_l10', None) or 0) if home_stats else 0
+            away_ats_wins = (getattr(away_stats, 'ats_wins_l10', None) or 0) if away_stats else 0
+            away_ats_losses = (getattr(away_stats, 'ats_losses_l10', None) or 0) if away_stats else 0
 
             home_ats_pct = home_ats_wins / (home_ats_wins + home_ats_losses) if (home_ats_wins + home_ats_losses) > 0 else 0.5
             away_ats_pct = away_ats_wins / (away_ats_wins + away_ats_losses) if (away_ats_wins + away_ats_losses) > 0 else 0.5
