@@ -48,14 +48,16 @@ class CalibrationLayer:
     Maintains separate calibrators for each market type.
     """
 
-    def __init__(self, method: Literal["isotonic", "platt"] = "isotonic"):
+    def __init__(self, method: Literal["isotonic", "platt", "sigmoid"] = "isotonic"):
         """
         Initialize calibration layer.
 
         Args:
-            method: Calibration method ('isotonic' or 'platt')
+            method: Calibration method ('isotonic', 'platt', or 'sigmoid')
+                    Note: 'sigmoid' is an alias for 'platt' (Platt scaling)
         """
-        self.method = method
+        # 'sigmoid' is an alias for 'platt'
+        self.method = "platt" if method == "sigmoid" else method
         self.calibrators: dict[str, IsotonicRegression | LogisticRegression] = {}
         self.metrics: dict[str, CalibrationMetrics] = {}
         self.is_fitted: dict[str, bool] = {}

@@ -29,6 +29,7 @@ CALIBRATION_PATH = MODEL_DIR / "calibration.pkl"
 def train_mov_model(
     X: np.ndarray,
     y: np.ndarray,
+    feature_names: list[str],
     test_size: float = 0.2,
 ) -> tuple[MOVModel, dict]:
     """
@@ -37,12 +38,13 @@ def train_mov_model(
     Args:
         X: Feature matrix
         y: Target vector (game margins)
+        feature_names: List of feature names matching X columns
         test_size: Fraction for test set
 
     Returns:
         Trained model and metrics dict
     """
-    logger.info(f"Training MOV model on {len(X)} samples")
+    logger.info(f"Training MOV model on {len(X)} samples with {len(feature_names)} features")
 
     # Split data chronologically (last N games for test)
     n_test = int(len(X) * test_size)
@@ -54,12 +56,8 @@ def train_mov_model(
     # Create and train model
     model = MOVModel()
 
-    # Train with custom feature names matching our data
-    # Our training data has: ortg, drtg, net_rtg, pace, win_pct for home and away
-    training_features = [
-        'home_ortg_10', 'home_drtg_10', 'home_net_rtg_10', 'home_pace_10', 'home_win_pct_10',
-        'away_ortg_10', 'away_drtg_10', 'away_net_rtg_10', 'away_pace_10', 'away_win_pct_10',
-    ]
+    # Use feature names from training data
+    training_features = feature_names
 
     # Train the model
     try:
@@ -175,16 +173,24 @@ class RidgeMOVModel:
 def train_calibration_layer(
     df: pd.DataFrame,
     model: MOVModel,
+    feature_names: list[str],
+    method: str = "sigmoid",  # Use sigmoid (Platt scaling) for smoother calibration
 ) -> tuple[CalibrationLayer, dict]:
     """
     Train calibration layer based on model predictions vs actual outcomes.
 
     Uses the trained MOV model to predict probabilities, then calibrates
     against actual win/cover outcomes.
-    """
-    logger.info("Training calibration layer")
 
-    calibration = CalibrationLayer(method="isotonic")
+    Args:
+        df: Training dataframe
+        model: Trained MOV model
+        feature_names: List of feature names used by model
+        method: Calibration method ('sigmoid' for Platt, 'isotonic' for isotonic)
+    """
+    logger.info(f"Training calibration layer with method={method}")
+
+    calibration = CalibrationLayer(method=method)
 
     # Prepare data for spread calibration
     spread_probs = []
@@ -195,19 +201,8 @@ def train_calibration_layer(
     ml_outcomes = []
 
     for _, row in df.iterrows():
-        # Build feature dict matching model expectations
-        features = {
-            'home_ortg_10': row['home_ortg_10'],
-            'home_drtg_10': row['home_drtg_10'],
-            'home_net_rtg_10': row['home_net_rtg_10'],
-            'home_pace_10': row['home_pace_10'],
-            'home_win_pct_10': row['home_win_pct_10'],
-            'away_ortg_10': row['away_ortg_10'],
-            'away_drtg_10': row['away_drtg_10'],
-            'away_net_rtg_10': row['away_net_rtg_10'],
-            'away_pace_10': row['away_pace_10'],
-            'away_win_pct_10': row['away_win_pct_10'],
-        }
+        # Build feature dict from feature names
+        features = {f: row.get(f) for f in feature_names}
 
         # Skip if missing features
         if any(pd.isna(v) for v in features.values()):
@@ -265,25 +260,14 @@ def train_calibration_layer(
     return calibration, metrics
 
 
-def analyze_predictions(df: pd.DataFrame, model: MOVModel) -> dict:
+def analyze_predictions(df: pd.DataFrame, model: MOVModel, feature_names: list[str]) -> dict:
     """Analyze model predictions vs actual outcomes."""
     predictions = []
     actuals = []
     errors = []
 
     for _, row in df.iterrows():
-        features = {
-            'home_ortg_10': row['home_ortg_10'],
-            'home_drtg_10': row['home_drtg_10'],
-            'home_net_rtg_10': row['home_net_rtg_10'],
-            'home_pace_10': row['home_pace_10'],
-            'home_win_pct_10': row['home_win_pct_10'],
-            'away_ortg_10': row['away_ortg_10'],
-            'away_drtg_10': row['away_drtg_10'],
-            'away_net_rtg_10': row['away_net_rtg_10'],
-            'away_pace_10': row['away_pace_10'],
-            'away_win_pct_10': row['away_win_pct_10'],
-        }
+        features = {f: row.get(f) for f in feature_names}
 
         if any(pd.isna(v) for v in features.values()):
             continue
@@ -314,27 +298,28 @@ def analyze_predictions(df: pd.DataFrame, model: MOVModel) -> dict:
     }
 
 
-def run_full_training_pipeline():
+def run_full_training_pipeline(include_rest: bool = True):
     """Run the full training pipeline."""
     print("=" * 60)
     print("MOV MODEL TRAINING PIPELINE")
     print("=" * 60)
 
     # Step 1: Build training data
-    print("\n[1/4] Building training dataset...")
+    print("\n[1/5] Building training dataset...")
     games = build_training_dataset(seasons=["2023-24", "2024-25"])
     df = games_to_dataframe(games)
     print(f"  Total games: {len(df)}")
     print(f"  Date range: {df['game_date'].min()} to {df['game_date'].max()}")
 
     # Step 2: Prepare training arrays
-    print("\n[2/4] Preparing training arrays...")
-    X, y, df_clean = prepare_training_arrays(df)
+    print("\n[2/5] Preparing training arrays...")
+    X, y, df_clean, feature_names = prepare_training_arrays(df, include_rest=include_rest)
     print(f"  Training samples: {len(X)}")
+    print(f"  Features ({len(feature_names)}): {feature_names}")
 
     # Step 3: Train MOV model
-    print("\n[3/4] Training MOV model...")
-    model, model_metrics = train_mov_model(X, y)
+    print("\n[3/5] Training MOV model...")
+    model, model_metrics = train_mov_model(X, y, feature_names)
     print(f"  Train RMSE: {model_metrics['train_rmse']:.2f}")
     print(f"  Test RMSE: {model_metrics['test_rmse']:.2f}")
     print(f"  MOV Std: {model_metrics['mov_std']:.2f}")
@@ -350,13 +335,13 @@ def run_full_training_pipeline():
         analysis_model = model
 
     # Analyze predictions
-    analysis = analyze_predictions(df_clean, analysis_model)
+    analysis = analyze_predictions(df_clean, analysis_model, feature_names)
     print(f"  Correlation: {analysis['correlation']:.3f}")
     print(f"  Home Win Accuracy: {analysis['home_win_accuracy']:.1%}")
 
-    # Step 4: Train calibration
-    print("\n[4/4] Training calibration layer...")
-    calibration, cal_metrics = train_calibration_layer(df_clean, analysis_model)
+    # Step 4: Train calibration (use sigmoid for smoother output)
+    print("\n[4/5] Training calibration layer (Platt scaling)...")
+    calibration, cal_metrics = train_calibration_layer(df_clean, analysis_model, feature_names, method="sigmoid")
     print(f"  Moneyline Brier: {cal_metrics['moneyline']['brier_before']:.4f} -> {cal_metrics['moneyline']['brier_after']:.4f}")
     print(f"  Spread Brier: {cal_metrics['spread']['brier_before']:.4f} -> {cal_metrics['spread']['brier_after']:.4f}")
 

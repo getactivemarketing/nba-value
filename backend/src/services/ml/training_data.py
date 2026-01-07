@@ -41,6 +41,8 @@ class TrainingGame:
     home_net_rtg_10: float | None
     home_pace_10: float | None
     home_win_pct_10: float | None
+    home_rest_days: int | None  # Days since last game
+    home_b2b: int | None  # 1 if back-to-back, 0 otherwise
 
     # Away team features
     away_ortg_10: float | None
@@ -48,6 +50,8 @@ class TrainingGame:
     away_net_rtg_10: float | None
     away_pace_10: float | None
     away_win_pct_10: float | None
+    away_rest_days: int | None
+    away_b2b: int | None
 
 
 def fetch_season_games(season: str = "2024-25") -> pd.DataFrame:
@@ -95,14 +99,23 @@ def calculate_rolling_stats(games_df: pd.DataFrame, window: int = 10) -> dict:
         team_games['ORTG_EST'] = team_games['PTS_ROLL'] * 100 / 100  # Simplified
         team_games['DRTG_EST'] = team_games['OPP_PTS_ROLL'] * 100 / 100
 
+        # Calculate rest days (days since last game)
+        team_games['GAME_DATE_DT'] = pd.to_datetime(team_games['GAME_DATE'])
+        team_games['PREV_GAME_DATE'] = team_games['GAME_DATE_DT'].shift(1)
+        team_games['REST_DAYS'] = (team_games['GAME_DATE_DT'] - team_games['PREV_GAME_DATE']).dt.days
+        team_games['IS_B2B'] = (team_games['REST_DAYS'] == 1).astype(int)
+
         for _, row in team_games.iterrows():
             key = (team_id, row['GAME_DATE'])
+            rest_days = row['REST_DAYS'] if pd.notna(row['REST_DAYS']) else 3  # Default to 3 for first game
             team_stats[key] = {
                 'ortg_10': row['ORTG_EST'],
                 'drtg_10': row['DRTG_EST'],
                 'net_rtg_10': row['ORTG_EST'] - row['DRTG_EST'] if pd.notna(row['ORTG_EST']) else None,
                 'pace_10': 100.0,  # Placeholder
                 'win_pct_10': row['WIN_ROLL'],
+                'rest_days': int(min(rest_days, 7)),  # Cap at 7 days
+                'is_b2b': int(row['IS_B2B']) if pd.notna(row['IS_B2B']) else 0,
             }
 
     return team_stats
@@ -178,11 +191,15 @@ def build_training_dataset(
                     home_net_rtg_10=home_stats.get('net_rtg_10'),
                     home_pace_10=home_stats.get('pace_10'),
                     home_win_pct_10=home_stats.get('win_pct_10'),
+                    home_rest_days=home_stats.get('rest_days'),
+                    home_b2b=home_stats.get('is_b2b'),
                     away_ortg_10=away_stats.get('ortg_10'),
                     away_drtg_10=away_stats.get('drtg_10'),
                     away_net_rtg_10=away_stats.get('net_rtg_10'),
                     away_pace_10=away_stats.get('pace_10'),
                     away_win_pct_10=away_stats.get('win_pct_10'),
+                    away_rest_days=away_stats.get('rest_days'),
+                    away_b2b=away_stats.get('is_b2b'),
                 )
 
                 all_games.append(training_game)
@@ -212,23 +229,28 @@ def games_to_dataframe(games: list[TrainingGame]) -> pd.DataFrame:
             'home_net_rtg_10': g.home_net_rtg_10,
             'home_pace_10': g.home_pace_10,
             'home_win_pct_10': g.home_win_pct_10,
+            'home_rest_days': g.home_rest_days,
+            'home_b2b': g.home_b2b,
             'away_ortg_10': g.away_ortg_10,
             'away_drtg_10': g.away_drtg_10,
             'away_net_rtg_10': g.away_net_rtg_10,
             'away_pace_10': g.away_pace_10,
             'away_win_pct_10': g.away_win_pct_10,
+            'away_rest_days': g.away_rest_days,
+            'away_b2b': g.away_b2b,
         }
         for g in games
     ])
 
 
-def prepare_training_arrays(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+def prepare_training_arrays(df: pd.DataFrame, include_rest: bool = True) -> tuple[np.ndarray, np.ndarray]:
     """
     Prepare feature matrix X and target vector y for model training.
 
     Features:
     - home_ortg_10, home_drtg_10, home_net_rtg_10, home_pace_10, home_win_pct_10
     - away_ortg_10, away_drtg_10, away_net_rtg_10, away_pace_10, away_win_pct_10
+    - home_rest_days, home_b2b, away_rest_days, away_b2b (if include_rest=True)
 
     Target: margin (home - away)
     """
@@ -237,15 +259,21 @@ def prepare_training_arrays(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         'away_ortg_10', 'away_drtg_10', 'away_net_rtg_10', 'away_pace_10', 'away_win_pct_10',
     ]
 
+    if include_rest:
+        feature_cols.extend([
+            'home_rest_days', 'home_b2b',
+            'away_rest_days', 'away_b2b',
+        ])
+
     # Drop rows with missing features
     df_clean = df.dropna(subset=feature_cols)
 
     X = df_clean[feature_cols].values
     y = df_clean['margin'].values
 
-    logger.info(f"Prepared {len(X)} training samples, dropped {len(df) - len(df_clean)} with missing features")
+    logger.info(f"Prepared {len(X)} training samples with {len(feature_cols)} features, dropped {len(df) - len(df_clean)} with missing data")
 
-    return X, y, df_clean
+    return X, y, df_clean, feature_cols
 
 
 def save_training_data(df: pd.DataFrame, path: str | Path) -> None:

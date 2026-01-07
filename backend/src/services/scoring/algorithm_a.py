@@ -7,10 +7,10 @@ from dataclasses import dataclass
 # These represent the edge at which tanh gives ~76% (tanh(1) ≈ 0.76)
 # Based on trained model, edges typically range 5-15% so use 10% as baseline
 EDGE_SCALE = {
-    "spread": 0.12,  # 12% edge = ~76% value score
-    "moneyline": 0.10,  # 10% edge = ~76% value score
-    "total": 0.15,  # 15% edge = ~76% value score (totals often have larger model uncertainty)
-    "prop": 0.08,
+    "spread": 0.20,  # 20% edge = ~76% value score (more conservative)
+    "moneyline": 0.15,  # 15% edge = ~76% value score
+    "total": 0.20,  # 20% edge = ~76% value score
+    "prop": 0.10,
 }
 
 
