@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
-import { useMarkets, useUpcomingGames } from '@/hooks/useMarkets';
+import { useMarkets, useUpcomingGames, useGameHistory } from '@/hooks/useMarkets';
 import { useDebounce } from '@/hooks/useDebounce';
 import { GameCard } from '@/components/MarketBoard/GameCard';
+import { HistoricalGameCard } from '@/components/MarketBoard/HistoricalGameCard';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
 import type { MarketFilters as Filters, Market, Algorithm } from '@/types/market';
 import type { TeamTrends, GamePrediction, TornadoFactor } from '@/lib/api';
@@ -50,6 +51,14 @@ function formatDateLabel(date: Date): { day: string; date: string } {
   };
 }
 
+function isPastDate(date: Date): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const check = new Date(date);
+  check.setHours(0, 0, 0, 0);
+  return check < today;
+}
+
 function GameCardSkeleton() {
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden animate-pulse">
@@ -85,12 +94,14 @@ export function MarketBoard() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
 
   const dates = useMemo(() => getDateRange(), []);
+  const isViewingPast = useMemo(() => isPastDate(selectedDate), [selectedDate]);
 
   const filters: Partial<Filters> = { algorithm };
   const debouncedFilters = useDebounce(filters, 300);
 
   const { data: markets, isLoading, error, isFetching } = useMarkets(debouncedFilters);
   const { data: gamesWithTrends } = useUpcomingGames(24);
+  const { data: historicalGames, isLoading: isLoadingHistory } = useGameHistory(7);
 
   // Create a map of game trends and predictions by game_id
   const trendsMap = useMemo(() => {
@@ -183,6 +194,34 @@ export function MarketBoard() {
     return counts;
   }, [markets]);
 
+  // Filter historical games by selected date
+  const filteredHistoricalGames = useMemo(() => {
+    if (!historicalGames || !isViewingPast) return [];
+
+    const selectedYear = selectedDate.getFullYear();
+    const selectedMonth = selectedDate.getMonth();
+    const selectedDay = selectedDate.getDate();
+
+    return historicalGames.filter(game => {
+      const gameDate = new Date(game.game_date + 'T12:00:00');
+      return gameDate.getFullYear() === selectedYear &&
+             gameDate.getMonth() === selectedMonth &&
+             gameDate.getDate() === selectedDay;
+    });
+  }, [historicalGames, selectedDate, isViewingPast]);
+
+  // Count historical games for past dates
+  const historicalCountByDate = useMemo(() => {
+    if (!historicalGames) return new Map<string, number>();
+
+    const counts = new Map<string, number>();
+    for (const game of historicalGames) {
+      const dateStr = new Date(game.game_date + 'T12:00:00').toDateString();
+      counts.set(dateStr, (counts.get(dateStr) || 0) + 1);
+    }
+    return counts;
+  }, [historicalGames]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -224,7 +263,10 @@ export function MarketBoard() {
         {dates.map((date) => {
           const { day, date: dateLabel } = formatDateLabel(date);
           const isSelected = date.toDateString() === selectedDate.toDateString();
-          const gameCount = gameCountByDate.get(date.toDateString()) || 0;
+          const isPast = isPastDate(date);
+          const gameCount = isPast
+            ? historicalCountByDate.get(date.toDateString()) || 0
+            : gameCountByDate.get(date.toDateString()) || 0;
 
           return (
             <button
@@ -318,7 +360,7 @@ export function MarketBoard() {
       {error && <ErrorMessage error={error as Error} />}
 
       {/* Loading State */}
-      {isLoading && (
+      {(isLoading || (isViewingPast && isLoadingHistory)) && (
         <div className="grid gap-6 lg:grid-cols-2">
           {[1, 2, 3, 4].map((i) => (
             <GameCardSkeleton key={i} />
@@ -326,38 +368,67 @@ export function MarketBoard() {
         </div>
       )}
 
-      {/* Empty State */}
-      {!isLoading && !error && games.length === 0 && (
-        <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-          <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-          <p className="text-gray-500 text-lg">No games scheduled for this date</p>
-          <p className="text-sm text-gray-400 mt-1">
-            Select another date or check back later
-          </p>
-        </div>
+      {/* Historical Games (Past Date) */}
+      {isViewingPast && !isLoadingHistory && (
+        <>
+          {filteredHistoricalGames.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
+              <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              <p className="text-gray-500 text-lg">No game results for this date</p>
+              <p className="text-sm text-gray-400 mt-1">
+                Historical data is available for the past 7 days
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="bg-slate-100 rounded-lg p-3 text-sm text-slate-700">
+                Viewing completed games with results. Spread and total outcomes are based on closing lines.
+              </div>
+              <div className="grid gap-6 lg:grid-cols-2">
+                {filteredHistoricalGames.map((game) => (
+                  <HistoricalGameCard key={game.game_id} game={game} />
+                ))}
+              </div>
+            </>
+          )}
+        </>
       )}
 
-      {/* Game Cards */}
-      {!isLoading && games.length > 0 && (
-        <div className="grid gap-6 lg:grid-cols-2">
-          {games.map((game) => (
-            <GameCard
-              key={game.gameId}
-              gameId={game.gameId}
-              homeTeam={game.homeTeam}
-              awayTeam={game.awayTeam}
-              tipTime={game.tipTime}
-              markets={game.markets}
-              algorithm={algorithm}
-              homeTrends={game.homeTrends}
-              awayTrends={game.awayTrends}
-              prediction={game.prediction}
-              tornadoChart={game.tornadoChart}
-            />
-          ))}
-        </div>
+      {/* Upcoming Games (Today/Future) */}
+      {!isViewingPast && !isLoading && (
+        <>
+          {games.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
+              <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              <p className="text-gray-500 text-lg">No games scheduled for this date</p>
+              <p className="text-sm text-gray-400 mt-1">
+                Select another date or check back later
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-6 lg:grid-cols-2">
+              {games.map((game) => (
+                <GameCard
+                  key={game.gameId}
+                  gameId={game.gameId}
+                  homeTeam={game.homeTeam}
+                  awayTeam={game.awayTeam}
+                  tipTime={game.tipTime}
+                  markets={game.markets}
+                  algorithm={algorithm}
+                  homeTrends={game.homeTrends}
+                  awayTrends={game.awayTrends}
+                  prediction={game.prediction}
+                  tornadoChart={game.tornadoChart}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

@@ -1090,6 +1090,108 @@ async def run_backtest(
         )
 
 
+@router.get("/performance")
+async def get_model_performance(
+    days: int = Query(7, ge=1, le=90, description="Number of days to analyze"),
+) -> dict:
+    """
+    Get model performance metrics from prediction tracking.
+
+    Shows how our predictions have performed over time.
+    """
+    from src.tasks.prediction_tracker import get_performance_summary
+    return get_performance_summary(days=days)
+
+
+@router.get("/performance/daily")
+async def get_daily_performance(
+    days: int = Query(7, ge=1, le=30, description="Number of days to show"),
+) -> list[dict]:
+    """
+    Get daily performance breakdown.
+
+    Shows day-by-day results with individual bets.
+    """
+    import psycopg2
+    from datetime import date, timedelta
+
+    conn = psycopg2.connect('postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway')
+    cur = conn.cursor()
+
+    cutoff = date.today() - timedelta(days=days)
+
+    cur.execute('''
+        SELECT
+            DATE(snapshot_time) as game_date,
+            game_id, home_team, away_team,
+            predicted_winner, winner_probability, winner_confidence,
+            actual_winner, winner_correct,
+            best_bet_type, best_bet_team, best_bet_line, best_bet_value_score,
+            best_bet_result, best_bet_profit,
+            home_score, away_score
+        FROM prediction_snapshots
+        WHERE DATE(snapshot_time) >= %s
+        AND winner_correct IS NOT NULL
+        ORDER BY snapshot_time DESC
+    ''', (cutoff,))
+
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    # Group by date
+    daily_results = {}
+    for row in rows:
+        (game_date, game_id, home, away, pred_winner, winner_prob, confidence,
+         actual_winner, winner_correct, bet_type, bet_team, bet_line, bet_value,
+         bet_result, bet_profit, home_score, away_score) = row
+
+        date_str = game_date.isoformat()
+        if date_str not in daily_results:
+            daily_results[date_str] = {
+                "date": date_str,
+                "games": [],
+                "winner_correct": 0,
+                "winner_total": 0,
+                "bet_wins": 0,
+                "bet_losses": 0,
+                "total_profit": 0
+            }
+
+        daily_results[date_str]["games"].append({
+            "matchup": f"{away} @ {home}",
+            "score": f"{away_score}-{home_score}" if away_score else None,
+            "predicted_winner": pred_winner,
+            "winner_prob": winner_prob,
+            "confidence": confidence,
+            "actual_winner": actual_winner,
+            "winner_correct": winner_correct,
+            "best_bet": f"{bet_team} {bet_type} {bet_line}" if bet_type else None,
+            "best_bet_value": bet_value,
+            "bet_result": bet_result,
+            "bet_profit": float(bet_profit) if bet_profit else 0
+        })
+
+        daily_results[date_str]["winner_total"] += 1
+        if winner_correct:
+            daily_results[date_str]["winner_correct"] += 1
+
+        if bet_result == 'win':
+            daily_results[date_str]["bet_wins"] += 1
+        elif bet_result == 'loss':
+            daily_results[date_str]["bet_losses"] += 1
+
+        daily_results[date_str]["total_profit"] += (float(bet_profit) if bet_profit else 0)
+
+    # Calculate daily summaries
+    for day in daily_results.values():
+        day["winner_accuracy"] = round(day["winner_correct"] / day["winner_total"] * 100, 1) if day["winner_total"] > 0 else 0
+        day["bet_record"] = f"{day['bet_wins']}-{day['bet_losses']}"
+        day["total_profit"] = round(day["total_profit"], 2)
+
+    return sorted(daily_results.values(), key=lambda x: x["date"], reverse=True)
+
+
 @router.get("/games/history")
 async def get_game_history(
     days: int = Query(7, ge=1, le=90, description="Number of days of history"),

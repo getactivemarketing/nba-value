@@ -6,7 +6,7 @@ from decimal import Decimal
 from sqlalchemy import String, Integer, Numeric, Date, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.models.base import Base
+from src.database import Base
 
 
 class GameResult(Base):

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { api, type GameWithTrends } from '@/lib/api';
+import { api, type GameWithTrends, type HistoricalGame } from '@/lib/api';
 import type { MarketFilters } from '@/types/market';
 
 export function useMarkets(filters: Partial<MarketFilters> = {}) {
@@ -42,5 +42,13 @@ export function useUpcomingGames(hours: number = 24) {
     queryFn: () => api.getUpcomingGames(hours),
     refetchInterval: 60000, // Refresh every minute
     staleTime: 30000,
+  });
+}
+
+export function useGameHistory(days: number = 7, team?: string) {
+  return useQuery<HistoricalGame[]>({
+    queryKey: ['games', 'history', days, team],
+    queryFn: () => api.getGameHistory(days, team),
+    staleTime: 300000, // Historical data doesn't change often (5 min)
   });
 }

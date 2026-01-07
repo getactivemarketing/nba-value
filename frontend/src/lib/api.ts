@@ -91,6 +91,13 @@ export const api = {
     return response.data;
   },
 
+  async getGameHistory(days: number = 7, team?: string): Promise<HistoricalGame[]> {
+    const params = new URLSearchParams({ days: String(days) });
+    if (team) params.append('team', team);
+    const response = await client.get<HistoricalGame[]>(`/games/history?${params}`);
+    return response.data;
+  },
+
   // Health
   async healthCheck(): Promise<{ status: string }> {
     const response = await client.get<{ status: string }>('/health');
@@ -150,4 +157,24 @@ export interface GameWithTrends {
   away_trends: TeamTrends;
   prediction: GamePrediction | null;
   tornado_chart: TornadoFactor[];
+}
+
+export interface HistoricalGame {
+  game_id: string;
+  game_date: string;
+  home_team: string;
+  away_team: string;
+  home_team_full: string;
+  away_team_full: string;
+  home_score: number;
+  away_score: number;
+  total_score: number;
+  margin: number;
+  closing_spread: number | null;
+  closing_total: number | null;
+  actual_winner: string;
+  spread_result: string;
+  spread_margin: number | null;
+  total_result: string;
+  total_margin: number | null;
 }

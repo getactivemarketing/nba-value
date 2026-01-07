@@ -10,6 +10,7 @@ from src.models.score import ValueScore
 from src.models.evaluation import Evaluation
 from src.models.user import User
 from src.models.game_result import GameResult
+from src.models.prediction_snapshot import PredictionSnapshot
 
 __all__ = [
     "Game",
@@ -22,4 +23,5 @@ __all__ = [
     "Evaluation",
     "User",
     "GameResult",
+    "PredictionSnapshot",
 ]
