@@ -230,3 +230,4 @@ if __name__ == '__main__':
     else:
         # Default: run all tasks once
         run_all()
+# Scheduler service
