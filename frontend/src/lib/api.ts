@@ -126,6 +126,16 @@ export interface GamePrediction {
   factors: string[];
 }
 
+export interface TornadoFactor {
+  factor: string;
+  label: string;
+  home_value: number | string;
+  away_value: number | string;
+  diff: number;
+  home_better: boolean | null;
+  expected_pace?: number;
+}
+
 export interface GameWithTrends {
   game_id: string;
   home_team: string;
@@ -139,4 +149,5 @@ export interface GameWithTrends {
   home_trends: TeamTrends;
   away_trends: TeamTrends;
   prediction: GamePrediction | null;
+  tornado_chart: TornadoFactor[];
 }

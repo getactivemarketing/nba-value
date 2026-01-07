@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getTeamLogo, getTeamColor } from '@/lib/teamLogos';
 import type { Market, Algorithm } from '@/types/market';
-import type { TeamTrends, GamePrediction } from '@/lib/api';
+import type { TeamTrends, GamePrediction, TornadoFactor } from '@/lib/api';
+import { TornadoChart } from './TornadoChart';
 
 interface GameCardProps {
   gameId: string;
@@ -14,6 +15,7 @@ interface GameCardProps {
   homeTrends?: TeamTrends;
   awayTrends?: TeamTrends;
   prediction?: GamePrediction | null;
+  tornadoChart?: TornadoFactor[];
 }
 
 function formatGameTime(tipTime: string): { date: string; time: string } {
@@ -125,7 +127,7 @@ function TeamLogo({ team, size = 48 }: { team: string; size?: number }) {
   );
 }
 
-export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, homeTrends, awayTrends, prediction }: GameCardProps) {
+export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, homeTrends, awayTrends, prediction, tornadoChart }: GameCardProps) {
   const { date, time } = formatGameTime(tipTime);
 
   // Get spread values for each team
@@ -244,6 +246,18 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
             </div>
           )}
         </div>
+
+        {/* Tornado Chart - Matchup Comparison */}
+        {tornadoChart && tornadoChart.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <div className="text-xs font-semibold text-gray-600 mb-2 text-center">MATCHUP BREAKDOWN</div>
+            <TornadoChart
+              factors={tornadoChart}
+              homeTeam={homeTeam}
+              awayTeam={awayTeam}
+            />
+          </div>
+        )}
 
         {/* Prediction Section */}
         {prediction && (
