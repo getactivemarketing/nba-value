@@ -1088,3 +1088,132 @@ async def run_backtest(
             sample_bets=sample_bets,
             issues=issues,
         )
+
+
+@router.get("/games/history")
+async def get_game_history(
+    days: int = Query(7, ge=1, le=90, description="Number of days of history"),
+    team: str | None = Query(None, description="Filter by team abbreviation"),
+) -> list[dict]:
+    """
+    Get historical game results with closing lines and outcomes.
+
+    Shows what happened vs what the lines were for backtesting analysis.
+    """
+    from sqlalchemy import text
+
+    async with async_session() as session:
+        # Query game_results table
+        query = """
+            SELECT
+                gr.game_id,
+                gr.game_date,
+                gr.home_team_id as home_team,
+                gr.away_team_id as away_team,
+                gr.home_score,
+                gr.away_score,
+                gr.total_score,
+                gr.closing_spread,
+                gr.closing_total,
+                gr.actual_winner,
+                gr.spread_result,
+                gr.total_result,
+                ht.full_name as home_team_full,
+                at.full_name as away_team_full
+            FROM game_results gr
+            LEFT JOIN teams ht ON gr.home_team_id = ht.team_id
+            LEFT JOIN teams at ON gr.away_team_id = at.team_id
+            WHERE gr.game_date >= CURRENT_DATE - INTERVAL '%s days'
+        """
+        params = [days]
+
+        if team:
+            query += " AND (gr.home_team_id = %s OR gr.away_team_id = %s)"
+            params.extend([team.upper(), team.upper()])
+
+        query += " ORDER BY gr.game_date DESC, gr.home_team_id"
+
+        result = await session.execute(text(query % tuple(['%s'] * len(params))), dict(enumerate(params)))
+        # Use raw SQL with psycopg2 instead since we're having issues
+
+    # Use direct psycopg2 for simplicity
+    import psycopg2
+    import os
+
+    db_url = os.environ.get('DATABASE_URL', 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway')
+    conn = psycopg2.connect(db_url)
+    cur = conn.cursor()
+
+    query = """
+        SELECT
+            gr.game_id,
+            gr.game_date,
+            gr.home_team_id,
+            gr.away_team_id,
+            gr.home_score,
+            gr.away_score,
+            gr.total_score,
+            gr.closing_spread,
+            gr.closing_total,
+            gr.actual_winner,
+            gr.spread_result,
+            gr.total_result,
+            ht.full_name as home_team_full,
+            at.full_name as away_team_full
+        FROM game_results gr
+        LEFT JOIN teams ht ON gr.home_team_id = ht.team_id
+        LEFT JOIN teams at ON gr.away_team_id = at.team_id
+        WHERE gr.game_date >= CURRENT_DATE - INTERVAL '%s days'
+    """
+    params = [days]
+
+    if team:
+        query += " AND (gr.home_team_id = %s OR gr.away_team_id = %s)"
+        params.extend([team.upper(), team.upper()])
+
+    query += " ORDER BY gr.game_date DESC, gr.home_team_id"
+
+    cur.execute(query, params)
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    # Format response
+    games = []
+    for row in rows:
+        (game_id, game_date, home_team, away_team, home_score, away_score,
+         total_score, closing_spread, closing_total, actual_winner,
+         spread_result, total_result, home_full, away_full) = row
+
+        # Calculate margins
+        margin = (home_score - away_score) if home_score and away_score else None
+        spread_margin = None
+        if margin is not None and closing_spread is not None:
+            spread_margin = margin + float(closing_spread)
+
+        total_margin = None
+        if total_score is not None and closing_total is not None:
+            total_margin = total_score - float(closing_total)
+
+        games.append({
+            "game_id": game_id,
+            "game_date": game_date.isoformat() if game_date else None,
+            "home_team": home_team,
+            "away_team": away_team,
+            "home_team_full": home_full,
+            "away_team_full": away_full,
+            "home_score": home_score,
+            "away_score": away_score,
+            "total_score": total_score,
+            "margin": margin,
+            "closing_spread": float(closing_spread) if closing_spread else None,
+            "closing_total": float(closing_total) if closing_total else None,
+            "actual_winner": actual_winner,
+            "spread_result": spread_result,
+            "spread_margin": round(spread_margin, 1) if spread_margin is not None else None,
+            "total_result": total_result,
+            "total_margin": round(total_margin, 1) if total_margin is not None else None,
+        })
+
+    return games
