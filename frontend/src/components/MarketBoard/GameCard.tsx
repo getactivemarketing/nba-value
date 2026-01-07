@@ -50,10 +50,11 @@ function getTeamSpreadValue(markets: Market[], _team: string, isHome: boolean, a
   return { score, line: best.line, marketId: best.market_id };
 }
 
-// Get consensus spread line
+// Get consensus spread line (returns home team's perspective)
 function getConsensusLine(markets: Market[], type: string): number | null {
+  // For spreads, only look at home_spread to get consistent perspective
   const lines = markets
-    .filter(m => m.market_type === type && m.line !== null)
+    .filter(m => m.market_type === type && m.line !== null && (type !== 'spread' || m.outcome_label.includes('home')))
     .map(m => m.line as number);
 
   if (lines.length === 0) return null;
