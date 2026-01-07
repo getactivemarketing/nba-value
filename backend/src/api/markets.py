@@ -1211,6 +1211,160 @@ async def get_daily_performance(
     return sorted(daily_results.values(), key=lambda x: x["date"], reverse=True)
 
 
+class TopPick(BaseModel):
+    """A top value pick."""
+    game: str  # "WAS @ PHI"
+    pick: str  # "WAS +13.5" or "Over 242.5"
+    line: float | None
+    value_score: float
+    edge: float  # percentage
+    model_prob: float  # percentage
+    market_prob: float  # percentage
+    market_type: str
+    tip_time: datetime
+
+
+class TopPicksResponse(BaseModel):
+    """Response for top picks endpoint."""
+    spreads: list[TopPick]
+    moneylines: list[TopPick]
+    totals: list[TopPick]
+    best_edges: list[TopPick]
+    generated_at: datetime
+
+
+@router.get("/picks/top", response_model=TopPicksResponse)
+async def get_top_picks(
+    min_value_score: float = Query(55, ge=0, le=100, description="Minimum value score"),
+    algorithm: Literal["a", "b"] = Query("a", description="Algorithm to use"),
+    limit: int = Query(10, ge=1, le=25, description="Max picks per category"),
+) -> TopPicksResponse:
+    """
+    Get aggregated top picks across all upcoming games.
+
+    Returns the best value plays organized by market type and edge.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(hours=24)
+
+    async with async_session() as session:
+        # Get value scores for upcoming games
+        subquery = (
+            select(
+                ValueScore.market_id,
+                ValueScore.value_id,
+            )
+            .distinct(ValueScore.market_id)
+            .order_by(ValueScore.market_id, desc(ValueScore.calc_time))
+            .subquery()
+        )
+
+        query = (
+            select(ValueScore)
+            .join(subquery, ValueScore.value_id == subquery.c.value_id)
+            .join(ValueScore.market)
+            .join(Market.game)
+            .join(ValueScore.prediction)
+            .where(Game.tip_time_utc > now)
+            .where(Game.tip_time_utc < cutoff)
+            .where(Game.status == "scheduled")
+            .options(
+                selectinload(ValueScore.market).selectinload(Market.game),
+                selectinload(ValueScore.prediction),
+            )
+        )
+
+        # Filter by value score
+        if algorithm == "a":
+            query = query.where(ValueScore.algo_a_value_score >= Decimal(str(min_value_score)))
+            query = query.order_by(desc(ValueScore.algo_a_value_score))
+        else:
+            query = query.where(ValueScore.algo_b_value_score >= Decimal(str(min_value_score)))
+            query = query.order_by(desc(ValueScore.algo_b_value_score))
+
+        result = await session.execute(query)
+        value_scores = result.scalars().all()
+
+        # Get team names
+        team_ids = set()
+        for vs in value_scores:
+            team_ids.add(vs.market.game.home_team_id)
+            team_ids.add(vs.market.game.away_team_id)
+
+        teams = {}
+        if team_ids:
+            teams_query = select(Team).where(Team.team_id.in_(team_ids))
+            teams_result = await session.execute(teams_query)
+            teams = {t.team_id: t for t in teams_result.scalars().all()}
+
+        # Build picks by category
+        spreads = []
+        moneylines = []
+        totals = []
+        all_picks = []
+
+        for vs in value_scores:
+            market = vs.market
+            game = market.game
+            prediction = vs.prediction
+
+            home_team = teams.get(game.home_team_id)
+            away_team = teams.get(game.away_team_id)
+            home_abbr = home_team.abbreviation if home_team else game.home_team_id
+            away_abbr = away_team.abbreviation if away_team else game.away_team_id
+
+            # Get value score based on algorithm
+            if algorithm == "a":
+                value_score = float(vs.algo_a_value_score or 0)
+            else:
+                value_score = float(vs.algo_b_value_score or 0)
+
+            # Determine pick label
+            is_home = "home" in market.outcome_label.lower()
+            if market.market_type == "total":
+                pick_team = "Over" if "over" in market.outcome_label.lower() else "Under"
+                pick_label = f"{pick_team} {market.line}"
+            elif market.market_type == "spread":
+                pick_team = home_abbr if is_home else away_abbr
+                line_str = f"+{market.line}" if market.line and market.line > 0 else str(market.line)
+                pick_label = f"{pick_team} {line_str}"
+            else:  # moneyline
+                pick_team = home_abbr if is_home else away_abbr
+                pick_label = f"{pick_team} ML"
+
+            pick = TopPick(
+                game=f"{away_abbr} @ {home_abbr}",
+                pick=pick_label,
+                line=float(market.line) if market.line else None,
+                value_score=round(value_score, 1),
+                edge=round(float(prediction.raw_edge) * 100, 1) if prediction.raw_edge else 0,
+                model_prob=round(float(prediction.p_true) * 100, 1) if prediction.p_true else 0,
+                market_prob=round(float(prediction.p_market) * 100, 1) if prediction.p_market else 0,
+                market_type=market.market_type,
+                tip_time=game.tip_time_utc,
+            )
+
+            all_picks.append(pick)
+
+            if market.market_type == "spread" and len(spreads) < limit:
+                spreads.append(pick)
+            elif market.market_type == "moneyline" and len(moneylines) < limit:
+                moneylines.append(pick)
+            elif market.market_type == "total" and len(totals) < limit:
+                totals.append(pick)
+
+        # Sort by edge for best_edges
+        best_edges = sorted(all_picks, key=lambda x: x.edge, reverse=True)[:limit]
+
+        return TopPicksResponse(
+            spreads=spreads,
+            moneylines=moneylines,
+            totals=totals,
+            best_edges=best_edges,
+            generated_at=now,
+        )
+
+
 @router.get("/games/history")
 async def get_game_history(
     days: int = Query(7, ge=1, le=90, description="Number of days of history"),

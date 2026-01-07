@@ -98,6 +98,13 @@ export const api = {
     return response.data;
   },
 
+  async getTopPicks(minValueScore: number = 55, algorithm: 'a' | 'b' = 'a'): Promise<TopPicksResponse> {
+    const response = await client.get<TopPicksResponse>(
+      `/picks/top?min_value_score=${minValueScore}&algorithm=${algorithm}`
+    );
+    return response.data;
+  },
+
   // Health
   async healthCheck(): Promise<{ status: string }> {
     const response = await client.get<{ status: string }>('/health');
@@ -186,4 +193,24 @@ export interface HistoricalGame {
   spread_margin: number | null;
   total_result: string;
   total_margin: number | null;
+}
+
+export interface TopPick {
+  game: string;
+  pick: string;
+  line: number | null;
+  value_score: number;
+  edge: number;
+  model_prob: number;
+  market_prob: number;
+  market_type: string;
+  tip_time: string;
+}
+
+export interface TopPicksResponse {
+  spreads: TopPick[];
+  moneylines: TopPick[];
+  totals: TopPick[];
+  best_edges: TopPick[];
+  generated_at: string;
 }

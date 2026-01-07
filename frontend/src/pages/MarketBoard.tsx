@@ -3,6 +3,7 @@ import { useMarkets, useUpcomingGames, useGameHistory } from '@/hooks/useMarkets
 import { useDebounce } from '@/hooks/useDebounce';
 import { GameCard } from '@/components/MarketBoard/GameCard';
 import { HistoricalGameCard } from '@/components/MarketBoard/HistoricalGameCard';
+import { TopPicks } from '@/components/MarketBoard/TopPicks';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
 import type { MarketFilters as Filters, Market, Algorithm } from '@/types/market';
 import type { TeamTrends, GamePrediction, TornadoFactor } from '@/lib/api';
@@ -355,6 +356,11 @@ export function MarketBoard() {
           <span>Low Value</span>
         </div>
       </div>
+
+      {/* Top Picks Summary - Only show for today */}
+      {!isViewingPast && selectedDate.toDateString() === new Date().toDateString() && (
+        <TopPicks />
+      )}
 
       {/* Error State */}
       {error && <ErrorMessage error={error as Error} />}
