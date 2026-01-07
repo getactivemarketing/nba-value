@@ -540,6 +540,10 @@ async def get_upcoming_games(
             home_stats = team_stats_map.get(home_team_id)
             away_stats = team_stats_map.get(away_team_id)
 
+            # Return empty if no stats available
+            if not home_stats and not away_stats:
+                return []
+
             factors = []
 
             # 1. Momentum/Trend (L10 Net Rating)
