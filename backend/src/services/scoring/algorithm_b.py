@@ -4,13 +4,13 @@ import numpy as np
 from dataclasses import dataclass
 
 # Edge scale per market type (to be tuned via backtesting)
-# These represent "typical good edge" - a 5% edge should give ~76% value score
-# Realistic betting edges are 2-5%, not 20-30%
+# These represent the edge at which tanh gives ~76% (tanh(1) ≈ 0.76)
+# Based on trained model, edges typically range 5-15% so use 10% as baseline
 EDGE_SCALE = {
-    "spread": 0.05,
-    "moneyline": 0.04,
-    "total": 0.05,
-    "prop": 0.03,
+    "spread": 0.12,  # 12% edge = ~76% value score
+    "moneyline": 0.10,  # 10% edge = ~76% value score
+    "total": 0.15,  # 15% edge = ~76% value score (totals often have larger model uncertainty)
+    "prop": 0.08,
 }
 
 

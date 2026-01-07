@@ -98,7 +98,7 @@ class ScoringService:
 
     def __init__(
         self,
-        mov_model: MOVModel | None = None,
+        mov_model=None,  # MOVModel or RidgeMOVModel
         calibration_layer: CalibrationLayer | None = None,
     ):
         """
@@ -108,7 +108,7 @@ class ScoringService:
             mov_model: Pre-trained MOV model (uses baseline if None)
             calibration_layer: Calibration layer (uses identity if None)
         """
-        self.mov_model = mov_model or MOVModel()
+        self.mov_model = mov_model if mov_model is not None else MOVModel()
         self.calibration = calibration_layer or CalibrationLayer()
 
     def score_market(self, input_data: ScoringInput) -> ScoringResult:
@@ -416,10 +416,61 @@ class ScoringService:
 # Singleton instance for service
 _scoring_service: ScoringService | None = None
 
+# Model paths
+from pathlib import Path
+MODEL_DIR = Path(__file__).parent.parent.parent.parent / "models"
+MOV_MODEL_PATH = MODEL_DIR / "mov_model.pkl"
+CALIBRATION_PATH = MODEL_DIR / "calibration.pkl"
+
+
+def load_trained_models() -> tuple:
+    """Load trained MOV model and calibration layer if available."""
+    mov_model = None
+    calibration = None
+
+    # Try to load MOV model
+    if MOV_MODEL_PATH.exists():
+        import pickle
+        try:
+            with open(MOV_MODEL_PATH, 'rb') as f:
+                model_data = pickle.load(f)
+
+            if model_data.get('model_type') == 'ridge':
+                # Ridge model - create wrapper
+                from src.services.ml.train_model import RidgeMOVModel
+                mov_model = RidgeMOVModel(
+                    model_data['model'],
+                    model_data['training_features'],
+                    model_data['mov_std'],
+                )
+                logger.info("Loaded Ridge MOV model", mov_std=model_data['mov_std'])
+            else:
+                # LightGBM model
+                mov_model = MOVModel()
+                mov_model.load(MOV_MODEL_PATH)
+                logger.info("Loaded LightGBM MOV model")
+        except Exception as e:
+            logger.warning(f"Failed to load MOV model: {e}")
+
+    # Try to load calibration
+    if CALIBRATION_PATH.exists():
+        try:
+            calibration = CalibrationLayer()
+            calibration.load(CALIBRATION_PATH)
+            logger.info("Loaded calibration layer", market_types=list(calibration.calibrators.keys()))
+        except Exception as e:
+            logger.warning(f"Failed to load calibration: {e}")
+
+    return mov_model, calibration
+
 
 def get_scoring_service() -> ScoringService:
     """Get or create the scoring service singleton."""
     global _scoring_service
     if _scoring_service is None:
-        _scoring_service = ScoringService()
+        mov_model, calibration = load_trained_models()
+        _scoring_service = ScoringService(
+            mov_model=mov_model,
+            calibration_layer=calibration,
+        )
     return _scoring_service

@@ -13,8 +13,10 @@ logger = structlog.get_logger()
 # Try to import LightGBM, but allow running without it
 try:
     import lightgbm as lgb
+    # Test that it actually works (may fail on macOS without libomp)
+    lgb.Dataset([[0]], label=[0])
     HAS_LIGHTGBM = True
-except ImportError:
+except (ImportError, OSError):
     HAS_LIGHTGBM = False
     lgb = None
 
