@@ -11,6 +11,8 @@ from src.services.ml.calibration import CalibrationLayer
 from src.services.ml.probability import (
     mov_to_spread_prob,
     mov_to_moneyline_prob,
+    mov_to_total_prob,
+    estimate_game_total,
     devig_two_way_odds,
 )
 from src.services.scoring.algorithm_a import compute_value_score_algo_a, AlgoAResult
@@ -139,6 +141,8 @@ class ScoringService:
             input_data.market_type,
             input_data.line,
             input_data.outcome_label,
+            home_features=input_data.home_features,
+            away_features=input_data.away_features,
         )
 
         # Step 3: Calibrate probability
@@ -254,6 +258,8 @@ class ScoringService:
         market_type: str,
         line: float | None,
         outcome_label: str,
+        home_features: dict[str, float] | None = None,
+        away_features: dict[str, float] | None = None,
     ) -> float:
         """Convert MOV prediction to probability for specific market."""
         is_home_perspective = "home" in outcome_label.lower() or "over" in outcome_label.lower()
@@ -302,9 +308,54 @@ class ScoringService:
             return prob if is_home_perspective else (1 - prob)
 
         elif market_type == "total":
-            # For totals, we'd need a separate total model
-            # For now, return 0.5 (neutral)
-            return 0.5
+            # Use pace and efficiency model to estimate total points
+            if home_features is None or away_features is None:
+                return 0.5  # Neutral if no features
+
+            # Extract pace and efficiency metrics (use L10 or season)
+            home_pace = home_features.get("home_pace_10") or home_features.get("home_pace_season", 100.0)
+            away_pace = away_features.get("away_pace_10") or away_features.get("away_pace_season", 100.0)
+            home_ortg = home_features.get("home_ortg_10") or home_features.get("home_ortg_season", 110.0)
+            home_drtg = home_features.get("home_drtg_10") or home_features.get("home_drtg_season", 110.0)
+            away_ortg = away_features.get("away_ortg_10") or away_features.get("away_ortg_season", 110.0)
+            away_drtg = away_features.get("away_drtg_10") or away_features.get("away_drtg_season", 110.0)
+
+            # Fallback to PPG-based estimate if pace/efficiency not available
+            if home_pace == 100.0 and away_pace == 100.0:
+                # Use raw PPG as simpler estimate
+                home_ppg = home_features.get("home_ppg_10") or home_features.get("home_ppg_season", 110.0)
+                away_ppg = away_features.get("away_ppg_10") or away_features.get("away_ppg_season", 110.0)
+                home_opp_ppg = home_features.get("home_opp_ppg_10") or home_features.get("home_opp_ppg_season", 110.0)
+                away_opp_ppg = away_features.get("away_opp_ppg_10") or away_features.get("away_opp_ppg_season", 110.0)
+
+                # Estimate: home scores = avg(home_ppg, away_opp_ppg), similar for away
+                home_pts_est = (home_ppg + away_opp_ppg) / 2
+                away_pts_est = (away_ppg + home_opp_ppg) / 2
+            else:
+                # Use pace/efficiency model
+                home_pts_est, away_pts_est = estimate_game_total(
+                    home_pace=home_pace,
+                    away_pace=away_pace,
+                    home_ortg=home_ortg,
+                    home_drtg=home_drtg,
+                    away_ortg=away_ortg,
+                    away_drtg=away_drtg,
+                )
+
+            if line is None:
+                return 0.5
+
+            # Calculate over probability
+            # Use 12.0 as std for total (typical game-to-game variance)
+            prob = mov_to_total_prob(
+                home_total_estimate=home_pts_est,
+                away_total_estimate=away_pts_est,
+                total_line=line,
+                total_std=12.0,
+            )
+
+            # prob is P(over), so for "under" we need 1 - prob
+            return prob if is_home_perspective else (1 - prob)
 
         else:
             # Unknown market type

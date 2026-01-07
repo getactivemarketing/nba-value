@@ -34,7 +34,8 @@
       "Bash(DATABASE_URL=\"postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway\" python -m alembic:*)",
       "Bash(DATABASE_URL=\"postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway\" python3 -m alembic:*)",
       "Bash(psql:*)",
-      "Bash(PGPASSWORD=\"wzYHkiAOkykxiPitXKBIqPJxvifFtDPI\" psql:*)"
+      "Bash(PGPASSWORD=\"wzYHkiAOkykxiPitXKBIqPJxvifFtDPI\" psql:*)",
+      "WebFetch(domain:www.espn.com)"
     ]
   }
 }
