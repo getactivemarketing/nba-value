@@ -135,8 +135,7 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
   const awaySpread = getTeamSpreadValue(markets, awayTeam, false, algorithm);
   const homeSpread = getTeamSpreadValue(markets, homeTeam, true, algorithm);
 
-  // Get consensus lines
-  const spreadLine = getConsensusLine(markets, 'spread');
+  // Get total line
   const totalLine = getTotalLine(markets);
 
   // Get best market for linking
