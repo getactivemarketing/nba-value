@@ -31,50 +31,6 @@ function EdgeBadge({ edge }: { edge: number }) {
   );
 }
 
-function PicksTable({ picks, title, showEdge = false }: { picks: TopPick[]; title: string; showEdge?: boolean }) {
-  if (picks.length === 0) return null;
-
-  return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-      <div className="bg-slate-800 text-white px-4 py-2 font-semibold text-sm">
-        {title}
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <th className="text-left px-4 py-2 font-medium text-gray-600">Game</th>
-              <th className="text-left px-4 py-2 font-medium text-gray-600">Pick</th>
-              <th className="text-center px-4 py-2 font-medium text-gray-600">Value</th>
-              <th className="text-center px-4 py-2 font-medium text-gray-600">Edge</th>
-              <th className="text-center px-4 py-2 font-medium text-gray-600">Model</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {picks.map((pick, i) => (
-              <tr key={i} className="hover:bg-gray-50">
-                <td className="px-4 py-2 font-medium text-gray-800">{pick.game}</td>
-                <td className="px-4 py-2">
-                  <span className="font-bold text-gray-900">{pick.pick}</span>
-                </td>
-                <td className="px-4 py-2 text-center">
-                  <ValueBadge score={pick.value_score} />
-                </td>
-                <td className="px-4 py-2 text-center">
-                  <EdgeBadge edge={pick.edge} />
-                </td>
-                <td className="px-4 py-2 text-center text-gray-600">
-                  {pick.model_prob.toFixed(0)}%
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 function BestEdgesCard({ picks }: { picks: TopPick[] }) {
   if (picks.length === 0) return null;
 
