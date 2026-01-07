@@ -74,6 +74,17 @@ class TeamStats(Base):
     home_win_pct: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)
     away_win_pct: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)
 
+    # ATS (Against the Spread) record
+    ats_wins_l10: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ats_losses_l10: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ats_pushes_l10: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ats_pct_l10: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)  # Win %
+
+    # Over/Under record
+    ou_overs_l10: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ou_unders_l10: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ou_pushes_l10: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow
     )
