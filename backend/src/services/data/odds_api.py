@@ -188,6 +188,58 @@ class OddsAPIClient:
 
         return best_odds
 
+    async def get_historical_odds(
+        self,
+        date: datetime,
+        markets: list[str] = ["spreads"],
+        bookmakers: list[str] | None = None,
+    ) -> list[dict]:
+        """
+        Fetch historical NBA odds for a specific date/time.
+
+        Args:
+            date: ISO8601 datetime for the snapshot
+            markets: List of markets - h2h, spreads, totals
+            bookmakers: Optional list of specific bookmakers
+
+        Returns:
+            List of games with odds from that point in time
+        """
+        params = {
+            "apiKey": self.api_key,
+            "regions": "us",
+            "markets": ",".join(markets),
+            "oddsFormat": "decimal",
+            "date": date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+
+        if bookmakers:
+            params["bookmakers"] = ",".join(bookmakers)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.BASE_URL}/historical/sports/{self.SPORT}/odds",
+                params=params,
+                timeout=30.0,
+            )
+            response.raise_for_status()
+
+            # Track usage from headers
+            self.requests_remaining = int(
+                response.headers.get("x-requests-remaining", 0)
+            )
+            self.requests_used = int(response.headers.get("x-requests-used", 0))
+
+            data = response.json()
+            logger.info(
+                "Fetched historical odds",
+                date=date.isoformat(),
+                games_count=len(data.get("data", [])),
+                requests_remaining=self.requests_remaining,
+            )
+
+            return data.get("data", [])
+
 async def test_odds_api():
     """Test function to verify API connection."""
     client = OddsAPIClient()
