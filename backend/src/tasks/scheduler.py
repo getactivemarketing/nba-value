@@ -22,15 +22,17 @@ import psycopg2
 import structlog
 import schedule
 
-# Add parent to path for imports
-sys.path.insert(0, '/Applications/XAMPP/xamppfiles/htdocs/Sites/NBA-Value/backend')
+# Add parent to path for imports (works on local and Railway)
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.services.data.odds_api import OddsAPIClient
 from src.tasks.prediction_tracker import snapshot_predictions, grade_predictions
 
 logger = structlog.get_logger()
 
-DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
+# Use environment variable or fallback to Railway URL
+DB_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway')
 
 TEAM_ABBREV_MAP = {
     "Los Angeles Lakers": "LAL", "Los Angeles Clippers": "LAC",
