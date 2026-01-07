@@ -262,9 +262,9 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
         {/* Prediction Section */}
         {prediction && (
           <div className="mt-4 pt-4 border-t border-gray-200 bg-gradient-to-r from-slate-50 to-slate-100 -mx-4 -mb-4 px-4 py-3">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-slate-700">OUR PICK</span>
+                <span className="text-sm font-bold text-slate-700">OUR PICKS</span>
                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                   prediction.confidence === 'high'
                     ? 'bg-emerald-100 text-emerald-700'
@@ -277,22 +277,46 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
               </div>
             </div>
 
-            {/* Winner Prediction */}
-            <div className="flex items-center gap-2 mb-2">
-              <TeamLogo team={prediction.winner} size={24} />
-              <span className="font-bold text-gray-900">{prediction.winner} to win</span>
-              <span className="text-sm text-gray-500">({prediction.winner_prob}%)</span>
+            {/* Two-column picks: Winner and Spread */}
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              {/* Winner Prediction */}
+              <div className="bg-white rounded-lg p-2 border border-gray-200">
+                <div className="text-xs text-gray-500 mb-1">MONEYLINE</div>
+                <div className="flex items-center gap-2">
+                  <TeamLogo team={prediction.winner} size={20} />
+                  <span className="font-bold text-gray-900 text-sm">{prediction.winner}</span>
+                  <span className="text-xs text-gray-500">({prediction.winner_prob}%)</span>
+                </div>
+              </div>
+
+              {/* Spread Pick */}
+              {prediction.spread_pick && (
+                <div className="bg-white rounded-lg p-2 border border-gray-200">
+                  <div className="text-xs text-gray-500 mb-1">SPREAD</div>
+                  <div className="flex items-center gap-2">
+                    <TeamLogo team={prediction.spread_pick.team} size={20} />
+                    <span className="font-bold text-gray-900 text-sm">
+                      {prediction.spread_pick.team} {prediction.spread_pick.line != null ? (prediction.spread_pick.line > 0 ? `+${prediction.spread_pick.line}` : prediction.spread_pick.line) : ''}
+                    </span>
+                    {prediction.spread_pick.value_score >= 50 && (
+                      <ValueBadge score={prediction.spread_pick.value_score} size="sm" />
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Best Value Bet */}
-            {prediction.best_bet && prediction.best_bet.value_score >= 50 && (
-              <div className="text-sm mb-2">
-                <span className="text-gray-600">Best Value: </span>
+            {/* Best Value Bet (if different from spread) */}
+            {prediction.best_bet && prediction.best_bet.value_score >= 50 && prediction.best_bet.type !== 'spread' && (
+              <div className="text-sm mb-2 bg-emerald-50 rounded px-2 py-1">
+                <span className="text-emerald-800 font-medium">Best Value: </span>
                 <span className="font-semibold text-emerald-700">
-                  {prediction.best_bet.team} {prediction.best_bet.line != null ? (prediction.best_bet.line > 0 ? `+${prediction.best_bet.line}` : prediction.best_bet.line) : ''}
-                  {prediction.best_bet.type === 'moneyline' ? ' ML' : prediction.best_bet.type === 'total' ? ` (${prediction.best_bet.line})` : ''}
+                  {prediction.best_bet.type === 'total'
+                    ? `${prediction.best_bet.team === homeTeam ? 'Over' : 'Under'} ${prediction.best_bet.line}`
+                    : `${prediction.best_bet.team} ML`
+                  }
                 </span>
-                <span className="text-gray-500 ml-1">({prediction.best_bet.value_score}% value)</span>
+                <span className="text-emerald-600 ml-1">({prediction.best_bet.value_score}%)</span>
               </div>
             )}
 

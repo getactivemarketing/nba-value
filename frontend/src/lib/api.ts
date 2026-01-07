@@ -125,10 +125,19 @@ export interface BestBet {
   p_market: number;
 }
 
+export interface SpreadPick {
+  team: string;
+  line: number | null;
+  value_score: number;
+  edge: number;
+  p_true: number;
+}
+
 export interface GamePrediction {
   winner: string;
   winner_prob: number;
   confidence: 'high' | 'medium' | 'low';
+  spread_pick: SpreadPick | null;
   best_bet: BestBet | null;
   factors: string[];
 }

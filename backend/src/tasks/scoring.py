@@ -8,7 +8,12 @@ import structlog
 from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 
-from src.celery_app import celery_app
+# Optional celery import - allows running without celery installed
+try:
+    from src.celery_app import celery_app
+except ImportError:
+    celery_app = None
+
 from src.database import async_session
 from src.models import Game, Market, TeamStats, ModelPrediction, ValueScore
 from src.services.scoring.scorer import ScoringService, ScoringInput, get_scoring_service
@@ -264,7 +269,6 @@ def _get_edge_band(raw_edge: float) -> str:
         return "10%+"
 
 
-@celery_app.task(name="src.tasks.scoring.run_pre_game_scoring")
 def run_pre_game_scoring() -> dict:
     """
     Calculate Value Scores for all active markets.
@@ -282,6 +286,10 @@ def run_pre_game_scoring() -> dict:
 
     logger.info("Completed pre-game scoring", **result)
     return result
+
+# Register as celery task if celery is available
+if celery_app:
+    run_pre_game_scoring = celery_app.task(name="src.tasks.scoring.run_pre_game_scoring")(run_pre_game_scoring)
 
 
 async def _score_single_market_async(market_id: str) -> dict:
@@ -364,7 +372,6 @@ async def _score_single_market_async(market_id: str) -> dict:
         }
 
 
-@celery_app.task(name="src.tasks.scoring.score_single_market")
 def score_single_market(market_id: str) -> dict:
     """
     Calculate Value Score for a single market.
@@ -376,3 +383,7 @@ def score_single_market(market_id: str) -> dict:
     result = asyncio.run(_score_single_market_async(market_id))
 
     return result
+
+# Register as celery task if celery is available
+if celery_app:
+    score_single_market = celery_app.task(name="src.tasks.scoring.score_single_market")(score_single_market)

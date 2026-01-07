@@ -182,6 +182,9 @@ def run_all():
     run_ingest()
     time.sleep(2)
 
+    run_scoring()
+    time.sleep(2)
+
     run_snapshot()
     time.sleep(2)
 

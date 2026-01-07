@@ -639,13 +639,15 @@ async def get_upcoming_games(
             away_ml = None
             best_bet = None
             best_score = 0
+            spread_pick = None
+            best_spread_score = 0
 
             for vs in scores:
                 market = vs.market
                 prediction = vs.prediction
                 score = float(vs.algo_b_value_score or 0)
 
-                # Track best value bet
+                # Track best value bet overall
                 if score > best_score:
                     best_score = score
                     best_bet = {
@@ -656,6 +658,17 @@ async def get_upcoming_games(
                         "edge": round(float(prediction.raw_edge) * 100, 1) if prediction.raw_edge else 0,
                         "p_true": round(float(prediction.p_true) * 100, 1) if prediction.p_true else 0,
                         "p_market": round(float(prediction.p_market) * 100, 1) if prediction.p_market else 0,
+                    }
+
+                # Track best spread bet specifically
+                if market.market_type == "spread" and score > best_spread_score:
+                    best_spread_score = score
+                    spread_pick = {
+                        "team": home_abbr if "home" in market.outcome_label else away_abbr,
+                        "line": float(market.line) if market.line else None,
+                        "value_score": round(score),
+                        "edge": round(float(prediction.raw_edge) * 100, 1) if prediction.raw_edge else 0,
+                        "p_true": round(float(prediction.p_true) * 100, 1) if prediction.p_true else 0,
                     }
 
                 # Track moneyline for winner prediction
@@ -742,6 +755,7 @@ async def get_upcoming_games(
                 "winner": winner,
                 "winner_prob": round(winner_prob * 100),
                 "confidence": confidence,
+                "spread_pick": spread_pick,
                 "best_bet": best_bet,
                 "factors": factors[:4],  # Limit to 4 factors
             }
