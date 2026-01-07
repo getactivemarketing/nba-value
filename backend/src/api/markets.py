@@ -531,6 +531,114 @@ async def get_upcoming_games(
                 "is_b2b": b2b,
             }
 
+        def build_tornado_chart(home_team_id: str, away_team_id: str) -> list[dict]:
+            """
+            Build tornado chart data comparing two teams across 6 factors.
+            Returns list of factors with home/away values normalized to -100 to +100 scale.
+            Positive = home advantage, Negative = away advantage.
+            """
+            home_stats = team_stats_map.get(home_team_id)
+            away_stats = team_stats_map.get(away_team_id)
+
+            factors = []
+
+            # 1. Momentum/Trend (L10 Net Rating)
+            home_net = float(home_stats.net_rtg_10) if home_stats and home_stats.net_rtg_10 else 0
+            away_net = float(away_stats.net_rtg_10) if away_stats and away_stats.net_rtg_10 else 0
+            # Net rating diff, scaled: ~20 point diff = 100%
+            momentum_diff = (home_net - away_net) / 20 * 100
+            factors.append({
+                "factor": "Momentum",
+                "label": "L10 Trend",
+                "home_value": round(home_net, 1),
+                "away_value": round(away_net, 1),
+                "diff": round(max(-100, min(100, momentum_diff)), 1),
+                "home_better": home_net > away_net,
+            })
+
+            # 2. Rest Advantage
+            home_rest = home_stats.days_rest if home_stats and home_stats.days_rest else 1
+            away_rest = away_stats.days_rest if away_stats and away_stats.days_rest else 1
+            home_b2b = home_stats.is_back_to_back if home_stats else False
+            away_b2b = away_stats.is_back_to_back if away_stats else False
+            # B2B = -30, each extra rest day = +15
+            home_rest_score = -30 if home_b2b else (home_rest - 1) * 15
+            away_rest_score = -30 if away_b2b else (away_rest - 1) * 15
+            rest_diff = home_rest_score - away_rest_score
+            factors.append({
+                "factor": "Rest",
+                "label": "Rest Advantage",
+                "home_value": f"{home_rest}d" + (" B2B" if home_b2b else ""),
+                "away_value": f"{away_rest}d" + (" B2B" if away_b2b else ""),
+                "diff": round(max(-100, min(100, rest_diff)), 1),
+                "home_better": rest_diff > 0,
+            })
+
+            # 3. Pace (tempo)
+            home_pace = float(home_stats.pace_10) if home_stats and home_stats.pace_10 else 100
+            away_pace = float(away_stats.pace_10) if away_stats and away_stats.pace_10 else 100
+            avg_pace = (home_pace + away_pace) / 2
+            # Just show the values, no real "advantage" for pace
+            factors.append({
+                "factor": "Pace",
+                "label": "Game Tempo",
+                "home_value": round(home_pace, 1),
+                "away_value": round(away_pace, 1),
+                "diff": 0,  # Neutral - pace isn't an advantage
+                "home_better": None,  # Neither is better
+                "expected_pace": round(avg_pace, 1),
+            })
+
+            # 4. Offensive Efficiency (ORtg)
+            home_ortg = float(home_stats.ortg_10) if home_stats and home_stats.ortg_10 else 110
+            away_ortg = float(away_stats.ortg_10) if away_stats and away_stats.ortg_10 else 110
+            # ORtg diff, scaled: ~10 point diff = 100%
+            ortg_diff = (home_ortg - away_ortg) / 10 * 100
+            factors.append({
+                "factor": "Offense",
+                "label": "Off. Rating",
+                "home_value": round(home_ortg, 1),
+                "away_value": round(away_ortg, 1),
+                "diff": round(max(-100, min(100, ortg_diff)), 1),
+                "home_better": home_ortg > away_ortg,
+            })
+
+            # 5. Defensive Rating (DRtg - lower is better)
+            home_drtg = float(home_stats.drtg_10) if home_stats and home_stats.drtg_10 else 110
+            away_drtg = float(away_stats.drtg_10) if away_stats and away_stats.drtg_10 else 110
+            # DRtg diff (inverted - lower is better), scaled: ~10 point diff = 100%
+            drtg_diff = (away_drtg - home_drtg) / 10 * 100  # Inverted because lower is better
+            factors.append({
+                "factor": "Defense",
+                "label": "Def. Rating",
+                "home_value": round(home_drtg, 1),
+                "away_value": round(away_drtg, 1),
+                "diff": round(max(-100, min(100, drtg_diff)), 1),
+                "home_better": home_drtg < away_drtg,  # Lower is better for defense
+            })
+
+            # 6. ATS Record (L10)
+            home_ats_wins = getattr(home_stats, 'ats_wins_l10', None) or 0 if home_stats else 0
+            home_ats_losses = getattr(home_stats, 'ats_losses_l10', None) or 0 if home_stats else 0
+            away_ats_wins = getattr(away_stats, 'ats_wins_l10', None) or 0 if away_stats else 0
+            away_ats_losses = getattr(away_stats, 'ats_losses_l10', None) or 0 if away_stats else 0
+
+            home_ats_pct = home_ats_wins / (home_ats_wins + home_ats_losses) if (home_ats_wins + home_ats_losses) > 0 else 0.5
+            away_ats_pct = away_ats_wins / (away_ats_wins + away_ats_losses) if (away_ats_wins + away_ats_losses) > 0 else 0.5
+
+            # ATS diff, scaled: 50% diff = 100
+            ats_diff = (home_ats_pct - away_ats_pct) * 200
+            factors.append({
+                "factor": "ATS",
+                "label": "ATS L10",
+                "home_value": f"{home_ats_wins}-{home_ats_losses}",
+                "away_value": f"{away_ats_wins}-{away_ats_losses}",
+                "diff": round(max(-100, min(100, ats_diff)), 1),
+                "home_better": home_ats_pct > away_ats_pct,
+            })
+
+            return factors
+
         # Get value scores for all games' markets
         game_ids = [g.game_id for g in games]
         value_scores_map = {}
@@ -701,6 +809,7 @@ async def get_upcoming_games(
                 "home_trends": home_trends,
                 "away_trends": away_trends,
                 "prediction": build_prediction(game, home_abbr, away_abbr, home_trends, away_trends),
+                "tornado_chart": build_tornado_chart(game.home_team_id, game.away_team_id),
             })
 
         return response
