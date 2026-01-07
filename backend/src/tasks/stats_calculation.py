@@ -6,15 +6,28 @@ from decimal import Decimal
 from collections import defaultdict
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from src.celery_app import celery_app
 from src.database import async_session_maker
 from src.models import Team, TeamStats
 from src.services.data.balldontlie import BallDontLieClient
+from src.services.data.nba_stats import NBAStatsClient
 
 logger = structlog.get_logger()
+
+# Mapping from NBA.com team IDs to our abbreviations
+NBA_TEAM_ID_TO_ABBR = {
+    1610612737: "ATL", 1610612738: "BOS", 1610612739: "CLE", 1610612740: "NOP",
+    1610612741: "CHI", 1610612742: "DAL", 1610612743: "DEN", 1610612744: "GSW",
+    1610612745: "HOU", 1610612746: "LAC", 1610612747: "LAL", 1610612748: "MIA",
+    1610612749: "MIL", 1610612750: "MIN", 1610612751: "BKN", 1610612752: "NYK",
+    1610612753: "ORL", 1610612754: "IND", 1610612755: "PHI", 1610612756: "PHX",
+    1610612757: "POR", 1610612758: "SAC", 1610612759: "SAS", 1610612760: "OKC",
+    1610612761: "TOR", 1610612762: "UTA", 1610612763: "MEM", 1610612764: "WAS",
+    1610612765: "DET", 1610612766: "CHA",
+}
 
 
 async def _calculate_team_stats_async() -> dict:
@@ -229,6 +242,88 @@ async def _calculate_team_stats_async() -> dict:
     }
 
 
+async def _fetch_advanced_stats_async() -> dict:
+    """
+    Fetch advanced stats (ORtg, DRtg, Pace) from NBA.com and update team_stats.
+
+    This supplements the basic stats from BallDontLie with advanced metrics.
+    """
+    today = datetime.now(timezone.utc).date()
+    teams_updated = 0
+    errors = 0
+
+    try:
+        # Fetch advanced stats from NBA.com
+        nba_client = NBAStatsClient(request_delay=0.8)
+        advanced_stats = nba_client.get_team_advanced_stats(season="2025-26")
+
+        logger.info(f"Fetched advanced stats for {len(advanced_stats)} teams from NBA.com")
+
+        # Build lookup by abbreviation
+        stats_by_abbr = {}
+        for stat in advanced_stats:
+            abbr = NBA_TEAM_ID_TO_ABBR.get(stat.team_id)
+            if abbr:
+                stats_by_abbr[abbr] = stat
+
+        async with async_session_maker() as session:
+            # Get all teams
+            teams_query = select(Team)
+            teams_result = await session.execute(teams_query)
+            teams = list(teams_result.scalars().all())
+
+            for team in teams:
+                try:
+                    nba_stat = stats_by_abbr.get(team.abbreviation)
+                    if not nba_stat:
+                        logger.warning(f"No NBA stats found for {team.abbreviation}")
+                        continue
+
+                    # Update the team_stats record for today with advanced stats
+                    stmt = (
+                        update(TeamStats)
+                        .where(TeamStats.team_id == team.team_id)
+                        .where(TeamStats.stat_date == today)
+                        .values(
+                            ortg_10=Decimal(str(round(nba_stat.off_rating, 2))),
+                            ortg_season=Decimal(str(round(nba_stat.off_rating, 2))),
+                            drtg_10=Decimal(str(round(nba_stat.def_rating, 2))),
+                            drtg_season=Decimal(str(round(nba_stat.def_rating, 2))),
+                            pace_10=Decimal(str(round(nba_stat.pace, 2))),
+                            pace_season=Decimal(str(round(nba_stat.pace, 2))),
+                        )
+                    )
+                    result = await session.execute(stmt)
+
+                    if result.rowcount > 0:
+                        teams_updated += 1
+                        logger.debug(
+                            "Updated advanced stats",
+                            team=team.abbreviation,
+                            ortg=nba_stat.off_rating,
+                            drtg=nba_stat.def_rating,
+                            pace=nba_stat.pace,
+                        )
+                    else:
+                        logger.warning(f"No team_stats row to update for {team.abbreviation}")
+
+                except Exception as e:
+                    logger.error(f"Failed to update advanced stats for {team.abbreviation}: {e}")
+                    errors += 1
+
+            await session.commit()
+
+    except Exception as e:
+        logger.error(f"Failed to fetch advanced stats from NBA.com: {e}")
+        errors += 1
+
+    return {
+        "teams_updated": teams_updated,
+        "errors": errors,
+        "status": "completed",
+    }
+
+
 @celery_app.task(name="src.tasks.stats_calculation.calculate_team_stats")
 def calculate_team_stats() -> dict:
     """
@@ -242,9 +337,37 @@ def calculate_team_stats() -> dict:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
+        # First calculate basic stats from BallDontLie
         result = loop.run_until_complete(_calculate_team_stats_async())
+
+        # Then fetch advanced stats from NBA.com
+        if result.get("teams_updated", 0) > 0:
+            logger.info("Fetching advanced stats from NBA.com...")
+            advanced_result = loop.run_until_complete(_fetch_advanced_stats_async())
+            result["advanced_stats_updated"] = advanced_result.get("teams_updated", 0)
+            result["advanced_errors"] = advanced_result.get("errors", 0)
     finally:
         loop.close()
 
     logger.info("Completed team stats calculation", **result)
+    return result
+
+
+@celery_app.task(name="src.tasks.stats_calculation.refresh_advanced_stats")
+def refresh_advanced_stats() -> dict:
+    """
+    Refresh only the advanced stats from NBA.com.
+
+    Useful for updating ORtg, DRtg, Pace without re-fetching basic stats.
+    """
+    logger.info("Refreshing advanced stats from NBA.com")
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        result = loop.run_until_complete(_fetch_advanced_stats_async())
+    finally:
+        loop.close()
+
+    logger.info("Completed advanced stats refresh", **result)
     return result
