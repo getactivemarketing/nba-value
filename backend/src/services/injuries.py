@@ -200,11 +200,12 @@ async def fetch_all_injuries() -> dict[str, list[Injury]]:
 
 
 async def get_player_stats(player_ids: list[int], client: BallDontLieClient) -> dict[int, dict]:
-    """Fetch season averages for multiple players."""
+    """Fetch season averages for multiple players (current season only)."""
     if not player_ids:
         return {}
 
-    # Use current season (2025-26 season = 2025)
+    # Only use current season (2025-26 = 2025)
+    # If no data, player has been out all season = team fully adjusted = 0 impact
     return await client.get_player_season_averages_batch(player_ids, season=2025)
 
 
@@ -261,20 +262,31 @@ def calculate_team_injury_report(
         is_season_ending = "season" in inj.status.lower() if inj.status else False
 
         if games_played == 0:
-            # Player hasn't played at all this season - team fully adjusted
-            days_out = 120  # Treat as very long-term
-            recency_weight = 0.0  # No impact - team doesn't have them in rotation
+            # No games this season = out all year = team fully adjusted = 0 impact
+            days_out = 120
+            recency_weight = 0.0
         elif is_season_ending:
             # Out for season - team has had significant time to adjust
             days_out = 60
-            recency_weight = 0.15  # Minimal impact
+            recency_weight = 0.15
         else:
-            # Recent injury - estimate based on games missed
-            # Avg team plays ~3 games/week, so if someone played 30 of 40 games,
-            # they've missed ~10 games = ~3 weeks
-            # For now, assume recent injuries are within 2 weeks
-            days_out = 7
-            recency_weight = calculate_recency_weight(days_out)
+            # Active player who got injured - estimate recency based on games played
+            # ~40 games expected by mid-season
+            expected_games = 40
+            games_missed_pct = max(0, (expected_games - games_played) / expected_games)
+
+            if games_missed_pct > 0.7:
+                # Missed >70% of season - team adjusted
+                days_out = 45
+                recency_weight = 0.30
+            elif games_missed_pct > 0.4:
+                # Missed 40-70% - partially adjusted
+                days_out = 21
+                recency_weight = 0.55
+            else:
+                # Recent injury, team not adjusted
+                days_out = 7
+                recency_weight = calculate_recency_weight(days_out)
 
         player_impact = PlayerInjuryImpact(
             player_id=inj.player_id,
