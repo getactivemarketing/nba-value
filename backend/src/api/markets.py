@@ -799,7 +799,7 @@ async def get_upcoming_games(
                 "players_out": report.players_out[:5],  # Top 5 players out
                 "players_questionable": report.players_questionable[:3],  # Top 3 questionable
                 "impact_score": round(report.injury_score * 100),  # 0-100 scale
-                "total_impact_points": round(report.total_impact, 1),
+                "total_impact_points": round(report.total_ppg_lost, 1),  # PPG lost from injuries
                 "severity": severity,
             }
 
