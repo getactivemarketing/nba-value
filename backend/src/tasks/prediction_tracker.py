@@ -22,14 +22,15 @@ logger = structlog.get_logger()
 DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
 
 
-def snapshot_predictions(hours_ahead: int = 6, db_url: str = None) -> dict:
+def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
     """
     Snapshot predictions for games starting in the next N hours.
 
-    Should be run periodically (e.g., hourly) to capture predictions before tip-off.
+    Default is 0.75 hours (45 minutes) to capture predictions close to tip-off.
+    Combined with a 15-minute schedule, this captures games ~30 min before tip.
 
     Args:
-        hours_ahead: How many hours ahead to look for games
+        hours_ahead: How many hours ahead to look for games (supports decimals)
         db_url: Database connection string
 
     Returns:

@@ -5,7 +5,7 @@ Scheduler for automated prediction tracking tasks.
 This script runs scheduled tasks:
 1. Ingest odds (every 30 min)
 2. Run scoring (every 30 min)
-3. Snapshot predictions (every 2 hours, for games within 8 hours)
+3. Snapshot predictions (every 15 min, captures games ~30 min before tip)
 4. Grade completed predictions (every hour)
 5. Sync game results (every 2 hours)
 
@@ -160,9 +160,15 @@ def run_scoring():
 
 
 def run_snapshot():
-    """Snapshot predictions for upcoming games."""
+    """Snapshot predictions for games starting soon (within 45 minutes).
+
+    This runs every 15 minutes to capture predictions ~30 mins before tip-off.
+    The NOT EXISTS check in snapshot_predictions prevents re-snapshotting.
+    """
     logger.info("Running prediction snapshot...")
-    result = snapshot_predictions(hours_ahead=8)
+    # Use 0.75 hours (45 min) window - combined with 15 min schedule,
+    # games get snapshotted 15-45 min before tip-off
+    result = snapshot_predictions(hours_ahead=0.75)
     logger.info(f"Snapshot complete: {result}")
     return result
 
@@ -367,13 +373,15 @@ def start_scheduler():
 
     # Schedule recurring tasks
     schedule.every(30).minutes.do(run_ingest)
-    schedule.every(2).hours.do(run_snapshot)
+    schedule.every(30).minutes.do(run_scoring)  # Run scoring with odds
+    schedule.every(15).minutes.do(run_snapshot)  # Capture predictions ~30 min before tip
     schedule.every(1).hour.do(run_grading)
     schedule.every(2).hours.do(run_results_sync)
 
     logger.info("Scheduler configured:")
     logger.info("  - Odds ingestion: every 30 minutes")
-    logger.info("  - Prediction snapshot: every 2 hours")
+    logger.info("  - Scoring: every 30 minutes")
+    logger.info("  - Prediction snapshot: every 15 minutes (45 min window)")
     logger.info("  - Grading: every 1 hour")
     logger.info("  - Results sync: every 2 hours")
 
