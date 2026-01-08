@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from src.database import async_session
 from src.models import Game, Market, ValueScore, ModelPrediction, Team, TeamStats, GameResult
+from src.services.injuries import get_all_team_injury_reports, TeamInjuryReport
 
 router = APIRouter()
 
@@ -445,10 +446,18 @@ async def get_markets_by_game(
 async def get_upcoming_games(
     hours: int = Query(24, ge=1, le=168, description="Hours ahead to look"),
 ) -> list[dict]:
-    """Get list of upcoming games with their market counts and team trends."""
+    """Get list of upcoming games with their market counts, team trends, and injury reports."""
     now = datetime.now(timezone.utc)
     cutoff = now + timedelta(hours=hours)
     today = now.date()
+
+    # Fetch injury reports (do this outside the session to avoid blocking)
+    try:
+        injury_reports = await get_all_team_injury_reports()
+    except Exception as e:
+        import structlog
+        structlog.get_logger().warning(f"Failed to fetch injuries: {e}")
+        injury_reports = {}
 
     async with async_session() as session:
         query = (
@@ -765,6 +774,35 @@ async def get_upcoming_games(
                 "factors": factors[:4],  # Limit to 4 factors
             }
 
+        def build_injury_data(team_abbrev: str) -> dict:
+            """Build injury data for a team from the fetched injury reports."""
+            report = injury_reports.get(team_abbrev)
+            if not report:
+                return {
+                    "players_out": [],
+                    "players_questionable": [],
+                    "impact_score": 0.0,
+                    "severity": "none",
+                }
+
+            # Determine severity label
+            if report.injury_score >= 0.7:
+                severity = "severe"
+            elif report.injury_score >= 0.4:
+                severity = "moderate"
+            elif report.injury_score > 0:
+                severity = "minor"
+            else:
+                severity = "none"
+
+            return {
+                "players_out": report.players_out[:5],  # Top 5 players out
+                "players_questionable": report.players_questionable[:3],  # Top 3 questionable
+                "impact_score": round(report.injury_score * 100),  # 0-100 scale
+                "total_impact_points": round(report.total_impact, 1),
+                "severity": severity,
+            }
+
         response = []
         for game in games:
             home = teams.get(game.home_team_id)
@@ -774,6 +812,13 @@ async def get_upcoming_games(
             away_abbr = away.abbreviation if away else game.away_team_id
             home_trends = build_team_trends(game.home_team_id, is_home=True)
             away_trends = build_team_trends(game.away_team_id, is_home=False)
+
+            # Build injury data for both teams
+            home_injuries = build_injury_data(home_abbr)
+            away_injuries = build_injury_data(away_abbr)
+
+            # Calculate injury edge (positive = home has advantage from opponent injuries)
+            injury_edge = away_injuries["impact_score"] - home_injuries["impact_score"]
 
             response.append({
                 "game_id": game.game_id,
@@ -787,6 +832,9 @@ async def get_upcoming_games(
                 "status": game.status,
                 "home_trends": home_trends,
                 "away_trends": away_trends,
+                "home_injuries": home_injuries,
+                "away_injuries": away_injuries,
+                "injury_edge": round(injury_edge),  # Positive = home advantage
                 "prediction": build_prediction(game, home_abbr, away_abbr, home_trends, away_trends),
                 "tornado_chart": build_tornado_chart(game.home_team_id, game.away_team_id),
             })

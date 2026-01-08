@@ -77,9 +77,9 @@ class Injury:
     player_id: int
     player_name: str
     team_id: int
-    team_name: str
-    status: str  # Out, Doubtful, Questionable, Probable
-    comment: str | None
+    status: str  # Out, Day-To-Day, Questionable, Probable
+    return_date: str | None
+    description: str | None
 
 
 class BallDontLieClient:
@@ -246,27 +246,41 @@ class BallDontLieClient:
 
         Note: Requires ALL-STAR tier or higher.
         """
-        params = {}
+        params = {"per_page": 100}
         if team_id:
             params["team_ids[]"] = [team_id]
 
         try:
-            data = await self._get("injuries", params)
+            all_injuries = []
+            cursor = None
 
-            injuries = []
-            for i in data["data"]:
-                injuries.append(
-                    Injury(
-                        player_id=i["player"]["id"],
-                        player_name=f"{i['player']['first_name']} {i['player']['last_name']}",
-                        team_id=i["team"]["id"],
-                        team_name=i["team"]["full_name"],
-                        status=i.get("status", "Unknown"),
-                        comment=i.get("comment"),
+            # Paginate through all results
+            while True:
+                if cursor:
+                    params["cursor"] = cursor
+
+                data = await self._get("player_injuries", params)
+
+                for i in data["data"]:
+                    player = i["player"]
+                    all_injuries.append(
+                        Injury(
+                            player_id=player["id"],
+                            player_name=f"{player['first_name']} {player['last_name']}",
+                            team_id=player.get("team_id", 0),
+                            status=i.get("status", "Unknown"),
+                            return_date=i.get("return_date"),
+                            description=i.get("description"),
+                        )
                     )
-                )
 
-            return injuries
+                # Check for next page
+                meta = data.get("meta", {})
+                cursor = meta.get("next_cursor")
+                if not cursor:
+                    break
+
+            return all_injuries
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 403:
                 logger.warning("Injuries endpoint requires paid tier")
@@ -319,7 +333,7 @@ async def test_balldontlie():
     print(f"Found {len(injuries)} injuries")
 
     for inj in injuries[:5]:
-        print(f"  {inj.player_name} ({inj.team_name}): {inj.status}")
+        print(f"  {inj.player_name} (team {inj.team_id}): {inj.status}")
 
     return teams, games
 
