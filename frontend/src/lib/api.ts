@@ -122,6 +122,14 @@ export interface TeamTrends {
   is_b2b: boolean;
 }
 
+export interface TeamInjuries {
+  players_out: string[];
+  players_questionable: string[];
+  impact_score: number;  // 0-100
+  total_impact_points: number;
+  severity: 'none' | 'minor' | 'moderate' | 'severe';
+}
+
 export interface BestBet {
   type: string;
   team: string;
@@ -171,6 +179,9 @@ export interface GameWithTrends {
   status: string;
   home_trends: TeamTrends;
   away_trends: TeamTrends;
+  home_injuries: TeamInjuries;
+  away_injuries: TeamInjuries;
+  injury_edge: number;  // Positive = home has advantage (away more injured)
   prediction: GamePrediction | null;
   tornado_chart: TornadoFactor[];
 }

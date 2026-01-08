@@ -6,7 +6,7 @@ import { HistoricalGameCard } from '@/components/MarketBoard/HistoricalGameCard'
 import { TopPicks } from '@/components/MarketBoard/TopPicks';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
 import type { MarketFilters as Filters, Market, Algorithm } from '@/types/market';
-import type { TeamTrends, GamePrediction, TornadoFactor } from '@/lib/api';
+import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries } from '@/lib/api';
 
 interface GameGroup {
   gameId: string;
@@ -16,6 +16,8 @@ interface GameGroup {
   markets: Market[];
   homeTrends?: TeamTrends;
   awayTrends?: TeamTrends;
+  homeInjuries?: TeamInjuries;
+  awayInjuries?: TeamInjuries;
   prediction?: GamePrediction | null;
   tornadoChart?: TornadoFactor[];
 }
@@ -104,14 +106,23 @@ export function MarketBoard() {
   const { data: gamesWithTrends } = useUpcomingGames(24);
   const { data: historicalGames, isLoading: isLoadingHistory } = useGameHistory(7);
 
-  // Create a map of game trends and predictions by game_id
+  // Create a map of game trends, injuries, and predictions by game_id
   const trendsMap = useMemo(() => {
-    const map = new Map<string, { home: TeamTrends; away: TeamTrends; prediction: GamePrediction | null; tornadoChart: TornadoFactor[] }>();
+    const map = new Map<string, {
+      home: TeamTrends;
+      away: TeamTrends;
+      homeInjuries: TeamInjuries;
+      awayInjuries: TeamInjuries;
+      prediction: GamePrediction | null;
+      tornadoChart: TornadoFactor[];
+    }>();
     if (gamesWithTrends) {
       for (const game of gamesWithTrends) {
         map.set(game.game_id, {
           home: game.home_trends,
           away: game.away_trends,
+          homeInjuries: game.home_injuries,
+          awayInjuries: game.away_injuries,
           prediction: game.prediction,
           tornadoChart: game.tornado_chart || [],
         });
@@ -145,6 +156,8 @@ export function MarketBoard() {
           markets: [market],
           homeTrends: trends?.home,
           awayTrends: trends?.away,
+          homeInjuries: trends?.homeInjuries,
+          awayInjuries: trends?.awayInjuries,
           prediction: trends?.prediction,
           tornadoChart: trends?.tornadoChart,
         });
@@ -428,6 +441,8 @@ export function MarketBoard() {
                   algorithm={algorithm}
                   homeTrends={game.homeTrends}
                   awayTrends={game.awayTrends}
+                  homeInjuries={game.homeInjuries}
+                  awayInjuries={game.awayInjuries}
                   prediction={game.prediction}
                   tornadoChart={game.tornadoChart}
                 />

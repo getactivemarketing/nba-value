@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getTeamLogo, getTeamColor } from '@/lib/teamLogos';
 import type { Market, Algorithm } from '@/types/market';
-import type { TeamTrends, GamePrediction, TornadoFactor } from '@/lib/api';
+import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries } from '@/lib/api';
 import { TornadoChart } from './TornadoChart';
 
 interface GameCardProps {
@@ -14,6 +14,8 @@ interface GameCardProps {
   algorithm: Algorithm;
   homeTrends?: TeamTrends;
   awayTrends?: TeamTrends;
+  homeInjuries?: TeamInjuries;
+  awayInjuries?: TeamInjuries;
   prediction?: GamePrediction | null;
   tornadoChart?: TornadoFactor[];
 }
@@ -94,6 +96,24 @@ function ValueBadge({ score, size = 'md' }: { score: number; size?: 'sm' | 'md' 
   );
 }
 
+// Injury severity badge
+function InjuryBadge({ severity, impact }: { severity: string; impact: number }) {
+  const getColor = () => {
+    if (severity === 'severe') return 'bg-red-100 text-red-700 border-red-200';
+    if (severity === 'moderate') return 'bg-amber-100 text-amber-700 border-amber-200';
+    if (severity === 'minor') return 'bg-yellow-50 text-yellow-700 border-yellow-200';
+    return 'bg-gray-50 text-gray-500 border-gray-200';
+  };
+
+  if (severity === 'none' || impact === 0) return null;
+
+  return (
+    <span className={`${getColor()} text-xs px-1.5 py-0.5 rounded border font-medium`}>
+      {impact}% hurt
+    </span>
+  );
+}
+
 // Team logo component with fallback
 function TeamLogo({ team, size = 48 }: { team: string; size?: number }) {
   const [imgError, setImgError] = useState(false);
@@ -128,7 +148,7 @@ function TeamLogo({ team, size = 48 }: { team: string; size?: number }) {
   );
 }
 
-export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, homeTrends, awayTrends, prediction, tornadoChart }: GameCardProps) {
+export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, homeTrends, awayTrends, homeInjuries, awayInjuries, prediction, tornadoChart }: GameCardProps) {
   const { date, time } = formatGameTime(tipTime);
 
   // Get spread values for each team
@@ -246,6 +266,52 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
             </div>
           )}
         </div>
+
+        {/* Injury Report Section */}
+        {((awayInjuries?.players_out?.length ?? 0) > 0 || (homeInjuries?.players_out?.length ?? 0) > 0) && (
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <div className="text-xs font-semibold text-gray-500 mb-2 flex items-center gap-1">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              INJURY REPORT
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              {/* Away Team Injuries */}
+              <div>
+                <div className="flex items-center gap-1 mb-1">
+                  <span className="font-medium text-gray-700">{awayTeam}</span>
+                  {awayInjuries && <InjuryBadge severity={awayInjuries.severity} impact={awayInjuries.impact_score} />}
+                </div>
+                {awayInjuries?.players_out && awayInjuries.players_out.length > 0 ? (
+                  <div className="text-gray-600">
+                    <span className="text-red-600 font-medium">OUT: </span>
+                    {awayInjuries.players_out.slice(0, 3).join(', ')}
+                    {awayInjuries.players_out.length > 3 && <span className="text-gray-400"> +{awayInjuries.players_out.length - 3}</span>}
+                  </div>
+                ) : (
+                  <div className="text-green-600">Healthy</div>
+                )}
+              </div>
+              {/* Home Team Injuries */}
+              <div className="text-right">
+                <div className="flex items-center justify-end gap-1 mb-1">
+                  {homeInjuries && <InjuryBadge severity={homeInjuries.severity} impact={homeInjuries.impact_score} />}
+                  <span className="font-medium text-gray-700">{homeTeam}</span>
+                </div>
+                {homeInjuries?.players_out && homeInjuries.players_out.length > 0 ? (
+                  <div className="text-gray-600">
+                    <span className="text-red-600 font-medium">OUT: </span>
+                    {homeInjuries.players_out.slice(0, 3).join(', ')}
+                    {homeInjuries.players_out.length > 3 && <span className="text-gray-400"> +{homeInjuries.players_out.length - 3}</span>}
+                  </div>
+                ) : (
+                  <div className="text-green-600">Healthy</div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tornado Chart - Matchup Comparison */}
         {tornadoChart && tornadoChart.length > 0 && (
