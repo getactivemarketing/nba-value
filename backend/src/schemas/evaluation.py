@@ -43,13 +43,11 @@ class CalibrationResponse(BaseModel):
 class PerformanceByBucketResponse(BaseModel):
     """Performance metrics for a score bucket."""
 
-    bucket_start: float
-    bucket_end: float
+    bucket: str  # e.g. "50-60"
     bet_count: int
-    win_rate: float
-    roi: float
-    clv_avg: float
-    avg_odds: float
+    win_rate: float | None = None
+    roi: float | None = None
+    clv_avg: float | None = None
 
 
 class TrendResponse(BaseModel):

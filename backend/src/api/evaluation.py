@@ -354,13 +354,7 @@ async def get_performance_by_bucket(
     results = _performance_by_bucket(days, algorithm)  # type: ignore
 
     return [
-        PerformanceByBucketResponse(
-            bucket=r['bucket'],
-            bet_count=r['bet_count'],
-            win_rate=r['win_rate'],
-            roi=r['roi'],
-            clv_avg=r['clv_avg'],
-        )
+        PerformanceByBucketResponse(**r)
         for r in results if r['bet_count'] > 0
     ]
 
