@@ -34,7 +34,7 @@ function formatLine(line: number | null, showPlus = true): string {
 }
 
 // Get best value score for a team's spread market
-function getTeamSpreadValue(markets: Market[], _team: string, isHome: boolean, algorithm: Algorithm): { score: number; line: number | null; marketId: string } | null {
+function getTeamSpreadValue(markets: Market[], _team: string, isHome: boolean, algorithm: Algorithm): { score: number; line: number | null; marketId: string; winProb: number } | null {
   const spreadMarkets = markets.filter(m =>
     m.market_type === 'spread' &&
     ((isHome && m.outcome_label.includes('home')) || (!isHome && m.outcome_label.includes('away')))
@@ -49,7 +49,9 @@ function getTeamSpreadValue(markets: Market[], _team: string, isHome: boolean, a
   });
 
   const score = algorithm === 'a' ? best.algo_a_value_score : best.algo_b_value_score;
-  return { score, line: best.line, marketId: best.market_id };
+  // p_true is the model's probability this bet wins (covers the spread)
+  const winProb = Math.round(best.p_true * 100);
+  return { score, line: best.line, marketId: best.market_id, winProb };
 }
 
 // Get consensus spread line (returns home team's perspective)
@@ -190,6 +192,11 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
                   </>
                 )}
               </div>
+              {awaySpread && (
+                <div className="text-xs text-gray-500 mt-0.5">
+                  {awaySpread.winProb}% to cover
+                </div>
+              )}
             </div>
           </div>
 
@@ -219,6 +226,11 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
                   </>
                 )}
               </div>
+              {homeSpread && (
+                <div className="text-xs text-gray-500 mt-0.5">
+                  {homeSpread.winProb}% to cover
+                </div>
+              )}
             </div>
             <TeamLogo team={homeTeam} size={56} />
           </div>
