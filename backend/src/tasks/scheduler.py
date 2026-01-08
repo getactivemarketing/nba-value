@@ -182,10 +182,18 @@ def run_grading():
 
 
 def run_results_sync():
-    """Sync game results from completed games."""
+    """Sync game results from completed games, then grade predictions."""
     logger.info("Running results sync...")
     result = sync_game_results()
     logger.info(f"Results sync complete: {result}")
+
+    # Automatically grade predictions after syncing results
+    if result.get('results_created', 0) > 0 or result.get('games_synced', 0) > 0:
+        logger.info("New results found, running prediction grading...")
+        grade_result = grade_predictions()
+        logger.info(f"Grading complete: {grade_result}")
+        result['grading'] = grade_result
+
     return result
 
 
@@ -229,40 +237,43 @@ def sync_game_results() -> dict:
             home_score = game.home_team_score
             away_score = game.away_team_score
             game_date = game.date
+            # BallDontLie uses EST dates, but our DB may have UTC dates (+1 day for evening games)
+            game_date_utc = game_date + timedelta(days=1)
 
-            # Update games table with final score
+            # Update games table with final score (try both EST and UTC dates)
             cur.execute('''
                 UPDATE games
                 SET home_score = %s, away_score = %s, status = 'final', updated_at = %s
-                WHERE game_date = %s
+                WHERE game_date IN (%s, %s)
                 AND home_team_id = %s
                 AND away_team_id = %s
                 AND status != 'final'
-            ''', (home_score, away_score, now, game_date, home_abbr, away_abbr))
+            ''', (home_score, away_score, now, game_date, game_date_utc, home_abbr, away_abbr))
 
             if cur.rowcount > 0:
                 games_synced += 1
 
-            # Check if game_results already exists
+            # Check if game_results already exists (check both dates)
             cur.execute('''
                 SELECT 1 FROM game_results
-                WHERE game_date = %s AND home_team_id = %s AND away_team_id = %s
-            ''', (game_date, home_abbr, away_abbr))
+                WHERE game_date IN (%s, %s) AND home_team_id = %s AND away_team_id = %s
+            ''', (game_date, game_date_utc, home_abbr, away_abbr))
 
             if cur.fetchone():
                 continue  # Already have results
 
-            # Get game_id from games table
+            # Get game_id from games table (check both dates)
             cur.execute('''
-                SELECT game_id FROM games
-                WHERE game_date = %s AND home_team_id = %s AND away_team_id = %s
-            ''', (game_date, home_abbr, away_abbr))
+                SELECT game_id, game_date FROM games
+                WHERE game_date IN (%s, %s) AND home_team_id = %s AND away_team_id = %s
+            ''', (game_date, game_date_utc, home_abbr, away_abbr))
 
             row = cur.fetchone()
             if not row:
                 continue
 
             game_id = row[0]
+            db_game_date = row[1]  # Use the date from our DB
 
             # Get closing lines from markets table
             cur.execute('''
@@ -315,7 +326,7 @@ def sync_game_results() -> dict:
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (game_id) DO NOTHING
             ''', (
-                game_id, game_date, home_abbr, away_abbr,
+                game_id, db_game_date, home_abbr, away_abbr,
                 home_score, away_score, total_score,
                 closing_spread, closing_total,
                 actual_winner, spread_result, total_result,

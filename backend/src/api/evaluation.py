@@ -501,3 +501,154 @@ async def get_trends(
     """
     # TODO: Implement trend analysis
     return []
+
+
+@router.get("/evaluation/predictions")
+async def get_prediction_performance(
+    days: int = Query(14, ge=1, le=90),
+    min_value: int = Query(0, ge=0, le=100),
+) -> dict:
+    """
+    Get performance of predictions from prediction_snapshots.
+
+    This uses the pre-game snapshots that are captured ~30 min before tip-off
+    and graded after games complete.
+    """
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+
+    cutoff = date.today() - timedelta(days=days)
+
+    # Get summary stats
+    cur.execute('''
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN winner_correct = true THEN 1 ELSE 0 END) as winner_wins,
+            SUM(CASE WHEN winner_correct = false THEN 1 ELSE 0 END) as winner_losses,
+            SUM(CASE WHEN best_bet_result = 'win' THEN 1 ELSE 0 END) as bet_wins,
+            SUM(CASE WHEN best_bet_result = 'loss' THEN 1 ELSE 0 END) as bet_losses,
+            SUM(CASE WHEN best_bet_result = 'push' THEN 1 ELSE 0 END) as bet_pushes,
+            SUM(COALESCE(best_bet_profit, 0)) as total_profit
+        FROM prediction_snapshots
+        WHERE snapshot_time >= %s
+        AND winner_correct IS NOT NULL
+        AND (best_bet_value_score >= %s OR %s = 0)
+    ''', (cutoff, min_value, min_value))
+
+    row = cur.fetchone()
+    total, winner_wins, winner_losses, bet_wins, bet_losses, bet_pushes, total_profit = row
+
+    # Get performance by value bucket
+    cur.execute('''
+        SELECT
+            CASE
+                WHEN best_bet_value_score >= 80 THEN '80+'
+                WHEN best_bet_value_score >= 70 THEN '70-79'
+                WHEN best_bet_value_score >= 60 THEN '60-69'
+                WHEN best_bet_value_score >= 50 THEN '50-59'
+                ELSE '<50'
+            END as bucket,
+            COUNT(*) as total,
+            SUM(CASE WHEN best_bet_result = 'win' THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN best_bet_result = 'loss' THEN 1 ELSE 0 END) as losses,
+            SUM(COALESCE(best_bet_profit, 0)) as profit
+        FROM prediction_snapshots
+        WHERE snapshot_time >= %s
+        AND winner_correct IS NOT NULL
+        AND best_bet_value_score IS NOT NULL
+        GROUP BY bucket
+        ORDER BY bucket DESC
+    ''', (cutoff,))
+
+    buckets = []
+    for row in cur.fetchall():
+        bucket, count, wins, losses, profit = row
+        total_bets = (wins or 0) + (losses or 0)
+        buckets.append({
+            'bucket': bucket,
+            'total': count,
+            'wins': wins or 0,
+            'losses': losses or 0,
+            'win_rate': round((wins or 0) / total_bets * 100, 1) if total_bets > 0 else None,
+            'profit': float(profit or 0),
+            'roi': round(float(profit or 0) / (total_bets * 100) * 100, 1) if total_bets > 0 else None,
+        })
+
+    # Get recent predictions with results
+    cur.execute('''
+        SELECT
+            home_team, away_team, tip_time,
+            predicted_winner, winner_probability, winner_confidence,
+            best_bet_type, best_bet_team, best_bet_line, best_bet_value_score,
+            actual_winner, home_score, away_score,
+            winner_correct, best_bet_result, best_bet_profit,
+            home_injury_score, away_injury_score, injury_edge
+        FROM prediction_snapshots
+        WHERE snapshot_time >= %s
+        AND winner_correct IS NOT NULL
+        ORDER BY tip_time DESC
+        LIMIT 50
+    ''', (cutoff,))
+
+    recent = []
+    for row in cur.fetchall():
+        (home, away, tip_time, pred_winner, winner_prob, confidence,
+         bet_type, bet_team, bet_line, bet_value,
+         actual_winner, home_score, away_score,
+         winner_correct, bet_result, bet_profit,
+         home_inj, away_inj, inj_edge) = row
+
+        recent.append({
+            'matchup': f'{away} @ {home}',
+            'tip_time': tip_time.isoformat() if tip_time else None,
+            'predicted_winner': pred_winner,
+            'winner_prob': float(winner_prob) if winner_prob else None,
+            'confidence': confidence,
+            'best_bet': {
+                'type': bet_type,
+                'team': bet_team,
+                'line': float(bet_line) if bet_line else None,
+                'value_score': int(bet_value) if bet_value else None,
+            } if bet_type else None,
+            'actual_winner': actual_winner,
+            'final_score': f'{away_score}-{home_score}' if home_score else None,
+            'winner_correct': winner_correct,
+            'bet_result': bet_result,
+            'bet_profit': float(bet_profit) if bet_profit else None,
+            'injury_edge': float(inj_edge) if inj_edge else None,
+        })
+
+    # Get pending predictions (not yet graded)
+    cur.execute('''
+        SELECT COUNT(*) FROM prediction_snapshots
+        WHERE winner_correct IS NULL
+        AND tip_time < NOW()
+    ''')
+    pending_grading = cur.fetchone()[0]
+
+    cur.close()
+    conn.close()
+
+    total_bets = (bet_wins or 0) + (bet_losses or 0)
+
+    return {
+        'summary': {
+            'total_predictions': total or 0,
+            'winner_accuracy': {
+                'wins': winner_wins or 0,
+                'losses': winner_losses or 0,
+                'rate': round((winner_wins or 0) / total * 100, 1) if total else None,
+            },
+            'best_bet_performance': {
+                'wins': bet_wins or 0,
+                'losses': bet_losses or 0,
+                'pushes': bet_pushes or 0,
+                'win_rate': round((bet_wins or 0) / total_bets * 100, 1) if total_bets > 0 else None,
+                'profit': float(total_profit or 0),
+                'roi': round(float(total_profit or 0) / (total_bets * 100) * 100, 1) if total_bets > 0 else None,
+            },
+            'pending_grading': pending_grading,
+        },
+        'by_value_bucket': buckets,
+        'recent_predictions': recent,
+    }

@@ -96,6 +96,16 @@ export const api = {
     return response.data;
   },
 
+  async getPredictionPerformance(
+    days: number = 14,
+    minValue: number = 0
+  ): Promise<PredictionPerformance> {
+    const response = await client.get<PredictionPerformance>(
+      `/evaluation/predictions?days=${days}&min_value=${minValue}`
+    );
+    return response.data;
+  },
+
   // Games
   async getUpcomingGames(hours: number = 24): Promise<GameWithTrends[]> {
     const response = await client.get<GameWithTrends[]>(`/games/upcoming?hours=${hours}`);
@@ -255,4 +265,52 @@ export interface DailyResult {
   profit: number;
   record: string;
   roi: number;
+}
+
+export interface PredictionPerformance {
+  summary: {
+    total_predictions: number;
+    winner_accuracy: {
+      wins: number;
+      losses: number;
+      rate: number | null;
+    };
+    best_bet_performance: {
+      wins: number;
+      losses: number;
+      pushes: number;
+      win_rate: number | null;
+      profit: number;
+      roi: number | null;
+    };
+    pending_grading: number;
+  };
+  by_value_bucket: {
+    bucket: string;
+    total: number;
+    wins: number;
+    losses: number;
+    win_rate: number | null;
+    profit: number;
+    roi: number | null;
+  }[];
+  recent_predictions: {
+    matchup: string;
+    tip_time: string;
+    predicted_winner: string;
+    winner_prob: number;
+    confidence: string;
+    best_bet: {
+      type: string;
+      team: string;
+      line: number | null;
+      value_score: number | null;
+    } | null;
+    actual_winner: string;
+    final_score: string;
+    winner_correct: boolean;
+    bet_result: 'win' | 'loss' | 'push' | null;
+    bet_profit: number | null;
+    injury_edge: number | null;
+  }[];
 }
