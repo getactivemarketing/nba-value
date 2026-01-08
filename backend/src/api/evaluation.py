@@ -59,18 +59,34 @@ def _backtest_algorithm(days: int, min_value: float, algorithm: Literal['a', 'b'
 
     # Query value scores with game results
     # Note: games table date is offset by 1 day from game_results
+    # Use window function to get best value per game/market_type/side (not per sportsbook)
     cur.execute(f'''
-        SELECT DISTINCT ON (vs.market_id)
-            vs.{value_col}, mp.p_true, mp.raw_edge,
-            m.market_type, m.outcome_label, m.line, m.odds_decimal,
-            g.home_team_id, g.away_team_id, g.game_date
-        FROM value_scores vs
-        JOIN model_predictions mp ON mp.prediction_id = vs.prediction_id
-        JOIN markets m ON m.market_id = vs.market_id
-        JOIN games g ON g.game_id = m.game_id
-        WHERE g.game_date >= %s
-        AND vs.{value_col} >= %s
-        ORDER BY vs.market_id, vs.calc_time DESC
+        WITH ranked_bets AS (
+            SELECT
+                vs.{value_col} as value_score, mp.p_true, mp.raw_edge,
+                m.market_type, m.outcome_label, m.line, m.odds_decimal,
+                g.home_team_id, g.away_team_id, g.game_date,
+                ROW_NUMBER() OVER (
+                    PARTITION BY g.game_id, m.market_type,
+                        CASE
+                            WHEN m.market_type = 'total' THEN
+                                CASE WHEN m.outcome_label ILIKE '%%over%%' THEN 'over' ELSE 'under' END
+                            ELSE
+                                CASE WHEN m.outcome_label ILIKE '%%home%%' THEN 'home' ELSE 'away' END
+                        END
+                    ORDER BY vs.{value_col} DESC, vs.calc_time DESC
+                ) as rn
+            FROM value_scores vs
+            JOIN model_predictions mp ON mp.prediction_id = vs.prediction_id
+            JOIN markets m ON m.market_id = vs.market_id
+            JOIN games g ON g.game_id = m.game_id
+            WHERE g.game_date >= %s
+            AND vs.{value_col} >= %s
+        )
+        SELECT value_score, p_true, raw_edge, market_type, outcome_label, line, odds_decimal,
+               home_team_id, away_team_id, game_date
+        FROM ranked_bets
+        WHERE rn = 1
     ''', (cutoff, min_value))
 
     scores = cur.fetchall()
@@ -215,18 +231,33 @@ def _performance_by_bucket(days: int, algorithm: Literal['a', 'b']) -> list[dict
     cutoff = date.today() - timedelta(days=days)
     value_col = 'algo_a_value_score' if algorithm == 'a' else 'algo_b_value_score'
 
-    # Get all scored bets
+    # Get all scored bets - one per game/market_type/side (not per sportsbook)
     cur.execute(f'''
-        SELECT DISTINCT ON (vs.market_id)
-            vs.{value_col}, mp.p_true,
-            m.market_type, m.outcome_label, m.line, m.odds_decimal,
-            g.home_team_id, g.away_team_id, g.game_date
-        FROM value_scores vs
-        JOIN model_predictions mp ON mp.prediction_id = vs.prediction_id
-        JOIN markets m ON m.market_id = vs.market_id
-        JOIN games g ON g.game_id = m.game_id
-        WHERE g.game_date >= %s
-        ORDER BY vs.market_id, vs.calc_time DESC
+        WITH ranked_bets AS (
+            SELECT
+                vs.{value_col} as value_score, mp.p_true,
+                m.market_type, m.outcome_label, m.line, m.odds_decimal,
+                g.home_team_id, g.away_team_id, g.game_date,
+                ROW_NUMBER() OVER (
+                    PARTITION BY g.game_id, m.market_type,
+                        CASE
+                            WHEN m.market_type = 'total' THEN
+                                CASE WHEN m.outcome_label ILIKE '%%over%%' THEN 'over' ELSE 'under' END
+                            ELSE
+                                CASE WHEN m.outcome_label ILIKE '%%home%%' THEN 'home' ELSE 'away' END
+                        END
+                    ORDER BY vs.{value_col} DESC, vs.calc_time DESC
+                ) as rn
+            FROM value_scores vs
+            JOIN model_predictions mp ON mp.prediction_id = vs.prediction_id
+            JOIN markets m ON m.market_id = vs.market_id
+            JOIN games g ON g.game_id = m.game_id
+            WHERE g.game_date >= %s
+        )
+        SELECT value_score, p_true, market_type, outcome_label, line, odds_decimal,
+               home_team_id, away_team_id, game_date
+        FROM ranked_bets
+        WHERE rn = 1
     ''', (cutoff,))
 
     scores = cur.fetchall()
@@ -352,18 +383,34 @@ async def get_daily_results(
     value_col = 'algo_a_value_score' if algorithm == 'a' else 'algo_b_value_score'
 
     # Get scored bets grouped by game date
+    # Use subquery to get best value per game/market_type/side (not per sportsbook)
     cur.execute(f'''
-        SELECT DISTINCT ON (vs.market_id)
-            vs.{value_col}, mp.p_true,
-            m.market_type, m.outcome_label, m.line, m.odds_decimal,
-            g.home_team_id, g.away_team_id, g.game_date
-        FROM value_scores vs
-        JOIN model_predictions mp ON mp.prediction_id = vs.prediction_id
-        JOIN markets m ON m.market_id = vs.market_id
-        JOIN games g ON g.game_id = m.game_id
-        WHERE g.game_date >= %s
-        AND vs.{value_col} >= %s
-        ORDER BY vs.market_id, vs.calc_time DESC
+        WITH ranked_bets AS (
+            SELECT
+                vs.{value_col} as value_score, mp.p_true,
+                m.market_type, m.outcome_label, m.line, m.odds_decimal,
+                g.home_team_id, g.away_team_id, g.game_date, g.game_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY g.game_id, m.market_type,
+                        CASE
+                            WHEN m.market_type = 'total' THEN
+                                CASE WHEN m.outcome_label ILIKE '%%over%%' THEN 'over' ELSE 'under' END
+                            ELSE
+                                CASE WHEN m.outcome_label ILIKE '%%home%%' THEN 'home' ELSE 'away' END
+                        END
+                    ORDER BY vs.{value_col} DESC, vs.calc_time DESC
+                ) as rn
+            FROM value_scores vs
+            JOIN model_predictions mp ON mp.prediction_id = vs.prediction_id
+            JOIN markets m ON m.market_id = vs.market_id
+            JOIN games g ON g.game_id = m.game_id
+            WHERE g.game_date >= %s
+            AND vs.{value_col} >= %s
+        )
+        SELECT value_score, p_true, market_type, outcome_label, line, odds_decimal,
+               home_team_id, away_team_id, game_date
+        FROM ranked_bets
+        WHERE rn = 1
     ''', (cutoff, min_value))
 
     scores = cur.fetchall()
