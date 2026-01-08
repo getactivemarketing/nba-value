@@ -7,12 +7,15 @@ This module handles:
 3. Tracking model performance over time
 """
 
+import asyncio
 import json
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
 import psycopg2
 import structlog
+
+from src.services.injuries import get_all_team_injury_reports
 
 logger = structlog.get_logger()
 
@@ -60,6 +63,14 @@ def snapshot_predictions(hours_ahead: int = 6, db_url: str = None) -> dict:
         cur.close()
         conn.close()
         return {"games_snapshotted": 0, "status": "no_new_games"}
+
+    # Fetch injury reports for all teams
+    try:
+        injury_reports = asyncio.run(get_all_team_injury_reports())
+        logger.info(f"Fetched injury reports for {len(injury_reports)} teams")
+    except Exception as e:
+        logger.warning(f"Failed to fetch injury reports: {e}")
+        injury_reports = {}
 
     snapshots_created = 0
 
@@ -141,6 +152,21 @@ def snapshot_predictions(hours_ahead: int = 6, db_url: str = None) -> dict:
         # Build explanation factors
         factors = build_factors(home_team, away_team, home_stats, away_stats, best_bet)
 
+        # Get injury data for this game
+        home_injury = injury_reports.get(home_team)
+        away_injury = injury_reports.get(away_team)
+
+        home_injury_score = home_injury.spread_injury_score if home_injury else 0
+        away_injury_score = away_injury.spread_injury_score if away_injury else 0
+        home_ppg_lost = home_injury.total_ppg_lost if home_injury else 0
+        away_ppg_lost = away_injury.total_ppg_lost if away_injury else 0
+        injury_edge = away_injury_score - home_injury_score  # Positive = home advantage
+
+        # Add injury factor if significant
+        if abs(injury_edge) >= 0.05:
+            advantage_team = home_team if injury_edge > 0 else away_team
+            factors.append(f"{advantage_team} injury advantage ({abs(injury_edge):.0%})")
+
         # Insert snapshot
         cur.execute('''
             INSERT INTO prediction_snapshots (
@@ -148,8 +174,9 @@ def snapshot_predictions(hours_ahead: int = 6, db_url: str = None) -> dict:
                 predicted_winner, winner_probability, winner_confidence,
                 best_bet_type, best_bet_team, best_bet_line,
                 best_bet_value_score, best_bet_edge, best_bet_odds,
-                factors
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                factors,
+                home_injury_score, away_injury_score, home_ppg_lost, away_ppg_lost, injury_edge
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ''', (
             game_id, now, home_team, away_team, tip_time,
             predicted_winner, round(winner_prob * 100, 1), confidence,
@@ -159,7 +186,12 @@ def snapshot_predictions(hours_ahead: int = 6, db_url: str = None) -> dict:
             best_bet['value_score'] if best_bet else None,
             best_bet['edge'] if best_bet else None,
             best_bet['odds'] if best_bet else None,
-            json.dumps(factors)
+            json.dumps(factors),
+            round(home_injury_score, 2),
+            round(away_injury_score, 2),
+            round(home_ppg_lost, 1),
+            round(away_ppg_lost, 1),
+            round(injury_edge, 2)
         ))
 
         snapshots_created += 1

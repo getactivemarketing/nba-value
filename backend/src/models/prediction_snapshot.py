@@ -53,6 +53,13 @@ class PredictionSnapshot(Base):
     # Key factors that drove the prediction
     factors: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of factor strings
 
+    # Injury context (for backtesting injury model)
+    home_injury_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    away_injury_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    home_ppg_lost: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), nullable=True)
+    away_ppg_lost: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), nullable=True)
+    injury_edge: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)  # away - home
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=datetime.utcnow,
