@@ -17,6 +17,7 @@ except ImportError:
 from src.database import async_session
 from src.models import Game, Market, TeamStats, ModelPrediction, ValueScore
 from src.services.scoring.scorer import ScoringService, ScoringInput, get_scoring_service
+from src.services.injuries import get_all_team_injury_reports
 
 logger = structlog.get_logger()
 
@@ -26,11 +27,12 @@ async def _run_pre_game_scoring_async() -> dict:
     Async implementation of pre-game scoring.
 
     Flow:
-    1. Query games starting in next 24 hours
-    2. Get markets for those games
-    3. Get team stats for both teams
-    4. Run ScoringService for each market
-    5. Store ModelPrediction and ValueScore records
+    1. Fetch injury reports for all teams
+    2. Query games starting in next 24 hours
+    3. Get markets for those games
+    4. Get team stats for both teams
+    5. Run ScoringService for each market (with injury data)
+    6. Store ModelPrediction and ValueScore records
     """
     now = datetime.now(timezone.utc)
     cutoff = now + timedelta(hours=24)
@@ -38,6 +40,14 @@ async def _run_pre_game_scoring_async() -> dict:
 
     markets_scored = 0
     errors = 0
+
+    # Fetch injury reports for all teams
+    try:
+        injury_reports = await get_all_team_injury_reports()
+        logger.info("Fetched injury reports", teams_with_injuries=len(injury_reports))
+    except Exception as e:
+        logger.warning(f"Failed to fetch injury reports, continuing without: {e}")
+        injury_reports = {}
 
     scoring_service = get_scoring_service()
 
@@ -96,6 +106,12 @@ async def _run_pre_game_scoring_async() -> dict:
                         delete(ModelPrediction).where(ModelPrediction.market_id.in_(market_ids))
                     )
 
+                # Get injury scores for both teams
+                home_injury_report = injury_reports.get(game.home_team_id)
+                away_injury_report = injury_reports.get(game.away_team_id)
+                home_injury_score = home_injury_report.injury_score if home_injury_report else 0.0
+                away_injury_score = away_injury_report.injury_score if away_injury_report else 0.0
+
                 # Score each market for this game
                 for market in game.markets:
                     if not market.is_active:
@@ -105,7 +121,7 @@ async def _run_pre_game_scoring_async() -> dict:
                         # Find opposite market for de-vigging
                         opposite_odds = _find_opposite_odds(market, game.markets)
 
-                        # Create scoring input
+                        # Create scoring input with injury data
                         scoring_input = ScoringInput(
                             game_id=game.game_id,
                             market_type=market.market_type,
@@ -117,6 +133,8 @@ async def _run_pre_game_scoring_async() -> dict:
                             away_features=away_features,
                             tip_time=game.tip_time_utc,
                             book=market.book,
+                            home_injury_score=home_injury_score,
+                            away_injury_score=away_injury_score,
                         )
 
                         # Run scoring
@@ -344,7 +362,18 @@ async def _score_single_market_async(market_id: str) -> dict:
 
         opposite_odds = _find_opposite_odds(market, all_markets)
 
-        # Create scoring input
+        # Fetch injury reports for this game's teams
+        try:
+            injury_reports = await get_all_team_injury_reports()
+            home_injury_report = injury_reports.get(game.home_team_id)
+            away_injury_report = injury_reports.get(game.away_team_id)
+            home_injury_score = home_injury_report.injury_score if home_injury_report else 0.0
+            away_injury_score = away_injury_report.injury_score if away_injury_report else 0.0
+        except Exception:
+            home_injury_score = 0.0
+            away_injury_score = 0.0
+
+        # Create scoring input with injury data
         scoring_input = ScoringInput(
             game_id=game.game_id,
             market_type=market.market_type,
@@ -356,6 +385,8 @@ async def _score_single_market_async(market_id: str) -> dict:
             away_features=away_features,
             tip_time=game.tip_time_utc,
             book=market.book,
+            home_injury_score=home_injury_score,
+            away_injury_score=away_injury_score,
         )
 
         # Run scoring

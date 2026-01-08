@@ -44,7 +44,10 @@ class ScoringInput:
     # Context
     tip_time: datetime
     book: str | None = None
-    injury_certainty: float = 1.0
+
+    # Injury data (0-1 scale, higher = more injured)
+    home_injury_score: float = 0.0
+    away_injury_score: float = 0.0
 
 
 @dataclass
@@ -168,11 +171,16 @@ class ScoringService:
         # Step 6: Calculate confidence multipliers
         ensemble_std = 0.05  # Placeholder - would come from ensemble model
 
+        # Determine if this bet is on home side (or over for totals)
+        is_home_bet = "home" in input_data.outcome_label.lower() or "over" in input_data.outcome_label.lower()
+
         confidence_a = compute_confidence_multiplier(
             ensemble_std=ensemble_std,
             market_type=input_data.market_type,
             raw_edge=raw_edge,
-            injury_certainty=input_data.injury_certainty,
+            home_injury_score=input_data.home_injury_score,
+            away_injury_score=input_data.away_injury_score,
+            is_home_bet=is_home_bet,
             algorithm="a",
         )
 
@@ -180,7 +188,9 @@ class ScoringService:
             ensemble_std=ensemble_std,
             market_type=input_data.market_type,
             raw_edge=raw_edge,
-            injury_certainty=input_data.injury_certainty,
+            home_injury_score=input_data.home_injury_score,
+            away_injury_score=input_data.away_injury_score,
+            is_home_bet=is_home_bet,
             algorithm="b",
         )
 
