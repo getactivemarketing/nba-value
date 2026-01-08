@@ -32,3 +32,35 @@ export function usePerformanceByBucket(
     staleTime: 300000,
   });
 }
+
+export interface DailyBet {
+  matchup: string;
+  bet: string;
+  value_score: number;
+  result: 'win' | 'loss' | 'push';
+  profit: number;
+  final_score: string;
+}
+
+export interface DailyResult {
+  date: string;
+  bets: DailyBet[];
+  wins: number;
+  losses: number;
+  pushes: number;
+  profit: number;
+  record: string;
+  roi: number;
+}
+
+export function useDailyResults(
+  days: number = 7,
+  algorithm: Algorithm = 'b',
+  minValue: number = 50
+) {
+  return useQuery({
+    queryKey: ['evaluation', 'daily', days, algorithm, minValue],
+    queryFn: () => api.getDailyResults(days, algorithm, minValue),
+    staleTime: 300000,
+  });
+}

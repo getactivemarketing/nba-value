@@ -85,6 +85,17 @@ export const api = {
     return response.data;
   },
 
+  async getDailyResults(
+    days: number = 7,
+    algorithm: Algorithm = 'b',
+    minValue: number = 50
+  ): Promise<DailyResult[]> {
+    const response = await client.get<DailyResult[]>(
+      `/evaluation/daily?days=${days}&algorithm=${algorithm}&min_value=${minValue}`
+    );
+    return response.data;
+  },
+
   // Games
   async getUpcomingGames(hours: number = 24): Promise<GameWithTrends[]> {
     const response = await client.get<GameWithTrends[]>(`/games/upcoming?hours=${hours}`);
@@ -224,4 +235,24 @@ export interface TopPicksResponse {
   totals: TopPick[];
   best_edges: TopPick[];
   generated_at: string;
+}
+
+export interface DailyBet {
+  matchup: string;
+  bet: string;
+  value_score: number;
+  result: 'win' | 'loss' | 'push';
+  profit: number;
+  final_score: string;
+}
+
+export interface DailyResult {
+  date: string;
+  bets: DailyBet[];
+  wins: number;
+  losses: number;
+  pushes: number;
+  profit: number;
+  record: string;
+  roi: number;
 }
