@@ -7,6 +7,7 @@ This script runs scheduled tasks:
 2. Run scoring (every 30 min)
 3. Snapshot predictions (every 2 hours, for games within 8 hours)
 4. Grade completed predictions (every hour)
+5. Sync game results (every 2 hours)
 
 Can be run as a standalone process or scheduled via cron/Railway.
 """
@@ -174,6 +175,166 @@ def run_grading():
     return result
 
 
+def run_results_sync():
+    """Sync game results from completed games."""
+    logger.info("Running results sync...")
+    result = sync_game_results()
+    logger.info(f"Results sync complete: {result}")
+    return result
+
+
+def sync_game_results() -> dict:
+    """
+    Sync final scores and populate game_results table.
+    Uses BallDontLie (free) for scores.
+    """
+    from datetime import date
+
+    conn = psycopg2.connect(DB_URL)
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    now = datetime.now(timezone.utc)
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    two_days_ago = today - timedelta(days=2)
+
+    games_synced = 0
+    results_created = 0
+
+    try:
+        # Import BallDontLie client
+        from src.services.data.balldontlie import BallDontLieClient
+        client = BallDontLieClient()
+
+        # Fetch games from last 2 days
+        all_games = asyncio.run(client.get_games(
+            start_date=two_days_ago,
+            end_date=today,
+            seasons=[2025]
+        ))
+
+        completed = [g for g in all_games if g.status == 'Final' and g.home_team_score]
+        logger.info(f"Found {len(completed)} completed games")
+
+        for game in completed:
+            home_abbr = game.home_team.abbreviation
+            away_abbr = game.away_team.abbreviation
+            home_score = game.home_team_score
+            away_score = game.away_team_score
+            game_date = game.date
+
+            # Update games table with final score
+            cur.execute('''
+                UPDATE games
+                SET home_score = %s, away_score = %s, status = 'final', updated_at = %s
+                WHERE game_date = %s
+                AND home_team_id = %s
+                AND away_team_id = %s
+                AND status != 'final'
+            ''', (home_score, away_score, now, game_date, home_abbr, away_abbr))
+
+            if cur.rowcount > 0:
+                games_synced += 1
+
+            # Check if game_results already exists
+            cur.execute('''
+                SELECT 1 FROM game_results
+                WHERE game_date = %s AND home_team_id = %s AND away_team_id = %s
+            ''', (game_date, home_abbr, away_abbr))
+
+            if cur.fetchone():
+                continue  # Already have results
+
+            # Get game_id from games table
+            cur.execute('''
+                SELECT game_id FROM games
+                WHERE game_date = %s AND home_team_id = %s AND away_team_id = %s
+            ''', (game_date, home_abbr, away_abbr))
+
+            row = cur.fetchone()
+            if not row:
+                continue
+
+            game_id = row[0]
+
+            # Get closing lines from markets table
+            cur.execute('''
+                SELECT line FROM markets
+                WHERE game_id = %s AND market_type = 'spread' AND outcome_label = 'home_spread'
+                LIMIT 1
+            ''', (game_id,))
+            spread_row = cur.fetchone()
+            closing_spread = float(spread_row[0]) if spread_row and spread_row[0] else None
+
+            cur.execute('''
+                SELECT line FROM markets
+                WHERE game_id = %s AND market_type = 'total' AND outcome_label = 'over'
+                LIMIT 1
+            ''', (game_id,))
+            total_row = cur.fetchone()
+            closing_total = float(total_row[0]) if total_row and total_row[0] else None
+
+            # Calculate results
+            actual_winner = home_abbr if home_score > away_score else away_abbr
+            total_score = home_score + away_score
+
+            spread_result = None
+            if closing_spread is not None:
+                home_adjusted = home_score + closing_spread
+                if home_adjusted > away_score:
+                    spread_result = 'home_cover'
+                elif home_adjusted < away_score:
+                    spread_result = 'away_cover'
+                else:
+                    spread_result = 'push'
+
+            total_result = None
+            if closing_total is not None:
+                if total_score > closing_total:
+                    total_result = 'over'
+                elif total_score < closing_total:
+                    total_result = 'under'
+                else:
+                    total_result = 'push'
+
+            # Insert game_results
+            cur.execute('''
+                INSERT INTO game_results (
+                    game_id, game_date, home_team_id, away_team_id,
+                    home_score, away_score, total_score,
+                    closing_spread, closing_total,
+                    actual_winner, spread_result, total_result,
+                    created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (game_id) DO NOTHING
+            ''', (
+                game_id, game_date, home_abbr, away_abbr,
+                home_score, away_score, total_score,
+                closing_spread, closing_total,
+                actual_winner, spread_result, total_result,
+                now
+            ))
+
+            if cur.rowcount > 0:
+                results_created += 1
+
+        cur.close()
+        conn.close()
+
+        return {
+            "games_synced": games_synced,
+            "results_created": results_created,
+            "status": "success"
+        }
+
+    except Exception as e:
+        logger.error(f"Results sync failed: {e}")
+        cur.close()
+        conn.close()
+        return {"error": str(e), "status": "failed"}
+
+
 def run_all():
     """Run all tasks once."""
     logger.info("=" * 50)
@@ -189,6 +350,9 @@ def run_all():
     time.sleep(2)
 
     run_grading()
+    time.sleep(2)
+
+    run_results_sync()
 
     logger.info("All tasks complete")
     logger.info("=" * 50)
@@ -205,11 +369,13 @@ def start_scheduler():
     schedule.every(30).minutes.do(run_ingest)
     schedule.every(2).hours.do(run_snapshot)
     schedule.every(1).hour.do(run_grading)
+    schedule.every(2).hours.do(run_results_sync)
 
     logger.info("Scheduler configured:")
     logger.info("  - Odds ingestion: every 30 minutes")
     logger.info("  - Prediction snapshot: every 2 hours")
     logger.info("  - Grading: every 1 hour")
+    logger.info("  - Results sync: every 2 hours")
 
     while True:
         schedule.run_pending()
@@ -225,14 +391,15 @@ if __name__ == '__main__':
             run_snapshot()
         elif command == 'grade':
             run_grading()
+        elif command == 'results':
+            run_results_sync()
         elif command == 'all':
             run_all()
         elif command == 'daemon':
             start_scheduler()
         else:
             print(f"Unknown command: {command}")
-            print("Usage: python scheduler.py [ingest|snapshot|grade|all|daemon]")
+            print("Usage: python scheduler.py [ingest|snapshot|grade|results|all|daemon]")
     else:
         # Default: run all tasks once
         run_all()
-# Scheduler service
