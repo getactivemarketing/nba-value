@@ -115,19 +115,29 @@ async def _run_pre_game_scoring_async() -> dict:
                         delete(ModelPrediction).where(ModelPrediction.market_id.in_(market_ids))
                     )
 
-                # Get injury scores for both teams
+                # Get injury scores for both teams (general and market-specific)
                 home_injury_report = injury_reports.get(game.home_team_id)
                 away_injury_report = injury_reports.get(game.away_team_id)
-                home_injury_score = home_injury_report.injury_score if home_injury_report else 0.0
-                away_injury_score = away_injury_report.injury_score if away_injury_report else 0.0
+
+                # General injury scores (for spread/ML)
+                home_injury_score = home_injury_report.spread_injury_score if home_injury_report else 0.0
+                away_injury_score = away_injury_report.spread_injury_score if away_injury_report else 0.0
+
+                # Totals-specific injury scores (weighted toward centers/rebounding)
+                home_totals_injury = home_injury_report.totals_injury_score if home_injury_report else 0.0
+                away_totals_injury = away_injury_report.totals_injury_score if away_injury_report else 0.0
 
                 logger.debug(
                     "Injury data for game",
                     game_id=game.game_id,
                     home_team=game.home_team_id,
                     away_team=game.away_team_id,
-                    home_injury_score=home_injury_score,
-                    away_injury_score=away_injury_score,
+                    home_spread_injury=home_injury_score,
+                    away_spread_injury=away_injury_score,
+                    home_totals_injury=home_totals_injury,
+                    away_totals_injury=away_totals_injury,
+                    home_centers_out=home_injury_report.position_data.centers_out if home_injury_report else 0,
+                    away_centers_out=away_injury_report.position_data.centers_out if away_injury_report else 0,
                     home_players_out=home_injury_report.players_out[:3] if home_injury_report else [],
                     away_players_out=away_injury_report.players_out[:3] if away_injury_report else [],
                 )
@@ -141,7 +151,7 @@ async def _run_pre_game_scoring_async() -> dict:
                         # Find opposite market for de-vigging
                         opposite_odds = _find_opposite_odds(market, game.markets)
 
-                        # Create scoring input with injury data
+                        # Create scoring input with position-aware injury data
                         scoring_input = ScoringInput(
                             game_id=game.game_id,
                             market_type=market.market_type,
@@ -155,6 +165,8 @@ async def _run_pre_game_scoring_async() -> dict:
                             book=market.book,
                             home_injury_score=home_injury_score,
                             away_injury_score=away_injury_score,
+                            home_totals_injury=home_totals_injury,
+                            away_totals_injury=away_totals_injury,
                         )
 
                         # Run scoring
@@ -382,18 +394,26 @@ async def _score_single_market_async(market_id: str) -> dict:
 
         opposite_odds = _find_opposite_odds(market, all_markets)
 
-        # Fetch injury reports for this game's teams
+        # Fetch injury reports for this game's teams (position-aware)
         try:
             injury_reports = await get_all_team_injury_reports()
             home_injury_report = injury_reports.get(game.home_team_id)
             away_injury_report = injury_reports.get(game.away_team_id)
-            home_injury_score = home_injury_report.injury_score if home_injury_report else 0.0
-            away_injury_score = away_injury_report.injury_score if away_injury_report else 0.0
+
+            # Spread/ML injury scores
+            home_injury_score = home_injury_report.spread_injury_score if home_injury_report else 0.0
+            away_injury_score = away_injury_report.spread_injury_score if away_injury_report else 0.0
+
+            # Totals-specific injury scores (weighted toward centers)
+            home_totals_injury = home_injury_report.totals_injury_score if home_injury_report else 0.0
+            away_totals_injury = away_injury_report.totals_injury_score if away_injury_report else 0.0
         except Exception:
             home_injury_score = 0.0
             away_injury_score = 0.0
+            home_totals_injury = 0.0
+            away_totals_injury = 0.0
 
-        # Create scoring input with injury data
+        # Create scoring input with position-aware injury data
         scoring_input = ScoringInput(
             game_id=game.game_id,
             market_type=market.market_type,
@@ -407,6 +427,8 @@ async def _score_single_market_async(market_id: str) -> dict:
             book=market.book,
             home_injury_score=home_injury_score,
             away_injury_score=away_injury_score,
+            home_totals_injury=home_totals_injury,
+            away_totals_injury=away_totals_injury,
         )
 
         # Run scoring

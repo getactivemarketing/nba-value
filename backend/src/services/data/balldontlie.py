@@ -80,6 +80,7 @@ class Injury:
     status: str  # Out, Day-To-Day, Questionable, Probable
     return_date: str | None
     description: str | None
+    position: str = ""  # G, F, C, G-F, F-C, etc.
 
 
 class BallDontLieClient:
@@ -271,6 +272,7 @@ class BallDontLieClient:
                             status=i.get("status", "Unknown"),
                             return_date=i.get("return_date"),
                             description=i.get("description"),
+                            position=player.get("position", ""),
                         )
                     )
 

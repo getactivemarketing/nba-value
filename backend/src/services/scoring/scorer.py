@@ -46,8 +46,16 @@ class ScoringInput:
     book: str | None = None
 
     # Injury data (0-1 scale, higher = more injured)
+    # General injury scores (backwards compatible)
     home_injury_score: float = 0.0
     away_injury_score: float = 0.0
+
+    # Market-specific injury scores (position-aware)
+    # These are used when available, otherwise fall back to general scores
+    home_spread_injury: float | None = None  # For spread/ML bets
+    away_spread_injury: float | None = None
+    home_totals_injury: float | None = None  # For over/under (weighted toward centers)
+    away_totals_injury: float | None = None
 
 
 @dataclass
@@ -155,8 +163,9 @@ class ScoringService:
         else:
             p_calibrated_float = float(p_calibrated)
 
-        # Step 3b: Adjust probability for injuries
+        # Step 3b: Adjust probability for injuries (position-aware)
         # This shifts p_true based on injury differential, not just confidence
+        # For totals, uses center-weighted injury scores
         is_home_bet = "home" in input_data.outcome_label.lower() or "over" in input_data.outcome_label.lower()
         p_true = self._adjust_probability_for_injuries(
             p_calibrated_float,
@@ -164,6 +173,8 @@ class ScoringService:
             input_data.home_injury_score,
             input_data.away_injury_score,
             is_home_bet,
+            home_totals_injury=input_data.home_totals_injury,
+            away_totals_injury=input_data.away_totals_injury,
         )
 
         # Step 4: De-vig market odds to get market probability
@@ -386,6 +397,8 @@ class ScoringService:
         home_injury_score: float,
         away_injury_score: float,
         is_home_bet: bool,
+        home_totals_injury: float | None = None,
+        away_totals_injury: float | None = None,
     ) -> float:
         """
         Adjust calibrated probability based on injury differential.
@@ -394,12 +407,17 @@ class ScoringService:
         The idea: if a team is significantly injured, their true win/cover
         probability should be lower than what the season stats suggest.
 
+        Position-aware: For totals, uses totals-specific injury scores that
+        weight center injuries more heavily (rebounding/pace impact).
+
         Args:
             p_calibrated: Calibrated probability from model
             market_type: spread, moneyline, or total
-            home_injury_score: Home team injury severity (0-1)
-            away_injury_score: Away team injury severity (0-1)
+            home_injury_score: Home team injury severity (0-1) - for spread/ML
+            away_injury_score: Away team injury severity (0-1) - for spread/ML
             is_home_bet: True if betting on home team or over
+            home_totals_injury: Home team totals-specific injury (weighted toward centers)
+            away_totals_injury: Away team totals-specific injury (weighted toward centers)
 
         Returns:
             Adjusted probability
@@ -407,20 +425,26 @@ class ScoringService:
         import numpy as np
 
         if market_type == "total":
-            # For totals: injuries reduce scoring
+            # For totals: use position-aware injury scores if available
+            # These weight center injuries more heavily (rebounding = 2nd chance pts)
+            home_inj = home_totals_injury if home_totals_injury is not None else home_injury_score
+            away_inj = away_totals_injury if away_totals_injury is not None else away_injury_score
+
             # Combined injury score affects expected total
-            combined_injury = (home_injury_score + away_injury_score) / 2
+            combined_injury = (home_inj + away_inj) / 2
 
             if is_home_bet:  # Over bet
                 # More injuries = lower expected total = reduce over probability
-                # Max adjustment: -15% probability at combined_injury = 1.0
-                adjustment = -combined_injury * 0.15
+                # Max adjustment: -18% probability at combined_injury = 1.0
+                # (Higher than spread because totals are more directly affected)
+                adjustment = -combined_injury * 0.18
             else:  # Under bet
                 # More injuries = lower expected total = increase under probability
-                # Max adjustment: +10% probability at combined_injury = 1.0
-                adjustment = combined_injury * 0.10
+                # Max adjustment: +12% probability at combined_injury = 1.0
+                adjustment = combined_injury * 0.12
 
         else:  # spread or moneyline
+            # Use spread/ML injury scores (star power matters most)
             # Calculate injury differential from bet perspective
             # Positive = opponent more injured = good for our bet
             if is_home_bet:
