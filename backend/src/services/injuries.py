@@ -204,7 +204,8 @@ async def get_player_stats(player_ids: list[int], client: BallDontLieClient) -> 
     if not player_ids:
         return {}
 
-    return await client.get_player_season_averages_batch(player_ids, season=2024)
+    # Use current season (2025-26 season = 2025)
+    return await client.get_player_season_averages_batch(player_ids, season=2025)
 
 
 def calculate_team_injury_report(
@@ -255,10 +256,25 @@ def calculate_team_injury_report(
             else:
                 mpg = float(min_str) if min_str else 0
 
-        # Estimate days out (we don't have exact injury date, use approximation)
-        # For now, assume injuries listed are recent (within 2 weeks)
-        days_out = 7  # Default assumption
-        recency_weight = calculate_recency_weight(days_out)
+        # Determine injury duration and impact
+        # Key insight: if player hasn't played this season, team is fully adjusted
+        is_season_ending = "season" in inj.status.lower() if inj.status else False
+
+        if games_played == 0:
+            # Player hasn't played at all this season - team fully adjusted
+            days_out = 120  # Treat as very long-term
+            recency_weight = 0.0  # No impact - team doesn't have them in rotation
+        elif is_season_ending:
+            # Out for season - team has had significant time to adjust
+            days_out = 60
+            recency_weight = 0.15  # Minimal impact
+        else:
+            # Recent injury - estimate based on games missed
+            # Avg team plays ~3 games/week, so if someone played 30 of 40 games,
+            # they've missed ~10 games = ~3 weeks
+            # For now, assume recent injuries are within 2 weeks
+            days_out = 7
+            recency_weight = calculate_recency_weight(days_out)
 
         player_impact = PlayerInjuryImpact(
             player_id=inj.player_id,
