@@ -136,8 +136,8 @@ async def _run_pre_game_scoring_async() -> dict:
                     away_spread_injury=away_injury_score,
                     home_totals_injury=home_totals_injury,
                     away_totals_injury=away_totals_injury,
-                    home_centers_out=home_injury_report.position_data.centers_out if home_injury_report else 0,
-                    away_centers_out=away_injury_report.position_data.centers_out if away_injury_report else 0,
+                    home_ppg_lost=home_injury_report.total_ppg_lost if home_injury_report else 0,
+                    away_ppg_lost=away_injury_report.total_ppg_lost if away_injury_report else 0,
                     home_players_out=home_injury_report.players_out[:3] if home_injury_report else [],
                     away_players_out=away_injury_report.players_out[:3] if away_injury_report else [],
                 )

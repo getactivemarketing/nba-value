@@ -1,18 +1,21 @@
 """
-Injury impact calculation service.
+Stats-based injury impact calculation service.
 
-Fetches injury data from BallDontLie and calculates team-level injury impact
-scores that can be used to adjust betting value calculations.
+Calculates team-level injury impact by:
+1. Fetching injured players and their actual season averages
+2. Calculating % of team production lost in each category
+3. Applying recency decay (recent injury = more impact, team hasn't adjusted)
 
-Position-aware weighting:
-- Star players have higher impact than role players
-- Position scarcity matters (2 centers out > 2 guards out if only 3 centers on roster)
-- Centers impact totals more (rebounding = 2nd chance points, pace)
+Key metrics:
+- scoring_impact: PPG lost as % of team average (~110 PPG)
+- rebounding_impact: RPG lost as % of team average (~44 RPG)
+- playmaking_impact: APG lost as % of team average (~25 APG)
+- defense_impact: (SPG + BPG) lost as % of team average (~12 combined)
 """
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import structlog
 
@@ -27,176 +30,118 @@ TEAM_ID_TO_ABBREV = {
     16: 'MIA', 17: 'MIL', 18: 'MIN', 19: 'NOP', 20: 'NYK', 21: 'OKC', 22: 'ORL',
     23: 'PHI', 24: 'PHX', 25: 'POR', 26: 'SAC', 27: 'SAS', 28: 'TOR', 29: 'UTA', 30: 'WAS'
 }
-
 ABBREV_TO_TEAM_ID = {v: k for k, v in TEAM_ID_TO_ABBREV.items()}
 
-
-# Position categories for grouping
-def normalize_position(pos: str) -> str:
-    """Normalize position string to G, F, or C."""
-    pos = pos.upper().strip()
-    if not pos:
-        return "F"  # Default to forward if unknown
-    if "C" in pos:
-        return "C"
-    if "G" in pos:
-        return "G"
-    return "F"
-
-
-# Typical roster depth by position (used for scarcity calculation)
-TYPICAL_ROSTER_DEPTH = {
-    "G": 6,  # ~6 guards on typical roster
-    "F": 5,  # ~5 forwards
-    "C": 3,  # ~3 centers (scarcest position)
+# Typical NBA team totals per game (for calculating % impact)
+TEAM_AVERAGES = {
+    'ppg': 113.0,   # Points per game
+    'rpg': 43.0,    # Rebounds per game
+    'apg': 26.0,    # Assists per game
+    'spg': 7.5,     # Steals per game
+    'bpg': 5.0,     # Blocks per game
+    'mpg': 240.0,   # Total minutes (5 players * 48 min)
 }
-
-# Position impact multipliers for totals markets
-# Centers affect rebounding/pace more, guards affect pace/3pt shooting
-POSITION_TOTAL_IMPACT = {
-    "C": 1.4,  # Centers have 40% more impact on totals (rebounding, rim protection)
-    "F": 1.0,  # Forwards baseline
-    "G": 0.9,  # Guards slightly less impact on totals (but more on spread/ML)
-}
-
-
-# Known star players with (impact, position)
-# Impact = approximate points above replacement per game
-STAR_PLAYERS: dict[str, tuple[float, str]] = {
-    # Tier 1 - MVP caliber (~10+ win shares, huge impact)
-    "Nikola Jokic": (8.0, "C"),
-    "Giannis Antetokounmpo": (7.5, "F"),
-    "Luka Doncic": (7.5, "G"),
-    "Jayson Tatum": (7.0, "F"),
-    "Shai Gilgeous-Alexander": (7.0, "G"),
-    "Anthony Edwards": (6.5, "G"),
-    "Joel Embiid": (7.0, "C"),
-    "Kevin Durant": (6.5, "F"),
-    "LeBron James": (6.0, "F"),
-    "Stephen Curry": (6.5, "G"),
-
-    # Tier 2 - All-Star caliber (~5-8 impact)
-    "Donovan Mitchell": (5.5, "G"),
-    "Trae Young": (5.5, "G"),
-    "De'Aaron Fox": (5.5, "G"),
-    "Tyrese Haliburton": (5.5, "G"),
-    "Cade Cunningham": (5.0, "G"),
-    "Ja Morant": (6.0, "G"),
-    "Damian Lillard": (5.5, "G"),
-    "Kyrie Irving": (5.0, "G"),
-    "Jimmy Butler": (5.0, "F"),
-    "Jaylen Brown": (5.5, "G"),
-    "Paolo Banchero": (5.0, "F"),
-    "Franz Wagner": (5.0, "F"),
-    "Anthony Davis": (6.0, "C"),
-    "Karl-Anthony Towns": (5.0, "C"),
-    "Jalen Brunson": (5.5, "G"),
-    "Domantas Sabonis": (5.0, "C"),
-    "Bam Adebayo": (5.0, "C"),
-    "Devin Booker": (5.5, "G"),
-    "Bradley Beal": (4.5, "G"),
-    "Zion Williamson": (5.0, "F"),
-    "LaMelo Ball": (5.0, "G"),
-    "Victor Wembanyama": (5.5, "C"),
-    "Alperen Sengun": (4.5, "C"),
-    "Fred VanVleet": (4.0, "G"),
-    "Scottie Barnes": (5.0, "F"),
-
-    # Tier 3 - Quality starters (~3-5 impact)
-    "Khris Middleton": (4.0, "F"),
-    "CJ McCollum": (4.0, "G"),
-    "Tobias Harris": (3.5, "F"),
-    "Jalen Duren": (3.5, "C"),
-    "Austin Reaves": (3.5, "G"),
-    "Jerami Grant": (3.5, "F"),
-    "Jalen Suggs": (3.5, "G"),
-    "Moritz Wagner": (3.0, "C"),
-    "Josh Hart": (3.0, "G"),
-    "Max Strus": (3.0, "G"),
-    "Corey Kispert": (3.0, "F"),
-    "Brandon Miller": (4.0, "F"),
-    "Isaiah Hartenstein": (3.5, "C"),
-    "Zach Edey": (3.5, "C"),
-    "Keegan Murray": (4.0, "F"),
-    "Bennedict Mathurin": (3.5, "G"),
-    "Jonas Valanciunas": (3.5, "C"),
-    "Walker Kessler": (3.0, "C"),
-    "Jalen Green": (4.0, "G"),
-    "Alex Caruso": (3.0, "G"),
-    "Chris Paul": (3.0, "G"),
-    "Dereck Lively II": (3.5, "C"),
-    "Obi Toppin": (3.0, "F"),
-    "Terry Rozier": (3.5, "G"),
-    "Jakob Poeltl": (3.0, "C"),
-    "Josh Giddey": (3.5, "G"),
-    "Dejounte Murray": (4.5, "G"),
-    "Herbert Jones": (3.0, "F"),
-    "Trey Murphy III": (3.5, "F"),
-    "Devin Vassell": (4.0, "G"),
-    "Onyeka Okongwu": (3.0, "C"),
-    "Rui Hachimura": (3.0, "F"),
-    "Scoot Henderson": (3.5, "G"),
-    "Grant Williams": (2.5, "F"),
-    "Coby White": (3.5, "G"),
-    "Nikola Vucevic": (4.0, "C"),
-    "Rudy Gobert": (4.5, "C"),
-    "Brook Lopez": (3.5, "C"),
-    "Evan Mobley": (4.5, "C"),
-    "Jaren Jackson Jr.": (4.5, "C"),
-    "Myles Turner": (3.5, "C"),
-    "Clint Capela": (3.0, "C"),
-    "Robert Williams III": (3.5, "C"),
-    "Mitchell Robinson": (3.0, "C"),
-    "Daniel Gafford": (3.0, "C"),
-    "Mark Williams": (3.0, "C"),
-    "Nick Richards": (2.5, "C"),
-}
-
-# Default impact for unknown players (role players)
-DEFAULT_PLAYER_IMPACT = 1.5
 
 
 @dataclass
-class PositionInjuryData:
-    """Injury data broken down by position."""
+class PlayerInjuryImpact:
+    """Individual player's injury impact based on their stats."""
 
-    guards_out: int = 0
-    forwards_out: int = 0
-    centers_out: int = 0
-    guard_impact: float = 0.0
-    forward_impact: float = 0.0
-    center_impact: float = 0.0
+    player_id: int
+    player_name: str
+    position: str
+    status: str  # Out, Day-To-Day, Questionable
+
+    # Season averages
+    ppg: float = 0.0
+    rpg: float = 0.0
+    apg: float = 0.0
+    spg: float = 0.0
+    bpg: float = 0.0
+    mpg: float = 0.0
+    games_played: int = 0
+
+    # Recency info
+    days_out: int = 0  # How long they've been out
+    recency_weight: float = 1.0  # 1.0 = full impact, decays over time
 
     @property
-    def center_scarcity(self) -> float:
-        """How scarce centers are (0-1, higher = more scarce)."""
-        # If 2+ centers out of typical 3, that's severe
-        return min(1.0, self.centers_out / TYPICAL_ROSTER_DEPTH["C"])
+    def scoring_impact(self) -> float:
+        """PPG lost, weighted by recency."""
+        return self.ppg * self.recency_weight * self.status_weight
 
     @property
-    def guard_scarcity(self) -> float:
-        """How scarce guards are (0-1, higher = more scarce)."""
-        return min(1.0, self.guards_out / TYPICAL_ROSTER_DEPTH["G"])
+    def rebounding_impact(self) -> float:
+        """RPG lost, weighted by recency."""
+        return self.rpg * self.recency_weight * self.status_weight
+
+    @property
+    def playmaking_impact(self) -> float:
+        """APG lost, weighted by recency."""
+        return self.apg * self.recency_weight * self.status_weight
+
+    @property
+    def defense_impact(self) -> float:
+        """(SPG + BPG) lost, weighted by recency."""
+        return (self.spg + self.bpg) * self.recency_weight * self.status_weight
+
+    @property
+    def minutes_impact(self) -> float:
+        """Minutes per game lost."""
+        return self.mpg * self.recency_weight * self.status_weight
+
+    @property
+    def status_weight(self) -> float:
+        """Weight based on injury status."""
+        if self.status == "Out":
+            return 1.0
+        elif self.status == "Doubtful":
+            return 0.75
+        elif self.status in ("Questionable", "Day-To-Day"):
+            return 0.4
+        elif self.status == "Probable":
+            return 0.1
+        return 0.0
 
 
 @dataclass
 class TeamInjuryReport:
-    """Injury report for a single team."""
+    """Comprehensive injury report for a team based on actual stats."""
 
     team_id: int
     team_abbrev: str
-    players_out: list[str]
-    players_questionable: list[str]
-    total_impact: float  # Sum of impact points for OUT players
-    questionable_impact: float  # Sum for questionable (weighted at 50%)
-    injury_score: float  # 0-1 scale, higher = more injuries
 
-    # Position-specific data
-    position_data: PositionInjuryData = field(default_factory=PositionInjuryData)
+    # Injured players with their impacts
+    injured_players: list[PlayerInjuryImpact] = field(default_factory=list)
 
-    # Market-specific scores (0-1 scale)
-    spread_injury_score: float = 0.0  # For spread/ML bets
-    totals_injury_score: float = 0.0  # For over/under bets (weighted toward centers)
+    # Aggregate stats lost
+    total_ppg_lost: float = 0.0
+    total_rpg_lost: float = 0.0
+    total_apg_lost: float = 0.0
+    total_defense_lost: float = 0.0
+    total_minutes_lost: float = 0.0
+
+    # Impact scores (0-1 scale, % of team production lost)
+    scoring_impact: float = 0.0      # For spread/ML
+    rebounding_impact: float = 0.0   # For totals (2nd chance pts)
+    playmaking_impact: float = 0.0   # For spread/ML
+    defense_impact: float = 0.0      # For totals (opponent scoring)
+
+    # Overall scores for scoring system
+    spread_injury_score: float = 0.0   # Weighted toward scoring/playmaking
+    totals_injury_score: float = 0.0   # Weighted toward rebounding/defense
+    injury_score: float = 0.0          # General score (backwards compatible)
+
+    @property
+    def players_out(self) -> list[str]:
+        """List of player names who are OUT."""
+        return [p.player_name for p in self.injured_players if p.status == "Out"]
+
+    @property
+    def players_questionable(self) -> list[str]:
+        """List of player names who are questionable/GTD."""
+        return [p.player_name for p in self.injured_players
+                if p.status in ("Questionable", "Day-To-Day", "Doubtful")]
 
 
 @dataclass
@@ -205,36 +150,41 @@ class InjuryContext:
 
     home_team: TeamInjuryReport
     away_team: TeamInjuryReport
-    home_injury_edge: float  # Positive = home has advantage (opponent more injured)
-    game_uncertainty: float  # Higher if key players are questionable
 
-    # Market-specific edges
-    home_spread_edge: float = 0.0  # Edge for spread/ML markets
-    home_totals_edge: float = 0.0  # Edge for totals (positive = home healthier for scoring)
+    # Edges (positive = home advantage)
+    home_injury_edge: float = 0.0
+    home_spread_edge: float = 0.0
+    home_totals_edge: float = 0.0
+    game_uncertainty: float = 0.0
 
 
-def get_player_impact(player_name: str, position: str = "") -> tuple[float, str]:
+def calculate_recency_weight(days_out: int) -> float:
     """
-    Get the impact value and position for a player.
+    Calculate recency weight based on how long player has been out.
+
+    Recent injury = full impact (team hasn't adjusted)
+    Long-term injury = reduced impact (team has adjusted lineup/rotation)
+
+    Args:
+        days_out: Number of days player has been out
 
     Returns:
-        Tuple of (impact_value, position)
+        Weight from 0.4 to 1.0
     """
-    if player_name in STAR_PLAYERS:
-        return STAR_PLAYERS[player_name]
-
-    # For unknown players, use position from API if available
-    norm_pos = normalize_position(position) if position else "F"
-    return (DEFAULT_PLAYER_IMPACT, norm_pos)
+    if days_out <= 7:
+        return 1.0      # First week: full impact
+    elif days_out <= 14:
+        return 0.85     # Week 2: 85% impact
+    elif days_out <= 21:
+        return 0.70     # Week 3: 70% impact
+    elif days_out <= 28:
+        return 0.55     # Week 4: 55% impact
+    else:
+        return 0.40     # 4+ weeks: 40% impact (team fully adjusted)
 
 
 async def fetch_all_injuries() -> dict[str, list[Injury]]:
-    """
-    Fetch all current injuries grouped by team abbreviation.
-
-    Returns:
-        Dict mapping team abbreviation to list of injuries
-    """
+    """Fetch all current injuries grouped by team abbreviation."""
     client = BallDontLieClient()
     injuries = await client.get_injuries()
 
@@ -249,163 +199,221 @@ async def fetch_all_injuries() -> dict[str, list[Injury]]:
     return by_team
 
 
+async def get_player_stats(player_ids: list[int], client: BallDontLieClient) -> dict[int, dict]:
+    """Fetch season averages for multiple players."""
+    if not player_ids:
+        return {}
+
+    return await client.get_player_season_averages_batch(player_ids, season=2024)
+
+
 def calculate_team_injury_report(
     team_abbrev: str,
-    injuries: list[Injury]
+    injuries: list[Injury],
+    player_stats: dict[int, dict],
 ) -> TeamInjuryReport:
     """
-    Calculate injury impact for a single team with position-aware weighting.
+    Calculate comprehensive injury impact for a team using actual player stats.
 
     Args:
-        team_abbrev: Team abbreviation (e.g., "DET")
+        team_abbrev: Team abbreviation (e.g., "LAL")
         injuries: List of injuries for this team
+        player_stats: Dict mapping player_id to their season averages
 
     Returns:
-        TeamInjuryReport with impact calculations including position breakdown
+        TeamInjuryReport with all impact calculations
     """
-    players_out = []
-    players_questionable = []
-    total_impact = 0.0
-    questionable_impact = 0.0
+    injured_players = []
 
-    # Position-specific tracking
-    pos_data = PositionInjuryData()
+    total_ppg = 0.0
+    total_rpg = 0.0
+    total_apg = 0.0
+    total_defense = 0.0
+    total_minutes = 0.0
 
     for inj in injuries:
-        # Get impact and position (from our database or API)
-        impact, position = get_player_impact(inj.player_name, inj.position)
+        # Get player's season averages
+        stats = player_stats.get(inj.player_id, {})
 
-        if inj.status == "Out":
-            players_out.append(inj.player_name)
-            total_impact += impact
+        if not stats:
+            # No stats available - use minimal default
+            ppg, rpg, apg, spg, bpg, mpg = 2.0, 1.0, 0.5, 0.2, 0.1, 8.0
+            games_played = 0
+        else:
+            ppg = stats.get('pts', 0) or 0
+            rpg = stats.get('reb', 0) or 0
+            apg = stats.get('ast', 0) or 0
+            spg = stats.get('stl', 0) or 0
+            bpg = stats.get('blk', 0) or 0
+            games_played = stats.get('games_played', 0) or 0
 
-            # Track by position
-            if position == "G":
-                pos_data.guards_out += 1
-                pos_data.guard_impact += impact
-            elif position == "C":
-                pos_data.centers_out += 1
-                pos_data.center_impact += impact
-            else:  # F
-                pos_data.forwards_out += 1
-                pos_data.forward_impact += impact
+            # Parse minutes (format: "32:15" or just number)
+            min_str = stats.get('min', '0')
+            if isinstance(min_str, str) and ':' in min_str:
+                parts = min_str.split(':')
+                mpg = float(parts[0]) + float(parts[1]) / 60
+            else:
+                mpg = float(min_str) if min_str else 0
 
-        elif inj.status in ("Day-To-Day", "Questionable", "Doubtful"):
-            players_questionable.append(inj.player_name)
-            questionable_impact += impact
+        # Estimate days out (we don't have exact injury date, use approximation)
+        # For now, assume injuries listed are recent (within 2 weeks)
+        days_out = 7  # Default assumption
+        recency_weight = calculate_recency_weight(days_out)
 
-    # Calculate base injury score (0-1 scale)
-    # Typical team might have 15 impact points of starters
-    effective_impact = total_impact + (questionable_impact * 0.3)
-    injury_score = min(1.0, effective_impact / 15.0)
+        player_impact = PlayerInjuryImpact(
+            player_id=inj.player_id,
+            player_name=inj.player_name,
+            position=inj.position,
+            status=inj.status,
+            ppg=ppg,
+            rpg=rpg,
+            apg=apg,
+            spg=spg,
+            bpg=bpg,
+            mpg=mpg,
+            games_played=games_played,
+            days_out=days_out,
+            recency_weight=recency_weight,
+        )
 
-    # Calculate spread/ML injury score (star impact matters most)
-    # This is the standard calculation
-    spread_injury_score = injury_score
+        injured_players.append(player_impact)
 
-    # Calculate totals injury score (center injuries matter MORE)
-    # Centers affect rebounding = 2nd chance points, rim protection, pace
-    # Apply position multipliers and scarcity bonus
-    totals_weighted_impact = (
-        pos_data.guard_impact * POSITION_TOTAL_IMPACT["G"] +
-        pos_data.forward_impact * POSITION_TOTAL_IMPACT["F"] +
-        pos_data.center_impact * POSITION_TOTAL_IMPACT["C"]
+        # Accumulate totals
+        total_ppg += player_impact.scoring_impact
+        total_rpg += player_impact.rebounding_impact
+        total_apg += player_impact.playmaking_impact
+        total_defense += player_impact.defense_impact
+        total_minutes += player_impact.minutes_impact
+
+    # Calculate impact scores as % of team production
+    scoring_impact = min(1.0, total_ppg / TEAM_AVERAGES['ppg'])
+    rebounding_impact = min(1.0, total_rpg / TEAM_AVERAGES['rpg'])
+    playmaking_impact = min(1.0, total_apg / TEAM_AVERAGES['apg'])
+    defense_impact = min(1.0, total_defense / (TEAM_AVERAGES['spg'] + TEAM_AVERAGES['bpg']))
+
+    # Calculate composite scores for betting markets
+    # Spread/ML: scoring and playmaking matter most
+    spread_injury_score = (
+        scoring_impact * 0.50 +      # Scoring is 50%
+        playmaking_impact * 0.30 +   # Playmaking is 30%
+        rebounding_impact * 0.10 +   # Rebounding is 10%
+        defense_impact * 0.10        # Defense is 10%
     )
 
-    # Add scarcity bonus: if 2+ centers out, major impact on totals
-    # This represents the "no backup center" catastrophic scenario
-    center_scarcity_bonus = pos_data.center_scarcity * 3.0  # Up to 3 extra impact points
+    # Totals: rebounding and defense matter more (affects pace, 2nd chance pts)
+    totals_injury_score = (
+        rebounding_impact * 0.35 +   # Rebounding is 35% (2nd chance pts, pace)
+        defense_impact * 0.25 +      # Defense is 25% (opponent scoring)
+        scoring_impact * 0.25 +      # Scoring is 25%
+        playmaking_impact * 0.15     # Playmaking is 15%
+    )
 
-    totals_effective_impact = totals_weighted_impact + center_scarcity_bonus + (questionable_impact * 0.3)
-    totals_injury_score = min(1.0, totals_effective_impact / 15.0)
+    # General score (average of both)
+    injury_score = (spread_injury_score + totals_injury_score) / 2
 
     return TeamInjuryReport(
         team_id=ABBREV_TO_TEAM_ID.get(team_abbrev, 0),
         team_abbrev=team_abbrev,
-        players_out=players_out,
-        players_questionable=players_questionable,
-        total_impact=total_impact,
-        questionable_impact=questionable_impact,
-        injury_score=injury_score,
-        position_data=pos_data,
+        injured_players=injured_players,
+        total_ppg_lost=total_ppg,
+        total_rpg_lost=total_rpg,
+        total_apg_lost=total_apg,
+        total_defense_lost=total_defense,
+        total_minutes_lost=total_minutes,
+        scoring_impact=scoring_impact,
+        rebounding_impact=rebounding_impact,
+        playmaking_impact=playmaking_impact,
+        defense_impact=defense_impact,
         spread_injury_score=spread_injury_score,
         totals_injury_score=totals_injury_score,
-    )
-
-
-async def get_game_injury_context(
-    home_team: str,
-    away_team: str,
-    injuries_by_team: dict[str, list[Injury]] | None = None
-) -> InjuryContext:
-    """
-    Get full injury context for a game with market-specific edges.
-
-    Args:
-        home_team: Home team abbreviation
-        away_team: Away team abbreviation
-        injuries_by_team: Pre-fetched injuries (optional, will fetch if not provided)
-
-    Returns:
-        InjuryContext with both team reports and market-specific edge calculations
-    """
-    if injuries_by_team is None:
-        injuries_by_team = await fetch_all_injuries()
-
-    home_injuries = injuries_by_team.get(home_team, [])
-    away_injuries = injuries_by_team.get(away_team, [])
-
-    home_report = calculate_team_injury_report(home_team, home_injuries)
-    away_report = calculate_team_injury_report(away_team, away_injuries)
-
-    # Calculate general edge: positive = home team has advantage
-    # (opponent has more injury impact)
-    home_injury_edge = away_report.injury_score - home_report.injury_score
-
-    # Calculate spread/ML edge (based on overall star power lost)
-    home_spread_edge = away_report.spread_injury_score - home_report.spread_injury_score
-
-    # Calculate totals edge (weighted toward centers/rebounding)
-    # Positive = home team healthier for scoring potential
-    # For totals: we care about COMBINED injuries affecting total points
-    home_totals_edge = away_report.totals_injury_score - home_report.totals_injury_score
-
-    # Game uncertainty based on questionable players
-    game_uncertainty = (
-        home_report.questionable_impact + away_report.questionable_impact
-    ) / 20.0  # Normalize to 0-1ish
-
-    return InjuryContext(
-        home_team=home_report,
-        away_team=away_report,
-        home_injury_edge=home_injury_edge,
-        game_uncertainty=min(1.0, game_uncertainty),
-        home_spread_edge=home_spread_edge,
-        home_totals_edge=home_totals_edge,
+        injury_score=injury_score,
     )
 
 
 async def get_all_team_injury_reports() -> dict[str, TeamInjuryReport]:
     """
-    Get injury reports for all teams.
+    Get comprehensive injury reports for all teams using actual player stats.
 
     Returns:
         Dict mapping team abbreviation to TeamInjuryReport
     """
+    client = BallDontLieClient()
+
+    # Fetch all injuries
     injuries_by_team = await fetch_all_injuries()
 
+    # Collect all injured player IDs
+    all_player_ids = []
+    for injuries in injuries_by_team.values():
+        for inj in injuries:
+            all_player_ids.append(inj.player_id)
+
+    # Fetch stats for all injured players
+    logger.info(f"Fetching stats for {len(all_player_ids)} injured players...")
+    player_stats = await get_player_stats(all_player_ids, client)
+    logger.info(f"Got stats for {len(player_stats)} players")
+
+    # Build reports for all teams
     reports = {}
     for abbrev in TEAM_ID_TO_ABBREV.values():
         team_injuries = injuries_by_team.get(abbrev, [])
-        reports[abbrev] = calculate_team_injury_report(abbrev, team_injuries)
+        reports[abbrev] = calculate_team_injury_report(abbrev, team_injuries, player_stats)
 
     return reports
+
+
+async def get_game_injury_context(
+    home_team: str,
+    away_team: str,
+    injury_reports: dict[str, TeamInjuryReport] | None = None,
+) -> InjuryContext:
+    """
+    Get full injury context for a game.
+
+    Args:
+        home_team: Home team abbreviation
+        away_team: Away team abbreviation
+        injury_reports: Pre-fetched reports (optional)
+
+    Returns:
+        InjuryContext with both team reports and edge calculations
+    """
+    if injury_reports is None:
+        injury_reports = await get_all_team_injury_reports()
+
+    home_report = injury_reports.get(home_team, TeamInjuryReport(
+        team_id=ABBREV_TO_TEAM_ID.get(home_team, 0),
+        team_abbrev=home_team,
+    ))
+    away_report = injury_reports.get(away_team, TeamInjuryReport(
+        team_id=ABBREV_TO_TEAM_ID.get(away_team, 0),
+        team_abbrev=away_team,
+    ))
+
+    # Calculate edges (positive = home has advantage)
+    home_injury_edge = away_report.injury_score - home_report.injury_score
+    home_spread_edge = away_report.spread_injury_score - home_report.spread_injury_score
+    home_totals_edge = away_report.totals_injury_score - home_report.totals_injury_score
+
+    # Game uncertainty based on questionable players
+    home_q = sum(1 for p in home_report.injured_players if p.status in ("Questionable", "Day-To-Day"))
+    away_q = sum(1 for p in away_report.injured_players if p.status in ("Questionable", "Day-To-Day"))
+    game_uncertainty = min(1.0, (home_q + away_q) / 10.0)
+
+    return InjuryContext(
+        home_team=home_report,
+        away_team=away_report,
+        home_injury_edge=home_injury_edge,
+        home_spread_edge=home_spread_edge,
+        home_totals_edge=home_totals_edge,
+        game_uncertainty=game_uncertainty,
+    )
 
 
 # CLI test
 if __name__ == "__main__":
     async def main():
-        print("Fetching injury reports with position data...\n")
+        print("Fetching stats-based injury reports...\n")
         reports = await get_all_team_injury_reports()
 
         # Sort by injury score
@@ -415,28 +423,32 @@ if __name__ == "__main__":
             reverse=True
         )
 
-        print("Teams by Injury Severity (Position-Aware):")
-        print("=" * 70)
-        for report in sorted_teams:
-            if report.injury_score > 0:
-                print(f"\n{report.team_abbrev}: spread={report.spread_injury_score:.2f}, totals={report.totals_injury_score:.2f}")
-                pd = report.position_data
-                print(f"  Position breakdown: G={pd.guards_out}({pd.guard_impact:.1f}), "
-                      f"F={pd.forwards_out}({pd.forward_impact:.1f}), "
-                      f"C={pd.centers_out}({pd.center_impact:.1f})")
-                if pd.centers_out >= 2:
-                    print(f"  ⚠️  CENTER SCARCITY: {pd.center_scarcity:.0%} of typical depth out!")
-                if report.players_out:
-                    print(f"  OUT: {', '.join(report.players_out[:5])}")
-                if report.players_questionable:
-                    print(f"  GTD: {', '.join(report.players_questionable[:3])}")
+        print("Teams by Injury Impact (Stats-Based):")
+        print("=" * 80)
 
-        # Test specific game context
-        print("\n" + "=" * 70)
-        print("\nExample: DET @ WAS game context:")
-        context = await get_game_injury_context("WAS", "DET")
-        print(f"  WAS: spread={context.home_team.spread_injury_score:.2f}, totals={context.home_team.totals_injury_score:.2f}")
-        print(f"  DET: spread={context.away_team.spread_injury_score:.2f}, totals={context.away_team.totals_injury_score:.2f}")
+        for report in sorted_teams:
+            if report.injury_score > 0.05:  # Only show teams with meaningful injuries
+                print(f"\n{report.team_abbrev}: spread={report.spread_injury_score:.2f}, "
+                      f"totals={report.totals_injury_score:.2f}")
+                print(f"  Lost: {report.total_ppg_lost:.1f} PPG, {report.total_rpg_lost:.1f} RPG, "
+                      f"{report.total_apg_lost:.1f} APG, {report.total_defense_lost:.1f} D")
+
+                # Show top injured players by impact
+                top_players = sorted(report.injured_players,
+                                    key=lambda p: p.scoring_impact, reverse=True)[:3]
+                for p in top_players:
+                    if p.ppg > 0:
+                        print(f"    {p.player_name} ({p.status}): {p.ppg:.1f}ppg, "
+                              f"{p.rpg:.1f}rpg, {p.apg:.1f}apg")
+
+        # Example game context
+        print("\n" + "=" * 80)
+        print("\nExample Game Context: LAL @ DEN")
+        context = await get_game_injury_context("DEN", "LAL", reports)
+        print(f"  DEN: spread={context.home_team.spread_injury_score:.2f}, "
+              f"totals={context.home_team.totals_injury_score:.2f}")
+        print(f"  LAL: spread={context.away_team.spread_injury_score:.2f}, "
+              f"totals={context.away_team.totals_injury_score:.2f}")
         print(f"  Home spread edge: {context.home_spread_edge:+.2f}")
         print(f"  Home totals edge: {context.home_totals_edge:+.2f}")
 

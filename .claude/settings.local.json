@@ -43,7 +43,12 @@
       "Bash(PYTHONPATH=/Applications/XAMPP/xamppfiles/htdocs/Sites/NBA-Value/backend DATABASE_URL=\"postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway\" python3 -m alembic revision:*)",
       "Bash(railway link:*)",
       "Bash(PYTHONPATH=. DATABASE_URL=\"postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway\" python3:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(ping:*)",
+      "WebFetch(domain:official.nba.com)",
+      "Bash(PYTHONPATH=. python3:*)",
+      "WebFetch(domain:nba.balldontlie.io)",
+      "Bash(git restore:*)"
     ]
   }
 }

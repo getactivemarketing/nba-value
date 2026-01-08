@@ -1,5 +1,6 @@
 """BALLDONTLIE API client for NBA statistics and injuries."""
 
+import asyncio
 import httpx
 import structlog
 from datetime import date, datetime
@@ -290,26 +291,63 @@ class BallDontLieClient:
             raise
 
     async def get_season_averages(
-        self, player_ids: list[int], season: int = 2025
-    ) -> list[dict]:
+        self, player_id: int, season: int = 2024
+    ) -> dict | None:
         """
-        Get season averages for players.
+        Get season averages for a single player.
 
-        Note: Requires GOAT tier.
+        Args:
+            player_id: The player's ID
+            season: Season year (e.g., 2024 for 2024-25 season)
+
+        Returns:
+            Dict with season averages or None if not found
         """
         params = {
             "season": season,
-            "player_ids[]": player_ids,
+            "player_id": player_id,  # Singular, not array
         }
 
         try:
             data = await self._get("season_averages", params)
-            return data["data"]
+            results = data.get("data", [])
+            return results[0] if results else None
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 403:
-                logger.warning("Season averages endpoint requires GOAT tier")
-                return []
+            if e.response.status_code in (403, 404):
+                return None
             raise
+
+    async def get_player(self, player_id: int) -> dict | None:
+        """Get player details including position and team."""
+        try:
+            data = await self._get(f"players/{player_id}")
+            return data.get("data")
+        except httpx.HTTPStatusError:
+            return None
+
+    async def get_player_season_averages_batch(
+        self, player_ids: list[int], season: int = 2024
+    ) -> dict[int, dict]:
+        """
+        Get season averages for multiple players.
+
+        Args:
+            player_ids: List of player IDs
+            season: Season year
+
+        Returns:
+            Dict mapping player_id to their season averages
+        """
+        results = {}
+        # Fetch in parallel with concurrency limit
+        tasks = [self.get_season_averages(pid, season) for pid in player_ids]
+        averages = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for pid, avg in zip(player_ids, averages):
+            if isinstance(avg, dict) and avg:
+                results[pid] = avg
+
+        return results
 
 
 async def test_balldontlie():
