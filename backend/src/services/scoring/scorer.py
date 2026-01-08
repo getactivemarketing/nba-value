@@ -151,9 +151,20 @@ class ScoringService:
         # Step 3: Calibrate probability
         p_calibrated = self.calibration.transform(p_raw, input_data.market_type)
         if isinstance(p_calibrated, float):
-            p_true = p_calibrated
+            p_calibrated_float = p_calibrated
         else:
-            p_true = float(p_calibrated)
+            p_calibrated_float = float(p_calibrated)
+
+        # Step 3b: Adjust probability for injuries
+        # This shifts p_true based on injury differential, not just confidence
+        is_home_bet = "home" in input_data.outcome_label.lower() or "over" in input_data.outcome_label.lower()
+        p_true = self._adjust_probability_for_injuries(
+            p_calibrated_float,
+            input_data.market_type,
+            input_data.home_injury_score,
+            input_data.away_injury_score,
+            is_home_bet,
+        )
 
         # Step 4: De-vig market odds to get market probability
         # devig_two_way_odds returns (prob1, prob2) where prob1 is for odds_decimal
@@ -170,9 +181,6 @@ class ScoringService:
 
         # Step 6: Calculate confidence multipliers
         ensemble_std = 0.05  # Placeholder - would come from ensemble model
-
-        # Determine if this bet is on home side (or over for totals)
-        is_home_bet = "home" in input_data.outcome_label.lower() or "over" in input_data.outcome_label.lower()
 
         confidence_a = compute_confidence_multiplier(
             ensemble_std=ensemble_std,
@@ -370,6 +378,67 @@ class ScoringService:
         else:
             # Unknown market type
             return 0.5
+
+    def _adjust_probability_for_injuries(
+        self,
+        p_calibrated: float,
+        market_type: str,
+        home_injury_score: float,
+        away_injury_score: float,
+        is_home_bet: bool,
+    ) -> float:
+        """
+        Adjust calibrated probability based on injury differential.
+
+        This directly shifts the probability estimate, not just confidence.
+        The idea: if a team is significantly injured, their true win/cover
+        probability should be lower than what the season stats suggest.
+
+        Args:
+            p_calibrated: Calibrated probability from model
+            market_type: spread, moneyline, or total
+            home_injury_score: Home team injury severity (0-1)
+            away_injury_score: Away team injury severity (0-1)
+            is_home_bet: True if betting on home team or over
+
+        Returns:
+            Adjusted probability
+        """
+        import numpy as np
+
+        if market_type == "total":
+            # For totals: injuries reduce scoring
+            # Combined injury score affects expected total
+            combined_injury = (home_injury_score + away_injury_score) / 2
+
+            if is_home_bet:  # Over bet
+                # More injuries = lower expected total = reduce over probability
+                # Max adjustment: -15% probability at combined_injury = 1.0
+                adjustment = -combined_injury * 0.15
+            else:  # Under bet
+                # More injuries = lower expected total = increase under probability
+                # Max adjustment: +10% probability at combined_injury = 1.0
+                adjustment = combined_injury * 0.10
+
+        else:  # spread or moneyline
+            # Calculate injury differential from bet perspective
+            # Positive = opponent more injured = good for our bet
+            if is_home_bet:
+                injury_diff = away_injury_score - home_injury_score
+            else:
+                injury_diff = home_injury_score - away_injury_score
+
+            # Adjust probability based on injury differential
+            # injury_diff of 0.5 (opponent 50% more injured) → +7.5% probability
+            # injury_diff of -0.5 (we're betting on injured team) → -7.5% probability
+            # Max adjustment is ±15% at injury_diff of ±1.0
+            adjustment = injury_diff * 0.15
+
+        # Apply adjustment and clamp to valid probability range
+        p_adjusted = p_calibrated + adjustment
+        p_adjusted = float(np.clip(p_adjusted, 0.05, 0.95))
+
+        return p_adjusted
 
     def score_all_markets_for_game(
         self,
