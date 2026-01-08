@@ -44,9 +44,18 @@ async def _run_pre_game_scoring_async() -> dict:
     # Fetch injury reports for all teams
     try:
         injury_reports = await get_all_team_injury_reports()
-        logger.info("Fetched injury reports", teams_with_injuries=len(injury_reports))
+        # Count teams with significant injuries
+        injured_teams = sum(1 for r in injury_reports.values() if r.injury_score > 0.1)
+        logger.info(
+            "Fetched injury reports",
+            total_teams=len(injury_reports),
+            teams_with_injuries=injured_teams,
+        )
     except Exception as e:
-        logger.warning(f"Failed to fetch injury reports, continuing without: {e}")
+        logger.error(
+            "CRITICAL: Failed to fetch injury reports - scoring without injury adjustments!",
+            error=str(e),
+        )
         injury_reports = {}
 
     scoring_service = get_scoring_service()
@@ -111,6 +120,17 @@ async def _run_pre_game_scoring_async() -> dict:
                 away_injury_report = injury_reports.get(game.away_team_id)
                 home_injury_score = home_injury_report.injury_score if home_injury_report else 0.0
                 away_injury_score = away_injury_report.injury_score if away_injury_report else 0.0
+
+                logger.debug(
+                    "Injury data for game",
+                    game_id=game.game_id,
+                    home_team=game.home_team_id,
+                    away_team=game.away_team_id,
+                    home_injury_score=home_injury_score,
+                    away_injury_score=away_injury_score,
+                    home_players_out=home_injury_report.players_out[:3] if home_injury_report else [],
+                    away_players_out=away_injury_report.players_out[:3] if away_injury_report else [],
+                )
 
                 # Score each market for this game
                 for market in game.markets:
