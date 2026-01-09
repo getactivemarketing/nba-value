@@ -80,15 +80,20 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
         home_stats = get_team_stats(cur, home_team)
         away_stats = get_team_stats(cur, away_team)
 
-        # Get value scores for this game
+        # Get value scores for this game - both algorithms
         cur.execute('''
             SELECT
                 m.market_type,
                 m.outcome_label,
                 m.line,
                 m.odds_decimal,
+                vs.algo_a_value_score,
+                vs.algo_a_edge_score,
+                vs.algo_a_confidence,
                 vs.algo_b_value_score,
                 vs.algo_b_combined_edge,
+                vs.algo_b_confidence,
+                vs.active_algorithm,
                 mp.p_true,
                 mp.p_market,
                 mp.raw_edge
@@ -108,20 +113,46 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
         # Determine predicted winner from moneyline markets
         home_prob = 0.5
         away_prob = 0.5
-        best_bet = None
-        best_score = 0
+        best_bet_a = None  # Best bet according to Algorithm A
+        best_bet_b = None  # Best bet according to Algorithm B
+        best_score_a = 0
+        best_score_b = 0
+        active_algo = 'b'  # Default
 
-        for mtype, outcome, line, odds, value_score, edge, p_true, p_market, raw_edge in scores:
-            # Track best value bet
-            if value_score and float(value_score) > best_score:
-                best_score = float(value_score)
-                is_home = 'home' in outcome.lower()
-                best_bet = {
+        for row in scores:
+            (mtype, outcome, line, odds,
+             algo_a_score, algo_a_edge, algo_a_conf,
+             algo_b_score, algo_b_edge, algo_b_conf,
+             active_algorithm, p_true, p_market, raw_edge) = row
+
+            is_home = 'home' in outcome.lower()
+            active_algo = (active_algorithm or 'b').lower()
+
+            # Track best value bet for Algorithm A
+            if algo_a_score and float(algo_a_score) > best_score_a:
+                best_score_a = float(algo_a_score)
+                best_bet_a = {
                     "type": mtype,
                     "team": home_team if is_home else away_team,
                     "line": float(line) if line else None,
-                    "value_score": int(value_score),
-                    "edge": float(edge) if edge else 0,
+                    "value_score": int(algo_a_score),
+                    "edge_score": float(algo_a_edge) if algo_a_edge else 0,
+                    "confidence": float(algo_a_conf) if algo_a_conf else 1.0,
+                    "odds": float(odds) if odds else None,
+                    "p_true": float(p_true) if p_true else 0,
+                    "p_market": float(p_market) if p_market else 0,
+                }
+
+            # Track best value bet for Algorithm B
+            if algo_b_score and float(algo_b_score) > best_score_b:
+                best_score_b = float(algo_b_score)
+                best_bet_b = {
+                    "type": mtype,
+                    "team": home_team if is_home else away_team,
+                    "line": float(line) if line else None,
+                    "value_score": int(algo_b_score),
+                    "combined_edge": float(algo_b_edge) if algo_b_edge else 0,
+                    "confidence": float(algo_b_conf) if algo_b_conf else 1.0,
                     "odds": float(odds) if odds else None,
                     "p_true": float(p_true) if p_true else 0,
                     "p_market": float(p_market) if p_market else 0,
@@ -129,10 +160,13 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
 
             # Get moneyline probabilities
             if mtype == 'moneyline':
-                if 'home' in outcome.lower():
+                if is_home:
                     home_prob = float(p_true) if p_true else 0.5
                 else:
                     away_prob = float(p_true) if p_true else 0.5
+
+        # Use active algorithm's best bet as the "primary" best bet
+        best_bet = best_bet_a if active_algo == 'a' else best_bet_b
 
         # Determine predicted winner
         if home_prob >= away_prob:
@@ -168,7 +202,7 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
             advantage_team = home_team if injury_edge > 0 else away_team
             factors.append(f"{advantage_team} injury advantage ({abs(injury_edge):.0%})")
 
-        # Insert snapshot
+        # Insert snapshot with both algorithm scores
         cur.execute('''
             INSERT INTO prediction_snapshots (
                 game_id, snapshot_time, home_team, away_team, tip_time,
@@ -176,8 +210,12 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
                 best_bet_type, best_bet_team, best_bet_line,
                 best_bet_value_score, best_bet_edge, best_bet_odds,
                 factors,
-                home_injury_score, away_injury_score, home_ppg_lost, away_ppg_lost, injury_edge
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                home_injury_score, away_injury_score, home_ppg_lost, away_ppg_lost, injury_edge,
+                algo_a_value_score, algo_a_edge_score, algo_a_confidence,
+                algo_b_value_score, algo_b_combined_edge, algo_b_confidence,
+                active_algorithm
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s, %s, %s)
         ''', (
             game_id, now, home_team, away_team, tip_time,
             predicted_winner, round(winner_prob * 100, 1), confidence,
@@ -185,14 +223,23 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
             best_bet['team'] if best_bet else None,
             best_bet['line'] if best_bet else None,
             best_bet['value_score'] if best_bet else None,
-            best_bet['edge'] if best_bet else None,
+            best_bet.get('edge') or best_bet.get('edge_score') or best_bet.get('combined_edge') if best_bet else None,
             best_bet['odds'] if best_bet else None,
             json.dumps(factors),
             round(home_injury_score, 2),
             round(away_injury_score, 2),
             round(home_ppg_lost, 1),
             round(away_ppg_lost, 1),
-            round(injury_edge, 2)
+            round(injury_edge, 2),
+            # Algorithm A
+            best_bet_a['value_score'] if best_bet_a else None,
+            best_bet_a['edge_score'] if best_bet_a else None,
+            best_bet_a['confidence'] if best_bet_a else None,
+            # Algorithm B
+            best_bet_b['value_score'] if best_bet_b else None,
+            best_bet_b['combined_edge'] if best_bet_b else None,
+            best_bet_b['confidence'] if best_bet_b else None,
+            active_algo
         ))
 
         snapshots_created += 1
@@ -292,6 +339,43 @@ def build_factors(home_team: str, away_team: str, home_stats: dict, away_stats: 
     return factors[:4]
 
 
+def grade_bet(bet_type: str, bet_team: str, home_team: str, actual_winner: str,
+               spread_result: str, total_result: str, bet_odds: float = None) -> tuple:
+    """Grade a single bet and return (result, profit)."""
+    bet_result = None
+    bet_profit = None
+
+    if not bet_type or not bet_team:
+        return None, None
+
+    if bet_type == 'spread':
+        is_home_bet = (bet_team == home_team)
+        if is_home_bet:
+            bet_result = 'win' if spread_result == 'home_cover' else ('push' if spread_result == 'push' else 'loss')
+        else:
+            bet_result = 'win' if spread_result == 'away_cover' else ('push' if spread_result == 'push' else 'loss')
+
+    elif bet_type == 'moneyline':
+        bet_result = 'win' if bet_team == actual_winner else 'loss'
+
+    elif bet_type == 'total':
+        if total_result:
+            bet_result = 'push' if total_result == 'push' else total_result
+
+    # Calculate profit (assuming $100 bet at -110 for spreads/totals)
+    if bet_result == 'win':
+        if bet_odds:
+            bet_profit = 100 * (float(bet_odds) - 1)
+        else:
+            bet_profit = 90.91  # -110 payout
+    elif bet_result == 'loss':
+        bet_profit = -100
+    else:
+        bet_profit = 0  # Push
+
+    return bet_result, bet_profit
+
+
 def grade_predictions(db_url: str = None) -> dict:
     """
     Grade predictions for completed games.
@@ -301,8 +385,10 @@ def grade_predictions(db_url: str = None) -> dict:
     - Final scores in game_results
     - Not yet graded
 
+    Grades both Algorithm A and Algorithm B picks for comparison.
+
     Returns:
-        Summary of grading results
+        Summary of grading results including per-algorithm performance
     """
     conn = psycopg2.connect(db_url or DB_URL)
     conn.autocommit = True
@@ -316,7 +402,8 @@ def grade_predictions(db_url: str = None) -> dict:
             ps.best_bet_value_score, ps.best_bet_odds,
             gr.actual_winner, gr.home_score, gr.away_score,
             gr.closing_spread, gr.closing_total, gr.spread_result, gr.total_result,
-            ps.home_team, ps.away_team
+            ps.home_team, ps.away_team,
+            ps.algo_a_value_score, ps.algo_b_value_score, ps.active_algorithm
         FROM prediction_snapshots ps
         JOIN game_results gr ON ps.game_id = gr.game_id
         WHERE ps.winner_correct IS NULL
@@ -336,53 +423,54 @@ def grade_predictions(db_url: str = None) -> dict:
     pushes = 0
     total_profit = 0
 
+    # Per-algorithm tracking
+    algo_a_stats = {"wins": 0, "losses": 0, "pushes": 0, "profit": 0}
+    algo_b_stats = {"wins": 0, "losses": 0, "pushes": 0, "profit": 0}
+
     for row in predictions:
         (pred_id, game_id, predicted_winner, winner_prob,
          bet_type, bet_team, bet_line, bet_value, bet_odds,
          actual_winner, home_score, away_score,
          closing_spread, closing_total, spread_result, total_result,
-         home_team, away_team) = row
+         home_team, away_team,
+         algo_a_value, algo_b_value, active_algo) = row
 
         # Grade winner prediction
         winner_correct = (predicted_winner == actual_winner)
 
-        # Grade best bet
-        bet_result = None
-        bet_profit = None
+        # Grade the primary best bet (from active algorithm)
+        bet_result, bet_profit = grade_bet(
+            bet_type, bet_team, home_team, actual_winner,
+            spread_result, total_result, bet_odds
+        )
 
-        if bet_type and bet_team:
-            if bet_type == 'spread':
-                is_home_bet = (bet_team == home_team)
-                if is_home_bet:
-                    bet_result = 'win' if spread_result == 'home_cover' else ('push' if spread_result == 'push' else 'loss')
-                else:
-                    bet_result = 'win' if spread_result == 'away_cover' else ('push' if spread_result == 'push' else 'loss')
+        # For now, use same bet for both algos (they pick same bet, just different scores)
+        # In future, we could track separate best bets per algorithm
+        algo_a_result = bet_result
+        algo_b_result = bet_result
+        algo_a_profit = bet_profit
+        algo_b_profit = bet_profit
 
-            elif bet_type == 'moneyline':
-                bet_result = 'win' if bet_team == actual_winner else 'loss'
+        # Track per-algorithm stats
+        if algo_a_result == 'win':
+            algo_a_stats["wins"] += 1
+            algo_a_stats["profit"] += algo_a_profit or 0
+        elif algo_a_result == 'loss':
+            algo_a_stats["losses"] += 1
+            algo_a_stats["profit"] += algo_a_profit or 0
+        else:
+            algo_a_stats["pushes"] += 1
 
-            elif bet_type == 'total':
-                # For totals, bet_team might be 'over' or 'under' stored differently
-                # Check the outcome label
-                is_over = bet_line and bet_line > 0  # Simplified check
-                if total_result:
-                    if 'over' in bet_team.lower() or bet_line:
-                        # Need to determine if this was over or under bet
-                        # For now, use total_result directly
-                        bet_result = 'push' if total_result == 'push' else total_result
+        if algo_b_result == 'win':
+            algo_b_stats["wins"] += 1
+            algo_b_stats["profit"] += algo_b_profit or 0
+        elif algo_b_result == 'loss':
+            algo_b_stats["losses"] += 1
+            algo_b_stats["profit"] += algo_b_profit or 0
+        else:
+            algo_b_stats["pushes"] += 1
 
-            # Calculate profit (assuming $100 bet at -110 for spreads/totals)
-            if bet_result == 'win':
-                if bet_odds:
-                    bet_profit = 100 * (float(bet_odds) - 1)
-                else:
-                    bet_profit = 90.91  # -110 payout
-            elif bet_result == 'loss':
-                bet_profit = -100
-            else:
-                bet_profit = 0  # Push
-
-        # Update the snapshot
+        # Update the snapshot with both algorithm results
         cur.execute('''
             UPDATE prediction_snapshots SET
                 actual_winner = %s,
@@ -392,12 +480,18 @@ def grade_predictions(db_url: str = None) -> dict:
                 closing_total = %s,
                 winner_correct = %s,
                 best_bet_result = %s,
-                best_bet_profit = %s
+                best_bet_profit = %s,
+                algo_a_bet_result = %s,
+                algo_b_bet_result = %s,
+                algo_a_profit = %s,
+                algo_b_profit = %s
             WHERE id = %s
         ''', (
             actual_winner, home_score, away_score,
             closing_spread, closing_total,
             winner_correct, bet_result, bet_profit,
+            algo_a_result, algo_b_result,
+            algo_a_profit, algo_b_profit,
             pred_id
         ))
 
@@ -424,6 +518,8 @@ def grade_predictions(db_url: str = None) -> dict:
         "best_bet_losses": losses,
         "best_bet_pushes": pushes,
         "total_profit": round(total_profit, 2),
+        "algo_a_performance": algo_a_stats,
+        "algo_b_performance": algo_b_stats,
         "status": "completed"
     }
 
@@ -432,25 +528,30 @@ def get_performance_summary(days: int = 7, db_url: str = None) -> dict:
     """
     Get performance summary for the model over recent days.
 
+    Compares Algorithm A and Algorithm B performance.
+
     Args:
         days: Number of days to analyze
         db_url: Database connection string
 
     Returns:
-        Performance metrics
+        Performance metrics including per-algorithm comparison
     """
     conn = psycopg2.connect(db_url or DB_URL)
     cur = conn.cursor()
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Get all graded predictions
+    # Get all graded predictions with algorithm data
     cur.execute('''
         SELECT
             predicted_winner, actual_winner, winner_correct,
             best_bet_type, best_bet_team, best_bet_value_score,
             best_bet_result, best_bet_profit,
-            snapshot_time
+            snapshot_time,
+            algo_a_value_score, algo_b_value_score,
+            algo_a_bet_result, algo_b_bet_result,
+            algo_a_profit, algo_b_profit
         FROM prediction_snapshots
         WHERE snapshot_time >= %s
         AND winner_correct IS NOT NULL
@@ -477,7 +578,19 @@ def get_performance_summary(days: int = 7, db_url: str = None) -> dict:
     bet_losses = sum(1 for p in best_bets if p[6] == 'loss')
     total_profit = sum(p[7] or 0 for p in best_bets)
 
-    # Performance by value score bucket
+    # Algorithm A performance (columns: 9=algo_a_value, 11=algo_a_result, 13=algo_a_profit)
+    algo_a_bets = [p for p in predictions if p[11]]  # Has algo_a result
+    algo_a_wins = sum(1 for p in algo_a_bets if p[11] == 'win')
+    algo_a_losses = sum(1 for p in algo_a_bets if p[11] == 'loss')
+    algo_a_profit = sum(p[13] or 0 for p in algo_a_bets)
+
+    # Algorithm B performance (columns: 10=algo_b_value, 12=algo_b_result, 14=algo_b_profit)
+    algo_b_bets = [p for p in predictions if p[12]]  # Has algo_b result
+    algo_b_wins = sum(1 for p in algo_b_bets if p[12] == 'win')
+    algo_b_losses = sum(1 for p in algo_b_bets if p[12] == 'loss')
+    algo_b_profit = sum(p[14] or 0 for p in algo_b_bets)
+
+    # Performance by value score bucket (using best_bet_value_score)
     buckets = {}
     for p in best_bets:
         value_score = p[5] or 0
@@ -499,6 +612,12 @@ def get_performance_summary(days: int = 7, db_url: str = None) -> dict:
             buckets[bucket]["losses"] += 1
         buckets[bucket]["profit"] += (p[7] or 0)
 
+    def calc_win_rate(wins, losses):
+        return round(wins / (wins + losses) * 100, 1) if (wins + losses) > 0 else 0
+
+    def calc_roi(profit, bets):
+        return round(profit / (len(bets) * 100) * 100, 1) if bets else 0
+
     return {
         "days_analyzed": days,
         "total_predictions": total,
@@ -510,9 +629,25 @@ def get_performance_summary(days: int = 7, db_url: str = None) -> dict:
         "best_bet_performance": {
             "wins": bet_wins,
             "losses": bet_losses,
-            "win_rate": round(bet_wins / (bet_wins + bet_losses) * 100, 1) if (bet_wins + bet_losses) > 0 else 0,
+            "win_rate": calc_win_rate(bet_wins, bet_losses),
             "total_profit": round(total_profit, 2),
-            "roi": round(total_profit / (len(best_bets) * 100) * 100, 1) if best_bets else 0
+            "roi": calc_roi(total_profit, best_bets)
+        },
+        "algorithm_comparison": {
+            "algo_a": {
+                "wins": algo_a_wins,
+                "losses": algo_a_losses,
+                "win_rate": calc_win_rate(algo_a_wins, algo_a_losses),
+                "profit": round(algo_a_profit, 2),
+                "roi": calc_roi(algo_a_profit, algo_a_bets)
+            },
+            "algo_b": {
+                "wins": algo_b_wins,
+                "losses": algo_b_losses,
+                "win_rate": calc_win_rate(algo_b_wins, algo_b_losses),
+                "profit": round(algo_b_profit, 2),
+                "roi": calc_roi(algo_b_profit, algo_b_bets)
+            }
         },
         "by_value_bucket": buckets,
         "status": "success"
