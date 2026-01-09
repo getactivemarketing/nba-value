@@ -48,7 +48,9 @@
       "WebFetch(domain:official.nba.com)",
       "Bash(PYTHONPATH=. python3:*)",
       "WebFetch(domain:nba.balldontlie.io)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(git show:*)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway\" python3 -m src.tasks.scheduler:*)"
     ]
   }
 }

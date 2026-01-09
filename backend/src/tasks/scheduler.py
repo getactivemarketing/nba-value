@@ -3,11 +3,12 @@
 Scheduler for automated prediction tracking tasks.
 
 This script runs scheduled tasks:
-1. Ingest odds (every 30 min)
-2. Run scoring (every 30 min)
-3. Snapshot predictions (every 15 min, captures games ~30 min before tip)
-4. Grade completed predictions (every hour)
-5. Sync game results (every 2 hours)
+1. Update team stats (every 2 hours) - rest days, B2B, records
+2. Ingest odds (every 30 min)
+3. Run scoring (every 30 min)
+4. Snapshot predictions (every 15 min, captures games ~30 min before tip)
+5. Grade completed predictions (every hour)
+6. Sync game results (every 2 hours)
 
 Can be run as a standalone process or scheduled via cron/Railway.
 """
@@ -16,8 +17,9 @@ import asyncio
 import hashlib
 import sys
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal
+from collections import defaultdict
 
 import psycopg2
 import structlog
@@ -56,6 +58,157 @@ def get_team_abbrev(team_name):
 
 def short_hash(s, length=8):
     return hashlib.md5(s.encode()).hexdigest()[:length]
+
+
+async def update_team_stats_async() -> dict:
+    """
+    Update team statistics including rest days, B2B status, and records.
+    Uses BallDontLie API for game history.
+    """
+    from src.services.data.balldontlie import BallDontLieClient
+
+    # Use EST for "today" since NBA games are scheduled in ET
+    eastern = timedelta(hours=-5)
+    now_est = datetime.now(timezone.utc) + eastern
+    today = now_est.date()
+    now = datetime.now(timezone.utc)
+
+    season_start = date(2025, 10, 22)  # 2025-26 NBA season
+
+    client = BallDontLieClient()
+    logger.info("Fetching games from BallDontLie for team stats...")
+
+    try:
+        all_games = await client.get_games(
+            start_date=season_start,
+            end_date=today,
+            seasons=[2025],
+        )
+    except Exception as e:
+        logger.error(f"Failed to fetch games for team stats: {e}")
+        return {"error": str(e), "status": "failed"}
+
+    completed = [g for g in all_games if g.status == "Final" and g.home_team_score]
+    logger.info(f"Found {len(completed)} completed games for stats calculation")
+
+    if not completed:
+        return {"teams_updated": 0, "status": "no_games"}
+
+    # Group games by team
+    team_games = defaultdict(list)
+    for game in completed:
+        team_games[game.home_team.abbreviation].append({
+            'date': game.date,
+            'is_home': True,
+            'points_for': game.home_team_score,
+            'points_against': game.away_team_score,
+            'won': game.home_team_score > game.away_team_score,
+        })
+        team_games[game.away_team.abbreviation].append({
+            'date': game.date,
+            'is_home': False,
+            'points_for': game.away_team_score,
+            'points_against': game.home_team_score,
+            'won': game.away_team_score > game.home_team_score,
+        })
+
+    conn = psycopg2.connect(DB_URL)
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    teams_updated = 0
+
+    for team_abbr, games in team_games.items():
+        games.sort(key=lambda x: x['date'], reverse=True)
+
+        wins = sum(1 for g in games if g['won'])
+        losses = len(games) - wins
+
+        last_10 = games[:10]
+        wins_l10 = sum(1 for g in last_10 if g['won'])
+        losses_l10 = len(last_10) - wins_l10
+        win_pct_10 = round(wins_l10 / len(last_10), 3) if last_10 else None
+
+        ppg_season = round(sum(g['points_for'] for g in games) / len(games), 2)
+        opp_ppg_season = round(sum(g['points_against'] for g in games) / len(games), 2)
+        ppg_10 = round(sum(g['points_for'] for g in last_10) / len(last_10), 2)
+        opp_ppg_10 = round(sum(g['points_against'] for g in last_10) / len(last_10), 2)
+
+        net_rtg_season = ppg_season - opp_ppg_season
+        net_rtg_10 = ppg_10 - opp_ppg_10
+
+        home_games = [g for g in games if g['is_home']]
+        away_games = [g for g in games if not g['is_home']]
+        home_wins = sum(1 for g in home_games if g['won'])
+        home_losses = len(home_games) - home_wins
+        away_wins = sum(1 for g in away_games if g['won'])
+        away_losses = len(away_games) - away_wins
+
+        # Rest calculation
+        last_game_date = games[0]['date']
+        if isinstance(last_game_date, datetime):
+            last_game_date = last_game_date.date()
+
+        days_rest = (today - last_game_date).days
+        is_b2b = days_rest <= 1
+
+        # Games in last 7 days
+        week_ago = today - timedelta(days=7)
+        games_last_7 = sum(1 for g in games if g['date'] >= week_ago)
+
+        # Upsert team stats
+        cur.execute('''
+            INSERT INTO team_stats (
+                team_id, stat_date, games_played, wins, losses,
+                wins_l10, losses_l10, win_pct_10,
+                home_wins, home_losses, away_wins, away_losses,
+                ppg_10, ppg_season, opp_ppg_10, opp_ppg_season,
+                net_rtg_10, net_rtg_season,
+                days_rest, is_back_to_back, games_last_7_days, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (team_id, stat_date) DO UPDATE SET
+                games_played = EXCLUDED.games_played,
+                wins = EXCLUDED.wins,
+                losses = EXCLUDED.losses,
+                wins_l10 = EXCLUDED.wins_l10,
+                losses_l10 = EXCLUDED.losses_l10,
+                win_pct_10 = EXCLUDED.win_pct_10,
+                home_wins = EXCLUDED.home_wins,
+                home_losses = EXCLUDED.home_losses,
+                away_wins = EXCLUDED.away_wins,
+                away_losses = EXCLUDED.away_losses,
+                ppg_10 = EXCLUDED.ppg_10,
+                ppg_season = EXCLUDED.ppg_season,
+                opp_ppg_10 = EXCLUDED.opp_ppg_10,
+                opp_ppg_season = EXCLUDED.opp_ppg_season,
+                net_rtg_10 = EXCLUDED.net_rtg_10,
+                net_rtg_season = EXCLUDED.net_rtg_season,
+                days_rest = EXCLUDED.days_rest,
+                is_back_to_back = EXCLUDED.is_back_to_back,
+                games_last_7_days = EXCLUDED.games_last_7_days
+        ''', (
+            team_abbr, today, len(games), wins, losses,
+            wins_l10, losses_l10, win_pct_10,
+            home_wins, home_losses, away_wins, away_losses,
+            ppg_10, ppg_season, opp_ppg_10, opp_ppg_season,
+            net_rtg_10, net_rtg_season,
+            days_rest, is_b2b, games_last_7, now
+        ))
+
+        teams_updated += 1
+
+    cur.close()
+    conn.close()
+
+    return {"teams_updated": teams_updated, "stat_date": str(today), "status": "success"}
+
+
+def run_team_stats():
+    """Update team statistics (rest, B2B, records)."""
+    logger.info("Running team stats update...")
+    result = asyncio.run(update_team_stats_async())
+    logger.info(f"Team stats update complete: {result}")
+    return result
 
 
 async def ingest_odds_async():
@@ -357,6 +510,9 @@ def run_all():
     logger.info("=" * 50)
     logger.info("Running all scheduled tasks...")
 
+    run_team_stats()  # Update rest/B2B data first
+    time.sleep(2)
+
     run_ingest()
     time.sleep(2)
 
@@ -383,6 +539,7 @@ def start_scheduler():
     run_all()
 
     # Schedule recurring tasks
+    schedule.every(2).hours.do(run_team_stats)  # Update rest/B2B data
     schedule.every(30).minutes.do(run_ingest)
     schedule.every(30).minutes.do(run_scoring)  # Run scoring with odds
     schedule.every(15).minutes.do(run_snapshot)  # Capture predictions ~30 min before tip
@@ -390,6 +547,7 @@ def start_scheduler():
     schedule.every(2).hours.do(run_results_sync)
 
     logger.info("Scheduler configured:")
+    logger.info("  - Team stats update: every 2 hours")
     logger.info("  - Odds ingestion: every 30 minutes")
     logger.info("  - Scoring: every 30 minutes")
     logger.info("  - Prediction snapshot: every 15 minutes (45 min window)")
@@ -404,7 +562,9 @@ def start_scheduler():
 if __name__ == '__main__':
     if len(sys.argv) > 1:
         command = sys.argv[1]
-        if command == 'ingest':
+        if command == 'stats':
+            run_team_stats()
+        elif command == 'ingest':
             run_ingest()
         elif command == 'snapshot':
             run_snapshot()
@@ -418,7 +578,7 @@ if __name__ == '__main__':
             start_scheduler()
         else:
             print(f"Unknown command: {command}")
-            print("Usage: python scheduler.py [ingest|snapshot|grade|results|all|daemon]")
+            print("Usage: python scheduler.py [stats|ingest|snapshot|grade|results|all|daemon]")
     else:
         # Default: run all tasks once
         run_all()
