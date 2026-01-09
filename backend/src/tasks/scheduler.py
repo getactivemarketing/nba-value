@@ -590,12 +590,14 @@ def sync_game_results() -> dict:
         return {"error": str(e), "status": "failed"}
 
 
-def backfill_game_results() -> dict:
+def backfill_game_results_with_odds() -> dict:
     """
-    Backfill game_results table with full season data.
-    This is needed for accurate ATS/O/U records.
+    Backfill game_results table with full season data INCLUDING closing lines.
+    Uses paid Odds API historical endpoint to get closing spreads/totals.
     """
+    import httpx
     from datetime import date
+    from src.config import settings
 
     conn = psycopg2.connect(DB_URL)
     conn.autocommit = True
@@ -606,14 +608,15 @@ def backfill_game_results() -> dict:
     season_start = date(2025, 10, 22)  # 2025-26 NBA season
 
     results_created = 0
+    api_calls = 0
 
     try:
         from src.services.data.balldontlie import BallDontLieClient
-        client = BallDontLieClient()
+        bdl_client = BallDontLieClient()
 
         # Fetch ALL games from season start
         logger.info(f"Backfilling game_results from {season_start} to {today}...")
-        all_games = asyncio.run(client.get_games(
+        all_games = asyncio.run(bdl_client.get_games(
             start_date=season_start,
             end_date=today,
             seasons=[2025]
@@ -622,58 +625,153 @@ def backfill_game_results() -> dict:
         completed = [g for g in all_games if g.status == 'Final' and g.home_team_score]
         logger.info(f"Found {len(completed)} completed games to backfill")
 
+        # Process games in batches by date to minimize API calls
+        games_by_date = defaultdict(list)
         for game in completed:
-            home_abbr = game.home_team.abbreviation
-            away_abbr = game.away_team.abbreviation
-            home_score = game.home_team_score
-            away_score = game.away_team_score
-            game_date = game.date
-            # Use UTC date (games played at night ET are next day UTC)
-            game_date_utc = game_date + timedelta(days=1)
+            games_by_date[game.date].append(game)
 
-            # Generate a consistent game_id
-            game_id = short_hash(f"{game_date}_{home_abbr}_{away_abbr}")
+        for game_date, date_games in sorted(games_by_date.items()):
+            # Check which games need backfilling
+            games_to_backfill = []
+            for game in date_games:
+                home_abbr = game.home_team.abbreviation
+                away_abbr = game.away_team.abbreviation
+                game_date_utc = game_date + timedelta(days=1)
 
-            # Check if already exists
-            cur.execute('''
-                SELECT 1 FROM game_results
-                WHERE game_date = %s AND home_team_id = %s AND away_team_id = %s
-            ''', (game_date_utc, home_abbr, away_abbr))
+                cur.execute('''
+                    SELECT 1 FROM game_results
+                    WHERE game_date = %s AND home_team_id = %s AND away_team_id = %s
+                ''', (game_date_utc, home_abbr, away_abbr))
 
-            if cur.fetchone():
+                if not cur.fetchone():
+                    games_to_backfill.append(game)
+
+            if not games_to_backfill:
                 continue
 
-            # Calculate results (without closing lines for historical)
-            actual_winner = home_abbr if home_score > away_score else away_abbr
-            total_score = home_score + away_score
+            # Fetch historical odds for this date (get odds from ~1 hour before first game)
+            # Games typically start 7pm ET = 00:00 UTC next day, so fetch at 23:00 UTC
+            odds_time = datetime.combine(game_date, datetime.min.time().replace(hour=23))
+            odds_time = odds_time.replace(tzinfo=timezone.utc)
 
-            # We don't have closing lines for historical games, so leave spread_result/total_result NULL
-            # This means ATS won't count these, but at least we have the data
-            cur.execute('''
-                INSERT INTO game_results (
-                    game_id, game_date, home_team_id, away_team_id,
+            try:
+                with httpx.Client(timeout=30) as client:
+                    resp = client.get(
+                        f"https://api.the-odds-api.com/v4/historical/sports/basketball_nba/odds",
+                        params={
+                            "apiKey": settings.odds_api_key,
+                            "regions": "us",
+                            "markets": "spreads,totals",
+                            "oddsFormat": "decimal",
+                            "date": odds_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        }
+                    )
+                    api_calls += 1
+
+                    if resp.status_code != 200:
+                        logger.warning(f"Historical odds API error for {game_date}: {resp.status_code}")
+                        continue
+
+                    historical_data = resp.json().get("data", [])
+                    logger.info(f"Got {len(historical_data)} games from historical odds for {game_date}")
+
+            except Exception as e:
+                logger.error(f"Failed to fetch historical odds for {game_date}: {e}")
+                continue
+
+            # Build odds lookup by team matchup
+            odds_lookup = {}
+            for odds_game in historical_data:
+                home = get_team_abbrev(odds_game.get("home_team", ""))
+                away = get_team_abbrev(odds_game.get("away_team", ""))
+                key = f"{home}_{away}"
+
+                closing_spread = None
+                closing_total = None
+
+                for bookmaker in odds_game.get("bookmakers", []):
+                    for market in bookmaker.get("markets", []):
+                        if market["key"] == "spreads":
+                            for outcome in market.get("outcomes", []):
+                                if get_team_abbrev(outcome.get("name", "")) == home:
+                                    closing_spread = outcome.get("point")
+                                    break
+                        elif market["key"] == "totals":
+                            for outcome in market.get("outcomes", []):
+                                if outcome.get("name") == "Over":
+                                    closing_total = outcome.get("point")
+                                    break
+                    if closing_spread is not None and closing_total is not None:
+                        break
+
+                odds_lookup[key] = {"spread": closing_spread, "total": closing_total}
+
+            # Insert game results with closing lines
+            for game in games_to_backfill:
+                home_abbr = game.home_team.abbreviation
+                away_abbr = game.away_team.abbreviation
+                home_score = game.home_team_score
+                away_score = game.away_team_score
+                game_date_utc = game_date + timedelta(days=1)
+
+                game_id = short_hash(f"{game_date}_{home_abbr}_{away_abbr}")
+                actual_winner = home_abbr if home_score > away_score else away_abbr
+                total_score = home_score + away_score
+
+                # Look up closing lines
+                key = f"{home_abbr}_{away_abbr}"
+                odds = odds_lookup.get(key, {})
+                closing_spread = odds.get("spread")
+                closing_total = odds.get("total")
+
+                # Calculate spread result
+                spread_result = None
+                if closing_spread is not None:
+                    home_adjusted = home_score + closing_spread
+                    if home_adjusted > away_score:
+                        spread_result = 'home_cover'
+                    elif home_adjusted < away_score:
+                        spread_result = 'away_cover'
+                    else:
+                        spread_result = 'push'
+
+                # Calculate total result
+                total_result = None
+                if closing_total is not None:
+                    if total_score > closing_total:
+                        total_result = 'over'
+                    elif total_score < closing_total:
+                        total_result = 'under'
+                    else:
+                        total_result = 'push'
+
+                cur.execute('''
+                    INSERT INTO game_results (
+                        game_id, game_date, home_team_id, away_team_id,
+                        home_score, away_score, total_score,
+                        closing_spread, closing_total,
+                        actual_winner, spread_result, total_result,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (game_id) DO NOTHING
+                ''', (
+                    game_id, game_date_utc, home_abbr, away_abbr,
                     home_score, away_score, total_score,
                     closing_spread, closing_total,
                     actual_winner, spread_result, total_result,
-                    created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (game_id) DO NOTHING
-            ''', (
-                game_id, game_date_utc, home_abbr, away_abbr,
-                home_score, away_score, total_score,
-                None, None,  # No closing lines for historical
-                actual_winner, None, None,  # No spread/total results without lines
-                now
-            ))
+                    now
+                ))
 
-            if cur.rowcount > 0:
-                results_created += 1
+                if cur.rowcount > 0:
+                    results_created += 1
+                    if results_created % 50 == 0:
+                        logger.info(f"Progress: {results_created} results created, {api_calls} API calls")
 
         cur.close()
         conn.close()
 
-        logger.info(f"Backfill complete: {results_created} new game_results created")
-        return {"results_created": results_created, "status": "success"}
+        logger.info(f"Backfill complete: {results_created} new game_results, {api_calls} API calls")
+        return {"results_created": results_created, "api_calls": api_calls, "status": "success"}
 
     except Exception as e:
         logger.error(f"Backfill failed: {e}")

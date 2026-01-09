@@ -52,7 +52,8 @@
       "Bash(git show:*)",
       "Bash(DATABASE_URL=\"postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway\" python3 -m src.tasks.scheduler:*)",
       "WebFetch(domain:www.covers.com)",
-      "Bash(PGPASSWORD=\"wzYHkiAOkykxiPitXKBIqPJxvifFtDPI\" psql -h maglev.proxy.rlwy.net -p 46068 -U postgres -d railway -c \"SELECT team_id, ats_wins_l10, ats_losses_l10, ou_overs_l10, ou_unders_l10 FROM team_stats WHERE stat_date = ''2026-01-09'' ORDER BY team_id LIMIT 10;\")"
+      "Bash(PGPASSWORD=\"wzYHkiAOkykxiPitXKBIqPJxvifFtDPI\" psql -h maglev.proxy.rlwy.net -p 46068 -U postgres -d railway -c \"SELECT team_id, ats_wins_l10, ats_losses_l10, ou_overs_l10, ou_unders_l10 FROM team_stats WHERE stat_date = ''2026-01-09'' ORDER BY team_id LIMIT 10;\")",
+      "Bash(git log:*)"
     ]
   }
 }
