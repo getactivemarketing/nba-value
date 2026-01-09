@@ -213,6 +213,8 @@ export function MarketBoard() {
   }, [markets]);
 
   // Filter historical games by selected date
+  // Note: game_date is stored in UTC, but games played at 7pm ET on Jan 8
+  // have game_date = Jan 9 (UTC). We need to convert to local time.
   const filteredHistoricalGames = useMemo(() => {
     if (!historicalGames || !isViewingPast) return [];
 
@@ -221,10 +223,12 @@ export function MarketBoard() {
     const selectedDay = selectedDate.getDate();
 
     return historicalGames.filter(game => {
-      const gameDate = new Date(game.game_date + 'T12:00:00');
-      return gameDate.getFullYear() === selectedYear &&
-             gameDate.getMonth() === selectedMonth &&
-             gameDate.getDate() === selectedDay;
+      // game_date is UTC date, convert to local by treating as UTC midnight
+      // then subtracting timezone offset to get local "game night" date
+      const utcDate = new Date(game.game_date + 'T05:00:00Z'); // 5am UTC = midnight ET
+      return utcDate.getFullYear() === selectedYear &&
+             utcDate.getMonth() === selectedMonth &&
+             utcDate.getDate() === selectedDay;
     });
   }, [historicalGames, selectedDate, isViewingPast]);
 
@@ -234,7 +238,9 @@ export function MarketBoard() {
 
     const counts = new Map<string, number>();
     for (const game of historicalGames) {
-      const dateStr = new Date(game.game_date + 'T12:00:00').toDateString();
+      // Same conversion as above
+      const utcDate = new Date(game.game_date + 'T05:00:00Z');
+      const dateStr = utcDate.toDateString();
       counts.set(dateStr, (counts.get(dateStr) || 0) + 1);
     }
     return counts;
