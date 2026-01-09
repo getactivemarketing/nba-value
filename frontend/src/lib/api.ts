@@ -131,6 +131,27 @@ export const api = {
     const response = await client.get<{ status: string }>('/health');
     return response.data;
   },
+
+  // Trends
+  async getATSLeaderboard(): Promise<ATSTeam[]> {
+    const response = await client.get<ATSTeam[]>('/trends/ats');
+    return response.data;
+  },
+
+  async getOULeaderboard(): Promise<OUTeam[]> {
+    const response = await client.get<OUTeam[]>('/trends/ou');
+    return response.data;
+  },
+
+  async getSituationalTrends(): Promise<SituationalTrends> {
+    const response = await client.get<SituationalTrends>('/trends/situational');
+    return response.data;
+  },
+
+  async getModelPerformance(days: number = 30): Promise<ModelPerformance> {
+    const response = await client.get<ModelPerformance>(`/trends/model?days=${days}`);
+    return response.data;
+  },
 };
 
 export interface TeamTrends {
@@ -333,5 +354,100 @@ export interface PredictionPerformance {
     bet_result: 'win' | 'loss' | 'push' | null;
     bet_profit: number | null;
     injury_edge: number | null;
+  }[];
+}
+
+// Trends Types
+export interface ATSTeam {
+  rank: number;
+  team: string;
+  ats_wins: number;
+  ats_losses: number;
+  ats_pushes: number;
+  ats_record: string;
+  ats_pct: number;
+  wins_l10: number;
+  losses_l10: number;
+  l10_record: string;
+  home_record: string;
+  away_record: string;
+  net_rtg: number | null;
+}
+
+export interface OUTeam {
+  rank: number;
+  team: string;
+  overs: number;
+  unders: number;
+  pushes: number;
+  ou_record: string;
+  over_pct: number;
+  ppg: number;
+  opp_ppg: number;
+  avg_total: number;
+  pace: string;
+}
+
+export interface SituationalTrend {
+  situation: string;
+  games: number;
+  covers: number;
+  cover_pct: number;
+}
+
+export interface SituationalTrends {
+  by_rest: SituationalTrend[];
+  by_location: SituationalTrend[];
+  b2b_summary: {
+    games: number;
+    covers: number;
+    cover_pct: number;
+  };
+  summary: {
+    total_home_wins: number;
+    total_home_losses: number;
+    total_away_wins: number;
+    total_away_losses: number;
+  };
+}
+
+export interface ModelPerformance {
+  days_analyzed: number;
+  total_predictions: number;
+  winner_accuracy: {
+    correct: number;
+    total: number;
+    pct: number;
+  };
+  algo_a: {
+    wins: number;
+    losses: number;
+    pushes: number;
+    profit: number;
+    win_rate: number;
+    roi: number;
+  };
+  algo_b: {
+    wins: number;
+    losses: number;
+    pushes: number;
+    profit: number;
+    win_rate: number;
+    roi: number;
+  };
+  by_bucket: {
+    bucket: string;
+    bets: number;
+    wins: number;
+    losses: number;
+    win_rate: number;
+    profit: number;
+    roi: number;
+  }[];
+  recent: {
+    date: string;
+    winner_correct: boolean;
+    bet_result: string;
+    value_score: number;
   }[];
 }
