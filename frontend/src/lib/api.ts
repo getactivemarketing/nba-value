@@ -141,6 +141,8 @@ export interface TeamTrends {
   net_rtg_l10: number | null;
   rest_days: number | null;
   is_b2b: boolean;
+  ats_record: string;
+  ou_record: string;
 }
 
 export interface TeamInjuries {
@@ -169,6 +171,11 @@ export interface SpreadPick {
   p_true: number;
 }
 
+export interface PredictedScore {
+  home: number;
+  away: number;
+}
+
 export interface GamePrediction {
   winner: string;
   winner_prob: number;
@@ -176,6 +183,7 @@ export interface GamePrediction {
   spread_pick: SpreadPick | null;
   best_bet: BestBet | null;
   factors: string[];
+  predicted_score: PredictedScore | null;
 }
 
 export interface TornadoFactor {
@@ -186,6 +194,18 @@ export interface TornadoFactor {
   diff: number;
   home_better: boolean | null;
   expected_pace?: number;
+}
+
+export interface HeadToHead {
+  home_wins: number;
+  away_wins: number;
+  total_games: number;
+  record: string;
+  recent: {
+    date: string;
+    score: string;
+    home_won: boolean;
+  }[];
 }
 
 export interface GameWithTrends {
@@ -205,6 +225,7 @@ export interface GameWithTrends {
   injury_edge: number;  // Positive = home has advantage (away more injured)
   prediction: GamePrediction | null;
   tornado_chart: TornadoFactor[];
+  head_to_head: HeadToHead | null;
 }
 
 export interface HistoricalGame {

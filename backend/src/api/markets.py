@@ -512,6 +512,8 @@ async def get_upcoming_games(
                     "net_rtg_l10": None,
                     "rest_days": None,
                     "is_b2b": False,
+                    "ats_record": "0-0",
+                    "ou_record": "0-0",
                 }
 
             record = f"{stats.wins}-{stats.losses}"
@@ -522,6 +524,16 @@ async def get_upcoming_games(
             away_losses = getattr(stats, 'away_losses', None) or 0
             wins_l10 = getattr(stats, 'wins_l10', None) or 0
             losses_l10 = getattr(stats, 'losses_l10', None) or 0
+
+            # ATS record (L10)
+            ats_wins = getattr(stats, 'ats_wins_l10', None) or 0
+            ats_losses = getattr(stats, 'ats_losses_l10', None) or 0
+            ats_record = f"{ats_wins}-{ats_losses}"
+
+            # O/U record (L10)
+            ou_overs = getattr(stats, 'ou_overs_l10', None) or 0
+            ou_unders = getattr(stats, 'ou_unders_l10', None) or 0
+            ou_record = f"{ou_overs}o-{ou_unders}u"
 
             home_record = f"{home_wins}-{home_losses}"
             away_record = f"{away_wins}-{away_losses}"
@@ -538,6 +550,8 @@ async def get_upcoming_games(
                 "net_rtg_l10": net_rtg,
                 "rest_days": rest,
                 "is_b2b": b2b,
+                "ats_record": ats_record,
+                "ou_record": ou_record,
             }
 
         def build_tornado_chart(home_team_id: str, away_team_id: str) -> list[dict]:
@@ -651,6 +665,10 @@ async def get_upcoming_games(
             spread_pick = None
             best_spread_score = 0
 
+            # Track spread and total for score prediction
+            consensus_spread = None
+            consensus_total = None
+
             for vs in scores:
                 market = vs.market
                 prediction = vs.prediction
@@ -697,6 +715,25 @@ async def get_upcoming_games(
                             "p_true": float(prediction.p_true) if prediction.p_true else 0.5,
                             "p_market": float(prediction.p_market) if prediction.p_market else 0.5,
                         }
+
+                # Track spread (home team perspective)
+                if market.market_type == "spread" and "home" in market.outcome_label and market.line is not None:
+                    consensus_spread = float(market.line)
+
+                # Track total
+                if market.market_type == "total" and market.line is not None:
+                    consensus_total = float(market.line)
+
+            # Calculate predicted final score from spread + total
+            predicted_home_score = None
+            predicted_away_score = None
+            if consensus_spread is not None and consensus_total is not None:
+                # spread is from home perspective (negative = home favored)
+                # total = home_score + away_score
+                # margin = home_score - away_score = -spread (if home favored by 5, spread is -5)
+                # Solving: home = (total - spread) / 2, away = (total + spread) / 2
+                predicted_home_score = round((consensus_total - consensus_spread) / 2, 1)
+                predicted_away_score = round((consensus_total + consensus_spread) / 2, 1)
 
             # Determine winner from moneyline probabilities
             if home_ml and away_ml:
@@ -772,6 +809,62 @@ async def get_upcoming_games(
                 "spread_pick": spread_pick,
                 "best_bet": best_bet,
                 "factors": factors[:4],  # Limit to 4 factors
+                "predicted_score": {
+                    "home": predicted_home_score,
+                    "away": predicted_away_score,
+                } if predicted_home_score and predicted_away_score else None,
+            }
+
+        # Get head-to-head records
+        async def get_h2h_record(home_abbr: str, away_abbr: str, limit: int = 5) -> dict | None:
+            """Get head-to-head record between two teams from recent games."""
+            h2h_query = (
+                select(GameResult)
+                .where(
+                    ((GameResult.home_team_id == home_abbr) & (GameResult.away_team_id == away_abbr)) |
+                    ((GameResult.home_team_id == away_abbr) & (GameResult.away_team_id == home_abbr))
+                )
+                .where(GameResult.home_score.isnot(None))
+                .order_by(desc(GameResult.game_date))
+                .limit(limit)
+            )
+            h2h_result = await session.execute(h2h_query)
+            h2h_games = h2h_result.scalars().all()
+
+            if not h2h_games:
+                return None
+
+            home_wins = 0
+            away_wins = 0
+            recent_games = []
+
+            for game in h2h_games:
+                winner = game.actual_winner
+                if winner == home_abbr:
+                    home_wins += 1
+                elif winner == away_abbr:
+                    away_wins += 1
+
+                # Format the game result
+                if game.home_team_id == home_abbr:
+                    score = f"{game.away_score}-{game.home_score}"
+                    won = winner == home_abbr
+                else:
+                    score = f"{game.home_score}-{game.away_score}"
+                    won = winner == home_abbr
+
+                recent_games.append({
+                    "date": game.game_date.isoformat() if game.game_date else None,
+                    "score": score,
+                    "home_won": won,
+                })
+
+            return {
+                "home_wins": home_wins,
+                "away_wins": away_wins,
+                "total_games": len(h2h_games),
+                "record": f"{home_wins}-{away_wins}",
+                "recent": recent_games[:3],  # Last 3 games
             }
 
         def build_injury_data(team_abbrev: str) -> dict:
@@ -820,6 +913,9 @@ async def get_upcoming_games(
             # Calculate injury edge (positive = home has advantage from opponent injuries)
             injury_edge = away_injuries["impact_score"] - home_injuries["impact_score"]
 
+            # Get head-to-head record
+            h2h = await get_h2h_record(home_abbr, away_abbr)
+
             response.append({
                 "game_id": game.game_id,
                 "home_team": home_abbr,
@@ -837,6 +933,7 @@ async def get_upcoming_games(
                 "injury_edge": round(injury_edge),  # Positive = home advantage
                 "prediction": build_prediction(game, home_abbr, away_abbr, home_trends, away_trends),
                 "tornado_chart": build_tornado_chart(game.home_team_id, game.away_team_id),
+                "head_to_head": h2h,
             })
 
         return response

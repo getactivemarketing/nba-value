@@ -6,7 +6,7 @@ import { HistoricalGameCard } from '@/components/MarketBoard/HistoricalGameCard'
 import { TopPicks } from '@/components/MarketBoard/TopPicks';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
 import type { MarketFilters as Filters, Market, Algorithm } from '@/types/market';
-import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries } from '@/lib/api';
+import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries, HeadToHead } from '@/lib/api';
 
 interface GameGroup {
   gameId: string;
@@ -20,6 +20,7 @@ interface GameGroup {
   awayInjuries?: TeamInjuries;
   prediction?: GamePrediction | null;
   tornadoChart?: TornadoFactor[];
+  headToHead?: HeadToHead | null;
 }
 
 // Generate dates for the date picker
@@ -115,6 +116,7 @@ export function MarketBoard() {
       awayInjuries: TeamInjuries;
       prediction: GamePrediction | null;
       tornadoChart: TornadoFactor[];
+      headToHead: HeadToHead | null;
     }>();
     if (gamesWithTrends) {
       for (const game of gamesWithTrends) {
@@ -125,6 +127,7 @@ export function MarketBoard() {
           awayInjuries: game.away_injuries,
           prediction: game.prediction,
           tornadoChart: game.tornado_chart || [],
+          headToHead: game.head_to_head || null,
         });
       }
     }
@@ -160,6 +163,7 @@ export function MarketBoard() {
           awayInjuries: trends?.awayInjuries,
           prediction: trends?.prediction,
           tornadoChart: trends?.tornadoChart,
+          headToHead: trends?.headToHead,
         });
       }
     }
@@ -445,6 +449,7 @@ export function MarketBoard() {
                   awayInjuries={game.awayInjuries}
                   prediction={game.prediction}
                   tornadoChart={game.tornadoChart}
+                  headToHead={game.headToHead}
                 />
               ))}
             </div>

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getTeamLogo, getTeamColor } from '@/lib/teamLogos';
 import type { Market, Algorithm } from '@/types/market';
-import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries } from '@/lib/api';
+import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries, HeadToHead } from '@/lib/api';
 import { TornadoChart } from './TornadoChart';
 
 interface GameCardProps {
@@ -18,6 +18,7 @@ interface GameCardProps {
   awayInjuries?: TeamInjuries;
   prediction?: GamePrediction | null;
   tornadoChart?: TornadoFactor[];
+  headToHead?: HeadToHead | null;
 }
 
 function formatGameTime(tipTime: string): { date: string; time: string } {
@@ -150,7 +151,7 @@ function TeamLogo({ team, size = 48 }: { team: string; size?: number }) {
   );
 }
 
-export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, homeTrends, awayTrends, homeInjuries, awayInjuries, prediction, tornadoChart }: GameCardProps) {
+export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, homeTrends, awayTrends, homeInjuries, awayInjuries, prediction, tornadoChart, headToHead }: GameCardProps) {
   const { date, time } = formatGameTime(tipTime);
 
   // Get spread values for each team
@@ -200,11 +201,22 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
             </div>
           </div>
 
-          {/* Center - Date/Time/Total */}
+          {/* Center - Date/Time/Predicted Score */}
           <div className="text-center px-4">
             <div className="text-sm font-medium text-gray-900">{date}</div>
             <div className="text-sm text-gray-500">{time}</div>
-            {totalLine && (
+            {/* Predicted Score - Covers style */}
+            {prediction?.predicted_score && (
+              <div className="mt-2 bg-slate-100 rounded-lg px-3 py-1.5">
+                <div className="text-xs text-gray-500 mb-0.5">Projected</div>
+                <div className="flex items-center justify-center gap-2">
+                  <span className="text-lg font-bold text-gray-800">{prediction.predicted_score.away}</span>
+                  <span className="text-gray-400">-</span>
+                  <span className="text-lg font-bold text-gray-800">{prediction.predicted_score.home}</span>
+                </div>
+              </div>
+            )}
+            {totalLine && !prediction?.predicted_score && (
               <div className="mt-2 text-sm">
                 <span className="text-gray-500">o/u</span>{' '}
                 <span className="font-semibold text-gray-900">{totalLine}</span>
@@ -268,6 +280,16 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
             <div className={`text-right font-medium ${(homeTrends?.net_rtg_l10 ?? 0) > 0 ? 'text-green-600' : (homeTrends?.net_rtg_l10 ?? 0) < 0 ? 'text-red-500' : 'text-gray-500'}`}>
               {homeTrends?.net_rtg_l10 != null ? `${(homeTrends?.net_rtg_l10 ?? 0) > 0 ? '+' : ''}${(homeTrends?.net_rtg_l10 ?? 0).toFixed(1)}` : '-'}
             </div>
+
+            {/* ATS Record L10 */}
+            <div className="text-gray-600">{awayTrends?.ats_record || '0-0'}</div>
+            <div className="text-center text-gray-400">ATS</div>
+            <div className="text-right text-gray-600">{homeTrends?.ats_record || '0-0'}</div>
+
+            {/* O/U Record L10 */}
+            <div className="text-gray-600">{awayTrends?.ou_record || '0o-0u'}</div>
+            <div className="text-center text-gray-400">O/U</div>
+            <div className="text-right text-gray-600">{homeTrends?.ou_record || '0o-0u'}</div>
           </div>
 
           {/* B2B Indicators */}
@@ -275,6 +297,18 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, home
             <div className="mt-2 flex justify-between text-xs">
               <div>{awayTrends?.is_b2b && <span className="text-amber-600 font-medium">B2B</span>}</div>
               <div>{homeTrends?.is_b2b && <span className="text-amber-600 font-medium">B2B</span>}</div>
+            </div>
+          )}
+
+          {/* Head-to-Head Record */}
+          {headToHead && headToHead.total_games > 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-500 font-medium">H2H (Last {headToHead.total_games})</span>
+                <span className="font-semibold text-gray-700">
+                  {awayTeam} {headToHead.away_wins}-{headToHead.home_wins} {homeTeam}
+                </span>
+              </div>
             </div>
           )}
         </div>

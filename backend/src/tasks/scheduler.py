@@ -116,6 +116,70 @@ async def update_team_stats_async() -> dict:
     conn.autocommit = True
     cur = conn.cursor()
 
+    # Get ATS and O/U records from game_results (last 10 games per team)
+    # ATS: 'home_cover' means home team covered, 'away_cover' means away team covered
+    # After transformation: 'win' = team covered, 'loss' = team didn't cover
+    ats_ou_records = {}
+    cur.execute('''
+        WITH team_games AS (
+            -- Home team games: home_cover = WIN, away_cover = LOSS
+            SELECT
+                home_team_id AS team,
+                CASE
+                    WHEN spread_result = 'home_cover' THEN 'win'
+                    WHEN spread_result = 'away_cover' THEN 'loss'
+                    ELSE 'push'
+                END AS ats_result,
+                total_result,
+                game_date
+            FROM game_results
+            WHERE spread_result IS NOT NULL
+            UNION ALL
+            -- Away team games: away_cover = WIN, home_cover = LOSS
+            SELECT
+                away_team_id AS team,
+                CASE
+                    WHEN spread_result = 'away_cover' THEN 'win'
+                    WHEN spread_result = 'home_cover' THEN 'loss'
+                    ELSE 'push'
+                END AS ats_result,
+                total_result,
+                game_date
+            FROM game_results
+            WHERE spread_result IS NOT NULL
+        ),
+        numbered AS (
+            SELECT
+                team,
+                ats_result,
+                total_result,
+                ROW_NUMBER() OVER (PARTITION BY team ORDER BY game_date DESC) as rn
+            FROM team_games
+        )
+        SELECT
+            team,
+            SUM(CASE WHEN ats_result = 'win' THEN 1 ELSE 0 END) as ats_wins,
+            SUM(CASE WHEN ats_result = 'loss' THEN 1 ELSE 0 END) as ats_losses,
+            SUM(CASE WHEN ats_result = 'push' THEN 1 ELSE 0 END) as ats_pushes,
+            SUM(CASE WHEN total_result = 'over' THEN 1 ELSE 0 END) as ou_overs,
+            SUM(CASE WHEN total_result = 'under' THEN 1 ELSE 0 END) as ou_unders,
+            SUM(CASE WHEN total_result = 'push' THEN 1 ELSE 0 END) as ou_pushes
+        FROM numbered
+        WHERE rn <= 10
+        GROUP BY team
+    ''')
+
+    for row in cur.fetchall():
+        team, ats_wins, ats_losses, ats_pushes, ou_overs, ou_unders, ou_pushes = row
+        ats_ou_records[team] = {
+            'ats_wins': ats_wins or 0,
+            'ats_losses': ats_losses or 0,
+            'ats_pushes': ats_pushes or 0,
+            'ou_overs': ou_overs or 0,
+            'ou_unders': ou_unders or 0,
+            'ou_pushes': ou_pushes or 0,
+        }
+
     teams_updated = 0
 
     for team_abbr, games in team_games.items():
@@ -156,6 +220,15 @@ async def update_team_stats_async() -> dict:
         week_ago = today - timedelta(days=7)
         games_last_7 = sum(1 for g in games if g['date'] >= week_ago)
 
+        # Get ATS/O/U records for this team
+        ats_ou = ats_ou_records.get(team_abbr, {})
+        ats_wins_l10 = ats_ou.get('ats_wins', 0)
+        ats_losses_l10 = ats_ou.get('ats_losses', 0)
+        ats_pushes_l10 = ats_ou.get('ats_pushes', 0)
+        ou_overs_l10 = ats_ou.get('ou_overs', 0)
+        ou_unders_l10 = ats_ou.get('ou_unders', 0)
+        ou_pushes_l10 = ats_ou.get('ou_pushes', 0)
+
         # Upsert team stats
         cur.execute('''
             INSERT INTO team_stats (
@@ -164,8 +237,11 @@ async def update_team_stats_async() -> dict:
                 home_wins, home_losses, away_wins, away_losses,
                 ppg_10, ppg_season, opp_ppg_10, opp_ppg_season,
                 net_rtg_10, net_rtg_season,
-                days_rest, is_back_to_back, games_last_7_days, created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                days_rest, is_back_to_back, games_last_7_days,
+                ats_wins_l10, ats_losses_l10, ats_pushes_l10,
+                ou_overs_l10, ou_unders_l10, ou_pushes_l10,
+                created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (team_id, stat_date) DO UPDATE SET
                 games_played = EXCLUDED.games_played,
                 wins = EXCLUDED.wins,
@@ -185,14 +261,23 @@ async def update_team_stats_async() -> dict:
                 net_rtg_season = EXCLUDED.net_rtg_season,
                 days_rest = EXCLUDED.days_rest,
                 is_back_to_back = EXCLUDED.is_back_to_back,
-                games_last_7_days = EXCLUDED.games_last_7_days
+                games_last_7_days = EXCLUDED.games_last_7_days,
+                ats_wins_l10 = EXCLUDED.ats_wins_l10,
+                ats_losses_l10 = EXCLUDED.ats_losses_l10,
+                ats_pushes_l10 = EXCLUDED.ats_pushes_l10,
+                ou_overs_l10 = EXCLUDED.ou_overs_l10,
+                ou_unders_l10 = EXCLUDED.ou_unders_l10,
+                ou_pushes_l10 = EXCLUDED.ou_pushes_l10
         ''', (
             team_abbr, today, len(games), wins, losses,
             wins_l10, losses_l10, win_pct_10,
             home_wins, home_losses, away_wins, away_losses,
             ppg_10, ppg_season, opp_ppg_10, opp_ppg_season,
             net_rtg_10, net_rtg_season,
-            days_rest, is_b2b, games_last_7, now
+            days_rest, is_b2b, games_last_7,
+            ats_wins_l10, ats_losses_l10, ats_pushes_l10,
+            ou_overs_l10, ou_unders_l10, ou_pushes_l10,
+            now
         ))
 
         teams_updated += 1
