@@ -590,6 +590,98 @@ def sync_game_results() -> dict:
         return {"error": str(e), "status": "failed"}
 
 
+def backfill_game_results() -> dict:
+    """
+    Backfill game_results table with full season data.
+    This is needed for accurate ATS/O/U records.
+    """
+    from datetime import date
+
+    conn = psycopg2.connect(DB_URL)
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    now = datetime.now(timezone.utc)
+    today = date.today()
+    season_start = date(2025, 10, 22)  # 2025-26 NBA season
+
+    results_created = 0
+
+    try:
+        from src.services.data.balldontlie import BallDontLieClient
+        client = BallDontLieClient()
+
+        # Fetch ALL games from season start
+        logger.info(f"Backfilling game_results from {season_start} to {today}...")
+        all_games = asyncio.run(client.get_games(
+            start_date=season_start,
+            end_date=today,
+            seasons=[2025]
+        ))
+
+        completed = [g for g in all_games if g.status == 'Final' and g.home_team_score]
+        logger.info(f"Found {len(completed)} completed games to backfill")
+
+        for game in completed:
+            home_abbr = game.home_team.abbreviation
+            away_abbr = game.away_team.abbreviation
+            home_score = game.home_team_score
+            away_score = game.away_team_score
+            game_date = game.date
+            # Use UTC date (games played at night ET are next day UTC)
+            game_date_utc = game_date + timedelta(days=1)
+
+            # Generate a consistent game_id
+            game_id = short_hash(f"{game_date}_{home_abbr}_{away_abbr}")
+
+            # Check if already exists
+            cur.execute('''
+                SELECT 1 FROM game_results
+                WHERE game_date = %s AND home_team_id = %s AND away_team_id = %s
+            ''', (game_date_utc, home_abbr, away_abbr))
+
+            if cur.fetchone():
+                continue
+
+            # Calculate results (without closing lines for historical)
+            actual_winner = home_abbr if home_score > away_score else away_abbr
+            total_score = home_score + away_score
+
+            # We don't have closing lines for historical games, so leave spread_result/total_result NULL
+            # This means ATS won't count these, but at least we have the data
+            cur.execute('''
+                INSERT INTO game_results (
+                    game_id, game_date, home_team_id, away_team_id,
+                    home_score, away_score, total_score,
+                    closing_spread, closing_total,
+                    actual_winner, spread_result, total_result,
+                    created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (game_id) DO NOTHING
+            ''', (
+                game_id, game_date_utc, home_abbr, away_abbr,
+                home_score, away_score, total_score,
+                None, None,  # No closing lines for historical
+                actual_winner, None, None,  # No spread/total results without lines
+                now
+            ))
+
+            if cur.rowcount > 0:
+                results_created += 1
+
+        cur.close()
+        conn.close()
+
+        logger.info(f"Backfill complete: {results_created} new game_results created")
+        return {"results_created": results_created, "status": "success"}
+
+    except Exception as e:
+        logger.error(f"Backfill failed: {e}")
+        cur.close()
+        conn.close()
+        return {"error": str(e), "status": "failed"}
+
+
 def run_all():
     """Run all tasks once."""
     logger.info("=" * 50)

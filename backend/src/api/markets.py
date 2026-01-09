@@ -600,15 +600,15 @@ async def get_upcoming_games(
                 h_pace, a_pace = sf(hs, 'pace_10', 100), sf(aws, 'pace_10', 100)
                 factors.append({"factor": "Pace", "label": "Game Tempo", "home_value": round(h_pace, 1), "away_value": round(a_pace, 1), "diff": 0, "home_better": None, "expected_pace": round((h_pace + a_pace) / 2, 1)})
 
-                # 4. Offense (ORtg)
-                h_ortg, a_ortg = sf(hs, 'ortg_10', 110), sf(aws, 'ortg_10', 110)
+                # 4. Offense (PPG as proxy for offensive rating)
+                h_ortg, a_ortg = sf(hs, 'ppg_10', 110), sf(aws, 'ppg_10', 110)
                 diff = (h_ortg - a_ortg) / 10 * 100
-                factors.append({"factor": "Offense", "label": "Off. Rating", "home_value": round(h_ortg, 1), "away_value": round(a_ortg, 1), "diff": round(max(-100, min(100, diff)), 1), "home_better": h_ortg > a_ortg})
+                factors.append({"factor": "Offense", "label": "PPG L10", "home_value": round(h_ortg, 1), "away_value": round(a_ortg, 1), "diff": round(max(-100, min(100, diff)), 1), "home_better": h_ortg > a_ortg})
 
-                # 5. Defense (DRtg - lower is better)
-                h_drtg, a_drtg = sf(hs, 'drtg_10', 110), sf(aws, 'drtg_10', 110)
+                # 5. Defense (Opp PPG as proxy - lower is better)
+                h_drtg, a_drtg = sf(hs, 'opp_ppg_10', 110), sf(aws, 'opp_ppg_10', 110)
                 diff = (a_drtg - h_drtg) / 10 * 100
-                factors.append({"factor": "Defense", "label": "Def. Rating", "home_value": round(h_drtg, 1), "away_value": round(a_drtg, 1), "diff": round(max(-100, min(100, diff)), 1), "home_better": h_drtg < a_drtg})
+                factors.append({"factor": "Defense", "label": "Opp PPG L10", "home_value": round(h_drtg, 1), "away_value": round(a_drtg, 1), "diff": round(max(-100, min(100, diff)), 1), "home_better": h_drtg < a_drtg})
 
                 # 6. ATS Record (L10)
                 h_ats_w, h_ats_l = si(hs, 'ats_wins_l10'), si(hs, 'ats_losses_l10')
