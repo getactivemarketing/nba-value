@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import threading
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
@@ -25,14 +26,37 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
+# Global scheduler thread reference
+_scheduler_thread = None
+
+
+def _run_scheduler():
+    """Run the scheduler in a background thread."""
+    try:
+        from src.tasks.scheduler import start_scheduler
+        logger.info("Starting scheduler daemon in background thread")
+        start_scheduler()
+    except Exception as e:
+        logger.error(f"Scheduler thread crashed: {e}")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager."""
+    global _scheduler_thread
+
     # Startup
     logger.info("Starting NBA Value Betting API", environment=settings.environment)
     await init_db()
+
+    # Start scheduler in background thread (only in production)
+    if settings.is_production:
+        _scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True)
+        _scheduler_thread.start()
+        logger.info("Scheduler daemon thread started")
+
     yield
+
     # Shutdown
     logger.info("Shutting down NBA Value Betting API")
 
