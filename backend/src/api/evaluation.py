@@ -86,7 +86,7 @@ def _backtest_algorithm(days: int, min_value: float, algorithm: Literal['a', 'b'
         FROM ranked_bets rb
         JOIN game_results gr ON gr.home_team_id = rb.home_team_id
                             AND gr.away_team_id = rb.away_team_id
-                            AND gr.game_date = rb.game_date - INTERVAL '1 day'
+                            AND gr.game_date = rb.game_date
         WHERE rb.rn = 1
     ''', (cutoff, min_value))
 
@@ -248,7 +248,7 @@ def _performance_by_bucket(days: int, algorithm: Literal['a', 'b']) -> list[dict
         FROM ranked_bets rb
         JOIN game_results gr ON gr.home_team_id = rb.home_team_id
                             AND gr.away_team_id = rb.away_team_id
-                            AND gr.game_date = rb.game_date - INTERVAL '1 day'
+                            AND gr.game_date = rb.game_date
         WHERE rb.rn = 1
     ''', (cutoff,))
 
@@ -386,7 +386,7 @@ async def get_daily_results(
         FROM ranked_bets rb
         JOIN game_results gr ON gr.home_team_id = rb.home_team_id
                             AND gr.away_team_id = rb.away_team_id
-                            AND gr.game_date = rb.game_date - INTERVAL '1 day'
+                            AND gr.game_date = rb.game_date
         WHERE rb.rn = 1
     ''', (cutoff, min_value))
 
