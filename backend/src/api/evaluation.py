@@ -57,9 +57,7 @@ def _backtest_algorithm(days: int, min_value: float, algorithm: Literal['a', 'b'
     cutoff = date.today() - timedelta(days=days)
     value_col = 'algo_a_value_score' if algorithm == 'a' else 'algo_b_value_score'
 
-    # Query value scores with game results
-    # Note: games table date is offset by 1 day from game_results
-    # Use window function to get best value per game/market_type/side (not per sportsbook)
+    # Query value scores with game results - JOIN in one query to avoid N+1
     cur.execute(f'''
         WITH ranked_bets AS (
             SELECT
@@ -83,10 +81,13 @@ def _backtest_algorithm(days: int, min_value: float, algorithm: Literal['a', 'b'
             WHERE g.game_date >= %s
             AND vs.{value_col} >= %s
         )
-        SELECT value_score, p_true, raw_edge, market_type, outcome_label, line, odds_decimal,
-               home_team_id, away_team_id, game_date
-        FROM ranked_bets
-        WHERE rn = 1
+        SELECT rb.value_score, rb.p_true, rb.raw_edge, rb.market_type, rb.outcome_label,
+               rb.line, rb.odds_decimal, gr.home_score, gr.away_score
+        FROM ranked_bets rb
+        JOIN game_results gr ON gr.home_team_id = rb.home_team_id
+                            AND gr.away_team_id = rb.away_team_id
+                            AND gr.game_date = rb.game_date - INTERVAL '1 day'
+        WHERE rb.rn = 1
     ''', (cutoff, min_value))
 
     scores = cur.fetchall()
@@ -100,20 +101,8 @@ def _backtest_algorithm(days: int, min_value: float, algorithm: Literal['a', 'b'
 
     for row in scores:
         (value_score, p_true, raw_edge, market_type, outcome_label,
-         line, odds, home, away, game_date) = row
+         line, odds, home_score, away_score) = row
 
-        # Get result from game_results (date offset: games table is +1 day)
-        result_date = game_date - timedelta(days=1)
-        cur.execute('''
-            SELECT home_score, away_score FROM game_results
-            WHERE home_team_id = %s AND away_team_id = %s AND game_date = %s
-        ''', (home, away, result_date))
-
-        result = cur.fetchone()
-        if not result:
-            continue
-
-        home_score, away_score = result
         won, pushed, _ = _calculate_bet_result(market_type, outcome_label,
                                                float(line) if line else None,
                                                home_score, away_score)
@@ -231,7 +220,7 @@ def _performance_by_bucket(days: int, algorithm: Literal['a', 'b']) -> list[dict
     cutoff = date.today() - timedelta(days=days)
     value_col = 'algo_a_value_score' if algorithm == 'a' else 'algo_b_value_score'
 
-    # Get all scored bets - one per game/market_type/side (not per sportsbook)
+    # Get all scored bets with results - JOIN to avoid N+1 queries
     cur.execute(f'''
         WITH ranked_bets AS (
             SELECT
@@ -254,10 +243,13 @@ def _performance_by_bucket(days: int, algorithm: Literal['a', 'b']) -> list[dict
             JOIN games g ON g.game_id = m.game_id
             WHERE g.game_date >= %s
         )
-        SELECT value_score, p_true, market_type, outcome_label, line, odds_decimal,
-               home_team_id, away_team_id, game_date
-        FROM ranked_bets
-        WHERE rn = 1
+        SELECT rb.value_score, rb.p_true, rb.market_type, rb.outcome_label,
+               rb.line, rb.odds_decimal, gr.home_score, gr.away_score
+        FROM ranked_bets rb
+        JOIN game_results gr ON gr.home_team_id = rb.home_team_id
+                            AND gr.away_team_id = rb.away_team_id
+                            AND gr.game_date = rb.game_date - INTERVAL '1 day'
+        WHERE rb.rn = 1
     ''', (cutoff,))
 
     scores = cur.fetchall()
@@ -274,7 +266,7 @@ def _performance_by_bucket(days: int, algorithm: Literal['a', 'b']) -> list[dict
 
     for row in scores:
         (value_score, p_true, market_type, outcome_label,
-         line, odds, home, away, game_date) = row
+         line, odds, home_score, away_score) = row
 
         value = float(value_score)
 
@@ -292,18 +284,6 @@ def _performance_by_bucket(days: int, algorithm: Literal['a', 'b']) -> list[dict
         else:
             bucket = '90-100'
 
-        # Get result (date offset)
-        result_date = game_date - timedelta(days=1)
-        cur.execute('''
-            SELECT home_score, away_score FROM game_results
-            WHERE home_team_id = %s AND away_team_id = %s AND game_date = %s
-        ''', (home, away, result_date))
-
-        result = cur.fetchone()
-        if not result:
-            continue
-
-        home_score, away_score = result
         won, pushed, _ = _calculate_bet_result(market_type, outcome_label,
                                                float(line) if line else None,
                                                home_score, away_score)
@@ -376,8 +356,7 @@ async def get_daily_results(
     cutoff = date.today() - timedelta(days=days)
     value_col = 'algo_a_value_score' if algorithm == 'a' else 'algo_b_value_score'
 
-    # Get scored bets grouped by game date
-    # Use subquery to get best value per game/market_type/side (not per sportsbook)
+    # Get scored bets with results - JOIN to avoid N+1 queries
     cur.execute(f'''
         WITH ranked_bets AS (
             SELECT
@@ -401,10 +380,14 @@ async def get_daily_results(
             WHERE g.game_date >= %s
             AND vs.{value_col} >= %s
         )
-        SELECT value_score, p_true, market_type, outcome_label, line, odds_decimal,
-               home_team_id, away_team_id, game_date
-        FROM ranked_bets
-        WHERE rn = 1
+        SELECT rb.value_score, rb.p_true, rb.market_type, rb.outcome_label,
+               rb.line, rb.odds_decimal, rb.home_team_id, rb.away_team_id,
+               gr.game_date as result_date, gr.home_score, gr.away_score
+        FROM ranked_bets rb
+        JOIN game_results gr ON gr.home_team_id = rb.home_team_id
+                            AND gr.away_team_id = rb.away_team_id
+                            AND gr.game_date = rb.game_date - INTERVAL '1 day'
+        WHERE rb.rn = 1
     ''', (cutoff, min_value))
 
     scores = cur.fetchall()
@@ -414,20 +397,8 @@ async def get_daily_results(
 
     for row in scores:
         (value_score, p_true, market_type, outcome_label,
-         line, odds, home, away, game_date) = row
+         line, odds, home, away, result_date, home_score, away_score) = row
 
-        # Get result (date offset)
-        result_date = game_date - timedelta(days=1)
-        cur.execute('''
-            SELECT home_score, away_score FROM game_results
-            WHERE home_team_id = %s AND away_team_id = %s AND game_date = %s
-        ''', (home, away, result_date))
-
-        result = cur.fetchone()
-        if not result:
-            continue
-
-        home_score, away_score = result
         won, pushed, _ = _calculate_bet_result(market_type, outcome_label,
                                                float(line) if line else None,
                                                home_score, away_score)
