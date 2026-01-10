@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import os
 import threading
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
@@ -49,8 +50,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting NBA Value Betting API", environment=settings.environment)
     await init_db()
 
-    # Start scheduler in background thread (only in production)
-    if settings.is_production:
+    # Start scheduler in background thread
+    # Check for RAILWAY_ENVIRONMENT or DATABASE_URL to detect Railway deployment
+    if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("DATABASE_URL", "").startswith("postgresql://postgres:"):
         _scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True)
         _scheduler_thread.start()
         logger.info("Scheduler daemon thread started")
