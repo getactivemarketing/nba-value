@@ -321,15 +321,21 @@ async def ingest_odds_async():
         commence_time = datetime.fromisoformat(game_data["commence_time"].replace("Z", "+00:00"))
         game_id = game_data["id"]
 
+        # Convert to Eastern Time for game_date (NBA games are scheduled in ET)
+        eastern_offset = timedelta(hours=-5)
+        commence_time_et = commence_time + eastern_offset
+        game_date_et = commence_time_et.date()
+
         # Upsert game
         cur.execute('''
             INSERT INTO games (game_id, league, season, game_date, tip_time_utc, home_team_id, away_team_id, status, created_at, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (game_id) DO UPDATE SET
+                game_date = EXCLUDED.game_date,
                 tip_time_utc = EXCLUDED.tip_time_utc,
                 status = EXCLUDED.status,
                 updated_at = EXCLUDED.updated_at
-        ''', (game_id, 'NBA', 2025, commence_time.date(), commence_time, home_team, away_team, 'scheduled', now, now))
+        ''', (game_id, 'NBA', 2025, game_date_et, commence_time, home_team, away_team, 'scheduled', now, now))
         games_created += 1
 
         # Process markets
