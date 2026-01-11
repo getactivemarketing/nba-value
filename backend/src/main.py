@@ -34,10 +34,12 @@ _scheduler_thread = None
 def _run_scheduler():
     """Run the scheduler in a background thread."""
     try:
+        print("[SCHEDULER] Importing scheduler module...", flush=True)
         from src.tasks.scheduler import start_scheduler
-        logger.info("Starting scheduler daemon in background thread")
+        print("[SCHEDULER] Starting scheduler daemon...", flush=True)
         start_scheduler()
     except Exception as e:
+        print(f"[SCHEDULER] CRASHED: {e}", flush=True)
         logger.error(f"Scheduler thread crashed: {e}")
 
 
@@ -50,12 +52,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting NBA Value Betting API", environment=settings.environment)
     await init_db()
 
-    # Start scheduler in background thread
-    # Check for RAILWAY_ENVIRONMENT or DATABASE_URL to detect Railway deployment
-    if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("DATABASE_URL", "").startswith("postgresql://postgres:"):
+    # Start scheduler in background thread if DATABASE_URL is set (Railway deployment)
+    db_url = os.environ.get("DATABASE_URL", "")
+    should_start_scheduler = bool(db_url) and "postgresql://" in db_url
+    print(f"[SCHEDULER] DATABASE_URL present: {bool(db_url)}, will_start: {should_start_scheduler}", flush=True)
+    if should_start_scheduler:
         _scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True)
         _scheduler_thread.start()
-        logger.info("Scheduler daemon thread started")
+        print("[SCHEDULER] Background thread started", flush=True)
 
     yield
 
