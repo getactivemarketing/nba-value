@@ -215,7 +215,15 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
             advantage_team = home_team if injury_edge > 0 else away_team
             factors.append(f"{advantage_team} injury advantage ({abs(injury_edge):.0%})")
 
-        # Insert snapshot with both algorithm scores and total bet
+        # Get line movement data
+        line_movement = get_line_movement(cur, game_id)
+
+        # Add line movement factor if significant
+        if line_movement.get("spread_movement") and abs(line_movement["spread_movement"]) >= 0.5:
+            direction = "toward home" if line_movement["spread_movement"] < 0 else "toward away"
+            factors.append(f"Line moved {abs(line_movement['spread_movement'])} pts {direction}")
+
+        # Insert snapshot with both algorithm scores, total bet, and line movement
         cur.execute('''
             INSERT INTO prediction_snapshots (
                 game_id, snapshot_time, home_team, away_team, tip_time,
@@ -228,9 +236,12 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
                 home_injury_score, away_injury_score, home_ppg_lost, away_ppg_lost, injury_edge,
                 algo_a_value_score, algo_a_edge_score, algo_a_confidence,
                 algo_b_value_score, algo_b_combined_edge, algo_b_confidence,
-                active_algorithm
+                active_algorithm,
+                opening_spread, current_spread, spread_movement,
+                opening_total, current_total, total_movement,
+                line_movement_direction
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ''', (
             game_id, now, home_team, away_team, tip_time,
             predicted_winner, round(winner_prob * 100, 1), confidence,
@@ -260,7 +271,15 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
             best_bet_b['value_score'] if best_bet_b else None,
             best_bet_b['combined_edge'] if best_bet_b else None,
             best_bet_b['confidence'] if best_bet_b else None,
-            active_algo
+            active_algo,
+            # Line movement
+            line_movement.get("opening_spread"),
+            line_movement.get("current_spread"),
+            line_movement.get("spread_movement"),
+            line_movement.get("opening_total"),
+            line_movement.get("current_total"),
+            line_movement.get("total_movement"),
+            line_movement.get("direction"),
         ))
 
         snapshots_created += 1
@@ -268,6 +287,9 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
 
         if best_bet and best_bet['value_score'] >= 50:
             logger.info(f"  Best bet: {best_bet['team']} {best_bet['type']} {best_bet['line'] or ''} ({best_bet['value_score']}%)")
+
+        if line_movement.get("spread_movement") and abs(line_movement["spread_movement"]) >= 0.5:
+            logger.info(f"  Line move: {line_movement['opening_spread']} -> {line_movement['current_spread']} ({line_movement['direction']})")
 
     cur.close()
     conn.close()
@@ -277,6 +299,86 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
         "snapshot_time": now.isoformat(),
         "status": "completed"
     }
+
+
+def get_line_movement(cur, game_id: str) -> dict:
+    """
+    Get opening and current lines for a game to track line movement.
+
+    Returns dict with opening/current spread and total, plus movement.
+    Line movement helps identify sharp money:
+    - Spread moving toward a team often indicates sharp action
+    - Total movement shows where money is going on O/U
+    """
+    result = {
+        "opening_spread": None,
+        "current_spread": None,
+        "spread_movement": None,
+        "opening_total": None,
+        "current_total": None,
+        "total_movement": None,
+        "direction": None,
+    }
+
+    # Get opening lines (earliest snapshot for this game)
+    cur.execute('''
+        SELECT home_spread, total_line, snapshot_time
+        FROM odds_snapshots
+        WHERE game_id = %s
+        AND home_spread IS NOT NULL
+        ORDER BY snapshot_time ASC
+        LIMIT 1
+    ''', (game_id,))
+
+    opening = cur.fetchone()
+    if opening:
+        result["opening_spread"] = float(opening[0]) if opening[0] else None
+        result["opening_total"] = float(opening[1]) if opening[1] else None
+
+    # Get current lines (most recent snapshot)
+    cur.execute('''
+        SELECT home_spread, total_line, snapshot_time
+        FROM odds_snapshots
+        WHERE game_id = %s
+        AND home_spread IS NOT NULL
+        ORDER BY snapshot_time DESC
+        LIMIT 1
+    ''', (game_id,))
+
+    current = cur.fetchone()
+    if current:
+        result["current_spread"] = float(current[0]) if current[0] else None
+        result["current_total"] = float(current[1]) if current[1] else None
+
+    # Calculate movement
+    if result["opening_spread"] is not None and result["current_spread"] is not None:
+        # Movement: current - opening
+        # Positive = line moved toward away team (home got more points)
+        # Negative = line moved toward home team (home gave more points)
+        result["spread_movement"] = round(result["current_spread"] - result["opening_spread"], 1)
+
+        # Determine direction (half point or more is significant)
+        if result["spread_movement"] <= -0.5:
+            result["direction"] = "sharp_home"  # Money on home
+        elif result["spread_movement"] >= 0.5:
+            result["direction"] = "sharp_away"  # Money on away
+
+    if result["opening_total"] is not None and result["current_total"] is not None:
+        result["total_movement"] = round(result["current_total"] - result["opening_total"], 1)
+
+        # Combine with spread direction if significant total movement
+        if result["total_movement"] <= -0.5:
+            if result["direction"]:
+                result["direction"] += "_under"
+            else:
+                result["direction"] = "steam_under"
+        elif result["total_movement"] >= 0.5:
+            if result["direction"]:
+                result["direction"] += "_over"
+            else:
+                result["direction"] = "steam_over"
+
+    return result
 
 
 def get_team_stats(cur, team_id: str) -> dict:
@@ -694,6 +796,101 @@ def get_performance_summary(days: int = 7, db_url: str = None) -> dict:
     }
 
 
+def analyze_line_movement_performance(days: int = 30, db_url: str = None) -> dict:
+    """
+    Analyze how predictions perform based on line movement.
+
+    Tracks:
+    - Performance when betting WITH sharp money (following line movement)
+    - Performance when betting AGAINST sharp money (fading line movement)
+    - Performance by direction (sharp_home, sharp_away, etc.)
+
+    Returns:
+        Analysis of line movement correlation with results
+    """
+    conn = psycopg2.connect(db_url or DB_URL)
+    cur = conn.cursor()
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    cur.execute('''
+        SELECT
+            best_bet_team, home_team, away_team,
+            spread_movement, line_movement_direction,
+            best_bet_result, best_bet_profit
+        FROM prediction_snapshots
+        WHERE snapshot_time >= %s
+        AND best_bet_result IS NOT NULL
+        AND spread_movement IS NOT NULL
+    ''', (cutoff,))
+
+    results = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    if not results:
+        return {"status": "no_data", "days_analyzed": days}
+
+    # Track performance by movement direction
+    with_sharp = {"wins": 0, "losses": 0, "profit": 0}  # Betting same direction as line move
+    against_sharp = {"wins": 0, "losses": 0, "profit": 0}  # Betting against line move
+    by_direction = {}
+
+    for row in results:
+        bet_team, home, away, spread_move, direction, result, profit = row
+
+        if not spread_move or abs(float(spread_move)) < 0.5:
+            continue  # Ignore small movements
+
+        # Determine if we bet WITH or AGAINST the line movement
+        is_home_bet = (bet_team == home)
+        line_moved_to_home = (float(spread_move) < 0)  # Negative = toward home
+
+        if is_home_bet == line_moved_to_home:
+            # We bet WITH the sharp money
+            bucket = with_sharp
+        else:
+            # We bet AGAINST the sharp money
+            bucket = against_sharp
+
+        if result == 'win':
+            bucket["wins"] += 1
+            bucket["profit"] += float(profit or 0)
+        elif result == 'loss':
+            bucket["losses"] += 1
+            bucket["profit"] += float(profit or 0)
+
+        # Track by direction
+        if direction:
+            if direction not in by_direction:
+                by_direction[direction] = {"wins": 0, "losses": 0, "profit": 0, "count": 0}
+            by_direction[direction]["count"] += 1
+            if result == 'win':
+                by_direction[direction]["wins"] += 1
+                by_direction[direction]["profit"] += float(profit or 0)
+            elif result == 'loss':
+                by_direction[direction]["losses"] += 1
+                by_direction[direction]["profit"] += float(profit or 0)
+
+    def calc_stats(bucket):
+        total = bucket["wins"] + bucket["losses"]
+        return {
+            "wins": bucket["wins"],
+            "losses": bucket["losses"],
+            "win_rate": round(bucket["wins"] / total * 100, 1) if total > 0 else 0,
+            "profit": round(bucket["profit"], 2),
+            "roi": round(bucket["profit"] / (total * 100) * 100, 1) if total > 0 else 0,
+        }
+
+    return {
+        "days_analyzed": days,
+        "with_sharp_money": calc_stats(with_sharp),
+        "against_sharp_money": calc_stats(against_sharp),
+        "by_direction": {k: calc_stats(v) for k, v in by_direction.items()},
+        "status": "success"
+    }
+
+
 if __name__ == '__main__':
     import sys
 
@@ -728,6 +925,30 @@ if __name__ == '__main__':
             for bucket, stats in result.get('by_value_bucket', {}).items():
                 print(f"    {bucket}: {stats['wins']}-{stats['losses']}, ${stats['profit']:.2f}")
 
+    elif command == 'line-movement':
+        days = int(sys.argv[2]) if len(sys.argv) > 2 else 30
+        result = analyze_line_movement_performance(days=days)
+        print(f"\nLine Movement Analysis ({result['days_analyzed']} days):")
+
+        if result['status'] == 'no_data':
+            print("  No data available with line movement tracking")
+        else:
+            ws = result['with_sharp_money']
+            print(f"\n  WITH Sharp Money (following line moves):")
+            print(f"    Record: {ws['wins']}-{ws['losses']} ({ws['win_rate']}%)")
+            print(f"    Profit: ${ws['profit']:.2f} (ROI: {ws['roi']}%)")
+
+            ag = result['against_sharp_money']
+            print(f"\n  AGAINST Sharp Money (fading line moves):")
+            print(f"    Record: {ag['wins']}-{ag['losses']} ({ag['win_rate']}%)")
+            print(f"    Profit: ${ag['profit']:.2f} (ROI: {ag['roi']}%)")
+
+            if result.get('by_direction'):
+                print(f"\n  By Direction:")
+                for direction, stats in result['by_direction'].items():
+                    print(f"    {direction}: {stats['wins']}-{stats['losses']} ({stats['win_rate']}%) ${stats['profit']:.2f}")
+
     else:
         print(f"Unknown command: {command}")
+        print("Available commands: snapshot, grade, summary, line-movement")
         sys.exit(1)
