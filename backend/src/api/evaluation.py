@@ -501,7 +501,7 @@ async def get_prediction_performance(
             SUM(CASE WHEN best_bet_result = 'push' THEN 1 ELSE 0 END) as bet_pushes,
             SUM(COALESCE(best_bet_profit, 0)) as total_profit
         FROM prediction_snapshots
-        WHERE snapshot_time >= %s
+        WHERE game_date >= %s
         AND winner_correct IS NOT NULL
         AND (best_bet_value_score >= %s OR %s = 0)
     ''', (cutoff, min_value, min_value))
@@ -524,7 +524,7 @@ async def get_prediction_performance(
             SUM(CASE WHEN best_bet_result = 'loss' THEN 1 ELSE 0 END) as losses,
             SUM(COALESCE(best_bet_profit, 0)) as profit
         FROM prediction_snapshots
-        WHERE snapshot_time >= %s
+        WHERE game_date >= %s
         AND winner_correct IS NOT NULL
         AND best_bet_value_score IS NOT NULL
         GROUP BY bucket
@@ -555,9 +555,9 @@ async def get_prediction_performance(
             winner_correct, best_bet_result, best_bet_profit,
             home_injury_score, away_injury_score, injury_edge
         FROM prediction_snapshots
-        WHERE snapshot_time >= %s
+        WHERE game_date >= %s
         AND winner_correct IS NOT NULL
-        ORDER BY tip_time DESC
+        ORDER BY game_date DESC, tip_time DESC
         LIMIT 50
     ''', (cutoff,))
 
