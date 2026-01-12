@@ -43,6 +43,56 @@ TEAM_AVERAGES = {
 }
 
 
+def calculate_star_multiplier(ppg: float, apg: float, position: str) -> float:
+    """
+    Calculate star player multiplier based on production and role.
+
+    Star players have outsized impact beyond their raw stats because:
+    1. Usage in crunch time - stars get the ball in big moments
+    2. Defensive attention - teams scheme around them, opening teammates
+    3. Gravity - their presence creates spacing and open shots
+    4. Leadership - experience and confidence in pressure situations
+
+    Args:
+        ppg: Points per game
+        apg: Assists per game
+        position: Player position (G, F, C)
+
+    Returns:
+        Multiplier from 1.0 (role player) to 1.6 (superstar)
+    """
+    # Base multiplier starts at 1.0
+    multiplier = 1.0
+
+    # PPG-based star impact
+    # - 25+ PPG = superstar (1.4x)
+    # - 20-25 PPG = star (1.25x)
+    # - 15-20 PPG = solid starter (1.1x)
+    # - <15 PPG = role player (1.0x)
+    if ppg >= 25:
+        multiplier += 0.40  # Superstar impact
+    elif ppg >= 20:
+        multiplier += 0.25  # Star impact
+    elif ppg >= 15:
+        multiplier += 0.10  # Quality starter impact
+
+    # Playmakers get extra weight - point guards orchestrate offense
+    # - 8+ APG = elite playmaker (+0.15)
+    # - 5-8 APG = good playmaker (+0.08)
+    if apg >= 8:
+        multiplier += 0.15
+    elif apg >= 5:
+        multiplier += 0.08
+
+    # Position scarcity bonus
+    # - Guards (especially PGs) harder to replace at high level
+    # - Their ball-handling/decision-making is scarce
+    if position == 'G' and apg >= 5:
+        multiplier += 0.05
+
+    return min(1.60, multiplier)  # Cap at 1.6x
+
+
 @dataclass
 class PlayerInjuryImpact:
     """Individual player's injury impact based on their stats."""
@@ -66,24 +116,34 @@ class PlayerInjuryImpact:
     recency_weight: float = 1.0  # 1.0 = full impact, decays over time
 
     @property
+    def star_multiplier(self) -> float:
+        """Get star player multiplier based on production level."""
+        return calculate_star_multiplier(self.ppg, self.apg, self.position)
+
+    @property
+    def is_star(self) -> bool:
+        """Is this player considered a star (20+ PPG or elite playmaker)?"""
+        return self.ppg >= 20 or (self.apg >= 8 and self.ppg >= 15)
+
+    @property
     def scoring_impact(self) -> float:
-        """PPG lost, weighted by recency."""
-        return self.ppg * self.recency_weight * self.status_weight
+        """PPG lost, weighted by recency and star factor."""
+        return self.ppg * self.recency_weight * self.status_weight * self.star_multiplier
 
     @property
     def rebounding_impact(self) -> float:
-        """RPG lost, weighted by recency."""
-        return self.rpg * self.recency_weight * self.status_weight
+        """RPG lost, weighted by recency and star factor."""
+        return self.rpg * self.recency_weight * self.status_weight * self.star_multiplier
 
     @property
     def playmaking_impact(self) -> float:
-        """APG lost, weighted by recency."""
-        return self.apg * self.recency_weight * self.status_weight
+        """APG lost, weighted by recency and star factor."""
+        return self.apg * self.recency_weight * self.status_weight * self.star_multiplier
 
     @property
     def defense_impact(self) -> float:
-        """(SPG + BPG) lost, weighted by recency."""
-        return (self.spg + self.bpg) * self.recency_weight * self.status_weight
+        """(SPG + BPG) lost, weighted by recency and star factor."""
+        return (self.spg + self.bpg) * self.recency_weight * self.status_weight * self.star_multiplier
 
     @property
     def minutes_impact(self) -> float:
@@ -96,11 +156,11 @@ class PlayerInjuryImpact:
         if self.status == "Out":
             return 1.0
         elif self.status == "Doubtful":
-            return 0.75
+            return 0.80
         elif self.status in ("Questionable", "Day-To-Day"):
-            return 0.4
+            return 0.50  # Increased from 0.4 - Q players miss more often
         elif self.status == "Probable":
-            return 0.1
+            return 0.15
         return 0.0
 
 
@@ -441,7 +501,7 @@ async def get_game_injury_context(
 # CLI test
 if __name__ == "__main__":
     async def main():
-        print("Fetching stats-based injury reports...\n")
+        print("Fetching stats-based injury reports (with star player weighting)...\n")
         reports = await get_all_team_injury_reports()
 
         # Sort by injury score
@@ -451,13 +511,17 @@ if __name__ == "__main__":
             reverse=True
         )
 
-        print("Teams by Injury Impact (Stats-Based):")
+        print("Teams by Injury Impact (Stats-Based + Star Weighting):")
         print("=" * 80)
 
         for report in sorted_teams:
             if report.injury_score > 0.05:  # Only show teams with meaningful injuries
+                # Count star players out
+                stars_out = [p for p in report.injured_players if p.is_star and p.status == "Out"]
+                star_label = f" [{len(stars_out)} STAR{'S' if len(stars_out) != 1 else ''} OUT]" if stars_out else ""
+
                 print(f"\n{report.team_abbrev}: spread={report.spread_injury_score:.2f}, "
-                      f"totals={report.totals_injury_score:.2f}")
+                      f"totals={report.totals_injury_score:.2f}{star_label}")
                 print(f"  Lost: {report.total_ppg_lost:.1f} PPG, {report.total_rpg_lost:.1f} RPG, "
                       f"{report.total_apg_lost:.1f} APG, {report.total_defense_lost:.1f} D")
 
@@ -466,8 +530,10 @@ if __name__ == "__main__":
                                     key=lambda p: p.scoring_impact, reverse=True)[:3]
                 for p in top_players:
                     if p.ppg > 0:
+                        star_marker = " *STAR*" if p.is_star else ""
+                        mult_str = f" [x{p.star_multiplier:.2f}]" if p.star_multiplier > 1.0 else ""
                         print(f"    {p.player_name} ({p.status}): {p.ppg:.1f}ppg, "
-                              f"{p.rpg:.1f}rpg, {p.apg:.1f}apg")
+                              f"{p.rpg:.1f}rpg, {p.apg:.1f}apg{mult_str}{star_marker}")
 
         # Example game context
         print("\n" + "=" * 80)
