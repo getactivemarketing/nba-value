@@ -111,6 +111,7 @@ class ScoringService:
         self,
         mov_model=None,  # MOVModel or RidgeMOVModel
         calibration_layer: CalibrationLayer | None = None,
+        market_regression_weight: float = 0.40,  # How much to weight market vs model
     ):
         """
         Initialize scoring service.
@@ -118,9 +119,12 @@ class ScoringService:
         Args:
             mov_model: Pre-trained MOV model (uses baseline if None)
             calibration_layer: Calibration layer (uses identity if None)
+            market_regression_weight: Weight for market-implied MOV (0.0 = pure model, 1.0 = pure market)
+                                     Default 0.40 means 60% model, 40% market
         """
         self.mov_model = mov_model if mov_model is not None else MOVModel()
         self.calibration = calibration_layer or CalibrationLayer()
+        self.market_regression_weight = market_regression_weight
 
     def score_market(self, input_data: ScoringInput) -> ScoringResult:
         """
@@ -145,6 +149,38 @@ class ScoringService:
 
         # Step 1: Get MOV prediction
         mov_pred = self.mov_model.predict(features)
+
+        # Step 1b: Apply market regression for spread bets
+        # This blends our model's MOV with the market-implied MOV to reduce overconfidence
+        # Market implied MOV from spread: if home is +9.5 underdog, market implies home MOV = -9.5
+        if input_data.market_type == "spread" and input_data.line is not None:
+            # Get market-implied MOV from the home perspective
+            # home_spread line: positive = home is underdog, market thinks home loses by that much
+            # away_spread line: negative = away is favorite, market thinks home loses by that much
+            is_home = "home" in input_data.outcome_label.lower()
+            if is_home:
+                market_implied_mov = -input_data.line  # home +9.5 means market expects -9.5 MOV
+            else:
+                market_implied_mov = input_data.line  # away -9.5 means market expects -9.5 MOV for home
+
+            # Blend model prediction with market expectation
+            original_mov = mov_pred.predicted_mov
+            blended_mov = (
+                (1 - self.market_regression_weight) * mov_pred.predicted_mov +
+                self.market_regression_weight * market_implied_mov
+            )
+
+            # Create adjusted MOV prediction
+            from dataclasses import replace
+            mov_pred = replace(mov_pred, predicted_mov=blended_mov)
+
+            logger.debug(
+                "Applied market regression",
+                original_mov=original_mov,
+                market_implied_mov=market_implied_mov,
+                blended_mov=blended_mov,
+                weight=self.market_regression_weight,
+            )
 
         # Step 2: Convert MOV to probability based on market type
         p_raw = self._mov_to_probability(
@@ -575,5 +611,6 @@ def get_scoring_service() -> ScoringService:
         _scoring_service = ScoringService(
             mov_model=mov_model,
             calibration_layer=calibration,
+            market_regression_weight=0.50,  # 50% model, 50% market - conservative blend
         )
     return _scoring_service

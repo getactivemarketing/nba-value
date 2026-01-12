@@ -117,6 +117,8 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
         best_bet_b = None  # Best bet according to Algorithm B
         best_score_a = 0
         best_score_b = 0
+        best_total = None  # Best total (over/under) bet
+        best_total_score = 0
         active_algo = 'b'  # Default
 
         for row in scores:
@@ -156,6 +158,17 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
                     "odds": float(odds) if odds else None,
                     "p_true": float(p_true) if p_true else 0,
                     "p_market": float(p_market) if p_market else 0,
+                }
+
+            # Track best total bet separately (using algo_a for consistency)
+            if mtype == 'total' and algo_a_score and float(algo_a_score) > best_total_score:
+                best_total_score = float(algo_a_score)
+                best_total = {
+                    "direction": outcome.replace('_', ''),  # "over" or "under"
+                    "line": float(line) if line else None,
+                    "value_score": int(algo_a_score),
+                    "edge": float(algo_a_edge) if algo_a_edge else 0,
+                    "odds": float(odds) if odds else None,
                 }
 
             # Get moneyline probabilities
@@ -202,20 +215,22 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
             advantage_team = home_team if injury_edge > 0 else away_team
             factors.append(f"{advantage_team} injury advantage ({abs(injury_edge):.0%})")
 
-        # Insert snapshot with both algorithm scores
+        # Insert snapshot with both algorithm scores and total bet
         cur.execute('''
             INSERT INTO prediction_snapshots (
                 game_id, snapshot_time, home_team, away_team, tip_time,
                 predicted_winner, winner_probability, winner_confidence,
                 best_bet_type, best_bet_team, best_bet_line,
                 best_bet_value_score, best_bet_edge, best_bet_odds,
+                best_total_direction, best_total_line, best_total_value_score,
+                best_total_edge, best_total_odds,
                 factors,
                 home_injury_score, away_injury_score, home_ppg_lost, away_ppg_lost, injury_edge,
                 algo_a_value_score, algo_a_edge_score, algo_a_confidence,
                 algo_b_value_score, algo_b_combined_edge, algo_b_confidence,
                 active_algorithm
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                      %s, %s, %s, %s, %s, %s, %s)
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ''', (
             game_id, now, home_team, away_team, tip_time,
             predicted_winner, round(winner_prob * 100, 1), confidence,
@@ -225,6 +240,12 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
             best_bet['value_score'] if best_bet else None,
             best_bet.get('edge') or best_bet.get('edge_score') or best_bet.get('combined_edge') if best_bet else None,
             best_bet['odds'] if best_bet else None,
+            # Total bet fields
+            best_total['direction'] if best_total else None,
+            best_total['line'] if best_total else None,
+            best_total['value_score'] if best_total else None,
+            best_total['edge'] if best_total else None,
+            best_total['odds'] if best_total else None,
             json.dumps(factors),
             round(home_injury_score, 2),
             round(away_injury_score, 2),
@@ -403,7 +424,8 @@ def grade_predictions(db_url: str = None) -> dict:
             gr.actual_winner, gr.home_score, gr.away_score,
             gr.closing_spread, gr.closing_total, gr.spread_result, gr.total_result,
             ps.home_team, ps.away_team,
-            ps.algo_a_value_score, ps.algo_b_value_score, ps.active_algorithm
+            ps.algo_a_value_score, ps.algo_b_value_score, ps.active_algorithm,
+            ps.best_total_direction, ps.best_total_line, ps.best_total_odds
         FROM prediction_snapshots ps
         JOIN game_results gr ON ps.game_id = gr.game_id
         WHERE ps.winner_correct IS NULL
@@ -433,10 +455,25 @@ def grade_predictions(db_url: str = None) -> dict:
          actual_winner, home_score, away_score,
          closing_spread, closing_total, spread_result, total_result,
          home_team, away_team,
-         algo_a_value, algo_b_value, active_algo) = row
+         algo_a_value, algo_b_value, active_algo,
+         total_direction, total_line, total_odds) = row
 
         # Grade winner prediction
         winner_correct = (predicted_winner == actual_winner)
+
+        # Grade total bet if present
+        total_bet_result = None
+        total_bet_profit = None
+        if total_direction and total_result:
+            if total_result == 'push':
+                total_bet_result = 'push'
+                total_bet_profit = 0
+            elif total_direction == total_result:  # 'over' == 'over' or 'under' == 'under'
+                total_bet_result = 'win'
+                total_bet_profit = 90.91 if total_odds is None else 100 * (float(total_odds) - 1)
+            else:
+                total_bet_result = 'loss'
+                total_bet_profit = -100
 
         # Grade the primary best bet (from active algorithm)
         bet_result, bet_profit = grade_bet(
@@ -470,7 +507,7 @@ def grade_predictions(db_url: str = None) -> dict:
         else:
             algo_b_stats["pushes"] += 1
 
-        # Update the snapshot with both algorithm results
+        # Update the snapshot with both algorithm results and total bet
         cur.execute('''
             UPDATE prediction_snapshots SET
                 actual_winner = %s,
@@ -481,6 +518,8 @@ def grade_predictions(db_url: str = None) -> dict:
                 winner_correct = %s,
                 best_bet_result = %s,
                 best_bet_profit = %s,
+                best_total_result = %s,
+                best_total_profit = %s,
                 algo_a_bet_result = %s,
                 algo_b_bet_result = %s,
                 algo_a_profit = %s,
@@ -490,6 +529,7 @@ def grade_predictions(db_url: str = None) -> dict:
             actual_winner, home_score, away_score,
             closing_spread, closing_total,
             winner_correct, bet_result, bet_profit,
+            total_bet_result, total_bet_profit,
             algo_a_result, algo_b_result,
             algo_a_profit, algo_b_profit,
             pred_id
