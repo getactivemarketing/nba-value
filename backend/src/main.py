@@ -53,8 +53,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
 
     # Start scheduler in background thread if DATABASE_URL is set (Railway deployment)
+    # Note: Railway uses postgres:// format, SQLAlchemy accepts postgresql://
     db_url = os.environ.get("DATABASE_URL", "")
-    should_start_scheduler = bool(db_url) and "postgresql://" in db_url
+    should_start_scheduler = bool(db_url) and ("postgresql://" in db_url or "postgres://" in db_url)
     print(f"[SCHEDULER] DATABASE_URL present: {bool(db_url)}, will_start: {should_start_scheduler}", flush=True)
     if should_start_scheduler:
         _scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True)
