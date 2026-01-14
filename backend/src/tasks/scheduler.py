@@ -389,18 +389,223 @@ def run_ingest():
     return result
 
 
+def run_scoring_sync() -> dict:
+    """
+    Synchronous scoring using psycopg2 directly.
+
+    This avoids the asyncio event loop conflicts that occur when running
+    async SQLAlchemy code from a background thread.
+    """
+    from src.services.scoring.scorer import ScoringService, ScoringInput, get_scoring_service
+
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(hours=24)
+    today = now.date()
+
+    conn = psycopg2.connect(DB_URL)
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    markets_scored = 0
+    errors = 0
+
+    # Fetch injury reports
+    try:
+        injury_reports = asyncio.run(get_all_team_injury_reports())
+        logger.info(f"Fetched injury reports for {len(injury_reports)} teams")
+    except Exception as e:
+        logger.warning(f"Failed to fetch injury reports: {e}")
+        injury_reports = {}
+
+    scoring_service = get_scoring_service()
+
+    # Get upcoming games
+    cur.execute('''
+        SELECT game_id, home_team_id, away_team_id, tip_time_utc
+        FROM games
+        WHERE tip_time_utc > %s AND tip_time_utc < %s AND status = 'scheduled'
+        ORDER BY tip_time_utc
+    ''', (now, cutoff))
+    games = cur.fetchall()
+
+    logger.info(f"Found {len(games)} games to score")
+
+    for game_id, home_team, away_team, tip_time in games:
+        try:
+            # Get team stats
+            def get_team_stats_dict(team_id):
+                cur.execute('''
+                    SELECT net_rtg_10, net_rtg_season, ppg_10, ppg_season,
+                           opp_ppg_10, opp_ppg_season, days_rest, is_back_to_back, win_pct_10
+                    FROM team_stats
+                    WHERE team_id = %s AND stat_date <= %s
+                    ORDER BY stat_date DESC LIMIT 1
+                ''', (team_id, today))
+                row = cur.fetchone()
+                if row:
+                    return {
+                        'net_rtg_10': float(row[0]) if row[0] else 0.0,
+                        'net_rtg_season': float(row[1]) if row[1] else 0.0,
+                        'ppg_10': float(row[2]) if row[2] else 110.0,
+                        'ppg_season': float(row[3]) if row[3] else 110.0,
+                        'opp_ppg_10': float(row[4]) if row[4] else 110.0,
+                        'opp_ppg_season': float(row[5]) if row[5] else 110.0,
+                        'days_rest': row[6] if row[6] else 1,
+                        'is_b2b': row[7] or False,
+                        'win_pct_10': float(row[8]) if row[8] else 0.5,
+                    }
+                return None
+
+            home_stats = get_team_stats_dict(home_team)
+            away_stats = get_team_stats_dict(away_team)
+
+            # Build feature dicts
+            def stats_to_features(stats, prefix):
+                if not stats:
+                    return {f"{prefix}_net_rtg_10": 0.0, f"{prefix}_rest_days": 1, f"{prefix}_b2b": 0, f"{prefix}_win_pct_10": 0.5}
+                return {
+                    f"{prefix}_net_rtg_10": stats['net_rtg_10'],
+                    f"{prefix}_net_rtg_season": stats['net_rtg_season'],
+                    f"{prefix}_ppg_10": stats['ppg_10'],
+                    f"{prefix}_ppg_season": stats['ppg_season'],
+                    f"{prefix}_opp_ppg_10": stats['opp_ppg_10'],
+                    f"{prefix}_opp_ppg_season": stats['opp_ppg_season'],
+                    f"{prefix}_rest_days": stats['days_rest'],
+                    f"{prefix}_b2b": 1 if stats['is_b2b'] else 0,
+                    f"{prefix}_win_pct_10": stats['win_pct_10'],
+                }
+
+            home_features = stats_to_features(home_stats, "home")
+            away_features = stats_to_features(away_stats, "away")
+
+            # Get injury scores
+            home_injury = injury_reports.get(home_team)
+            away_injury = injury_reports.get(away_team)
+            home_injury_score = home_injury.spread_injury_score if home_injury else 0.0
+            away_injury_score = away_injury.spread_injury_score if away_injury else 0.0
+            home_totals_injury = home_injury.totals_injury_score if home_injury else 0.0
+            away_totals_injury = away_injury.totals_injury_score if away_injury else 0.0
+
+            # Get markets for this game
+            cur.execute('''
+                SELECT market_id, market_type, outcome_label, line, odds_decimal, book
+                FROM markets
+                WHERE game_id = %s AND is_active = true
+            ''', (game_id,))
+            markets = cur.fetchall()
+
+            # Delete old predictions/scores for these markets
+            market_ids = [m[0] for m in markets]
+            if market_ids:
+                cur.execute('DELETE FROM value_scores WHERE market_id = ANY(%s)', (market_ids,))
+                cur.execute('DELETE FROM model_predictions WHERE market_id = ANY(%s)', (market_ids,))
+
+            # Build odds lookup for de-vigging
+            odds_lookup = {}
+            for m in markets:
+                odds_lookup[(m[1], m[2], m[5])] = float(m[4])
+
+            for market_id, market_type, outcome_label, line, odds_decimal, book in markets:
+                try:
+                    # Find opposite odds
+                    opposite_label = outcome_label.lower()
+                    if 'home' in opposite_label:
+                        opposite_label = opposite_label.replace('home', 'away')
+                    elif 'away' in opposite_label:
+                        opposite_label = opposite_label.replace('away', 'home')
+                    elif 'over' in opposite_label:
+                        opposite_label = opposite_label.replace('over', 'under')
+                    elif 'under' in opposite_label:
+                        opposite_label = opposite_label.replace('under', 'over')
+                    opposite_odds = odds_lookup.get((market_type, opposite_label, book), float(odds_decimal))
+
+                    scoring_input = ScoringInput(
+                        game_id=game_id,
+                        market_type=market_type,
+                        outcome_label=outcome_label,
+                        line=float(line) if line else None,
+                        odds_decimal=float(odds_decimal),
+                        opposite_odds=opposite_odds,
+                        home_features=home_features,
+                        away_features=away_features,
+                        tip_time=tip_time,
+                        book=book,
+                        home_injury_score=home_injury_score,
+                        away_injury_score=away_injury_score,
+                        home_totals_injury=home_totals_injury,
+                        away_totals_injury=away_totals_injury,
+                    )
+
+                    score_result = scoring_service.score_market(scoring_input)
+
+                    # Get edge band
+                    edge = score_result.raw_edge
+                    if edge < 0:
+                        edge_band = "negative"
+                    elif edge < 0.02:
+                        edge_band = "0-2%"
+                    elif edge < 0.05:
+                        edge_band = "2-5%"
+                    elif edge < 0.10:
+                        edge_band = "5-10%"
+                    else:
+                        edge_band = "10%+"
+
+                    # Insert prediction
+                    cur.execute('''
+                        INSERT INTO model_predictions (market_id, prediction_time, p_ensemble_mean, p_ensemble_std,
+                            p_true, p_market, raw_edge, edge_band, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING prediction_id
+                    ''', (market_id, score_result.calc_time, score_result.p_raw, 0.05,
+                          score_result.p_calibrated, score_result.p_market, score_result.raw_edge, edge_band, now))
+                    prediction_id = cur.fetchone()[0]
+
+                    # Insert value score
+                    cur.execute('''
+                        INSERT INTO value_scores (prediction_id, market_id, calc_time,
+                            algo_a_edge_score, algo_a_confidence, algo_a_market_quality, algo_a_value_score,
+                            algo_b_combined_edge, algo_b_confidence, algo_b_market_quality, algo_b_value_score,
+                            active_algorithm, time_to_tip_minutes, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ''', (prediction_id, market_id, score_result.calc_time,
+                          score_result.algo_a.edge_score, score_result.algo_a_confidence.final_multiplier,
+                          score_result.market_quality.final_score, score_result.algo_a.value_score,
+                          score_result.algo_b.combined_edge, score_result.algo_b_confidence.final_multiplier,
+                          score_result.market_quality.final_score, score_result.algo_b.value_score,
+                          'A', score_result.time_to_tip_minutes, now))
+
+                    markets_scored += 1
+                except Exception as e:
+                    logger.error(f"Failed to score market {market_id}: {e}")
+                    errors += 1
+
+        except Exception as e:
+            logger.error(f"Failed to process game {game_id}: {e}")
+            errors += 1
+
+    cur.close()
+    conn.close()
+
+    return {"markets_scored": markets_scored, "errors": errors, "games_processed": len(games), "status": "completed"}
+
+
+def get_all_team_injury_reports():
+    """Wrapper to fetch injury reports."""
+    from src.services.injuries import get_all_team_injury_reports as _get_reports
+    return _get_reports()
+
+
 def run_scoring():
     """Run the scoring pipeline."""
     logger.info("Running scoring pipeline...")
     try:
-        # Import and run scoring
-        from src.tasks.scoring import _run_pre_game_scoring_async
-        result = asyncio.run(_run_pre_game_scoring_async())
+        result = run_scoring_sync()
         logger.info(f"Scoring complete: {result}")
         return result
-    except ImportError:
-        logger.warning("Could not import scoring module, running minimal scoring")
-        return {"status": "skipped"}
+    except Exception as e:
+        logger.error(f"Scoring failed: {e}")
+        return {"status": "failed", "error": str(e)}
 
 
 def run_snapshot():
