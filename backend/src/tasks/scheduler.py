@@ -34,6 +34,16 @@ from src.tasks.prediction_tracker import snapshot_predictions, grade_predictions
 
 logger = structlog.get_logger()
 
+# Track last run times for health monitoring
+_last_run_times: dict[str, datetime] = {}
+
+
+def log_task(message: str, **kwargs):
+    """Log scheduler task output in a way that's visible in Railway logs."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    extra = " ".join(f"{k}={v}" for k, v in kwargs.items()) if kwargs else ""
+    print(f"[SCHEDULER] {timestamp} | {message} {extra}", flush=True)
+
 # Use environment variable or fallback to Railway URL
 DB_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway')
 
@@ -290,9 +300,10 @@ async def update_team_stats_async() -> dict:
 
 def run_team_stats():
     """Update team statistics (rest, B2B, records)."""
-    logger.info("Running team stats update...")
+    log_task("Running team stats update...")
     result = asyncio.run(update_team_stats_async())
-    logger.info(f"Team stats update complete: {result}")
+    log_task("Team stats complete", **result)
+    _last_run_times['team_stats'] = datetime.now(timezone.utc)
     return result
 
 
@@ -383,9 +394,10 @@ async def ingest_odds_async():
 
 def run_ingest():
     """Sync wrapper for odds ingestion."""
-    logger.info("Running odds ingestion...")
+    log_task("Running odds ingestion...")
     result = asyncio.run(ingest_odds_async())
-    logger.info(f"Ingestion complete: {result}")
+    log_task("Ingestion complete", **result)
+    _last_run_times['ingest'] = datetime.now(timezone.utc)
     return result
 
 
@@ -598,13 +610,14 @@ def get_all_team_injury_reports():
 
 def run_scoring():
     """Run the scoring pipeline."""
-    logger.info("Running scoring pipeline...")
+    log_task("Running scoring pipeline...")
     try:
         result = run_scoring_sync()
-        logger.info(f"Scoring complete: {result}")
+        log_task("Scoring complete", **result)
+        _last_run_times['scoring'] = datetime.now(timezone.utc)
         return result
     except Exception as e:
-        logger.error(f"Scoring failed: {e}")
+        log_task(f"Scoring FAILED: {e}")
         return {"status": "failed", "error": str(e)}
 
 
@@ -614,33 +627,36 @@ def run_snapshot():
     This runs every 15 minutes to capture predictions ~30 mins before tip-off.
     The NOT EXISTS check in snapshot_predictions prevents re-snapshotting.
     """
-    logger.info("Running prediction snapshot...")
+    log_task("Running prediction snapshot...")
     # Use 0.75 hours (45 min) window - combined with 15 min schedule,
     # games get snapshotted 15-45 min before tip-off
     result = snapshot_predictions(hours_ahead=0.75)
-    logger.info(f"Snapshot complete: {result}")
+    log_task("Snapshot complete", **result)
+    _last_run_times['snapshot'] = datetime.now(timezone.utc)
     return result
 
 
 def run_grading():
     """Grade completed predictions."""
-    logger.info("Running prediction grading...")
+    log_task("Running prediction grading...")
     result = grade_predictions()
-    logger.info(f"Grading complete: {result}")
+    log_task("Grading complete", **result)
+    _last_run_times['grading'] = datetime.now(timezone.utc)
     return result
 
 
 def run_results_sync():
     """Sync game results from completed games, then grade predictions."""
-    logger.info("Running results sync...")
+    log_task("Running results sync...")
     result = sync_game_results()
-    logger.info(f"Results sync complete: {result}")
+    log_task("Results sync complete", **result)
+    _last_run_times['results_sync'] = datetime.now(timezone.utc)
 
     # Automatically grade predictions after syncing results
     if result.get('results_created', 0) > 0 or result.get('games_synced', 0) > 0:
-        logger.info("New results found, running prediction grading...")
+        log_task("New results found, running prediction grading...")
         grade_result = grade_predictions()
-        logger.info(f"Grading complete: {grade_result}")
+        log_task("Grading complete", **grade_result)
         result['grading'] = grade_result
 
     return result
@@ -993,8 +1009,8 @@ def backfill_game_results_with_odds() -> dict:
 
 def run_all():
     """Run all tasks once."""
-    logger.info("=" * 50)
-    logger.info("Running all scheduled tasks...")
+    log_task("=" * 50)
+    log_task("Running all scheduled tasks...")
 
     run_team_stats()  # Update rest/B2B data first
     time.sleep(2)
@@ -1013,13 +1029,68 @@ def run_all():
 
     run_results_sync()
 
-    logger.info("All tasks complete")
-    logger.info("=" * 50)
+    log_task("All tasks complete")
+    log_task("=" * 50)
+
+
+def get_scheduler_status() -> dict:
+    """Get current scheduler status for health monitoring."""
+    now = datetime.now(timezone.utc)
+
+    status = {
+        "running": True,
+        "last_run_times": {},
+        "task_health": {},
+    }
+
+    # Expected intervals in minutes
+    expected_intervals = {
+        "team_stats": 120,  # 2 hours
+        "ingest": 30,
+        "scoring": 30,
+        "snapshot": 15,
+        "grading": 60,
+        "results_sync": 120,
+    }
+
+    for task, last_run in _last_run_times.items():
+        minutes_ago = (now - last_run).total_seconds() / 60
+        status["last_run_times"][task] = {
+            "last_run": last_run.isoformat(),
+            "minutes_ago": round(minutes_ago, 1),
+        }
+
+        # Check if task is overdue (2x expected interval)
+        expected = expected_intervals.get(task, 60)
+        is_healthy = minutes_ago < expected * 2
+        status["task_health"][task] = "healthy" if is_healthy else "overdue"
+
+    # Overall health
+    overdue_tasks = [t for t, h in status["task_health"].items() if h == "overdue"]
+    status["healthy"] = len(overdue_tasks) == 0
+    status["overdue_tasks"] = overdue_tasks
+
+    return status
+
+
+def run_health_check():
+    """Check scheduler health and log warnings for overdue tasks."""
+    status = get_scheduler_status()
+
+    if status["overdue_tasks"]:
+        log_task(f"WARNING: Overdue tasks detected: {status['overdue_tasks']}")
+        for task in status["overdue_tasks"]:
+            task_info = status["last_run_times"].get(task, {})
+            minutes_ago = task_info.get("minutes_ago", "unknown")
+            log_task(f"  - {task}: last ran {minutes_ago} minutes ago")
+    else:
+        # Log a heartbeat every hour to confirm scheduler is alive
+        log_task("Health check: All tasks running normally", tasks=len(_last_run_times))
 
 
 def start_scheduler():
     """Start the scheduler loop."""
-    logger.info("Starting prediction tracker scheduler...")
+    log_task("Starting prediction tracker scheduler...")
 
     # Run all tasks immediately on startup
     run_all()
@@ -1031,14 +1102,16 @@ def start_scheduler():
     schedule.every(15).minutes.do(run_snapshot)  # Capture predictions ~30 min before tip
     schedule.every(1).hour.do(run_grading)
     schedule.every(2).hours.do(run_results_sync)
+    schedule.every(1).hour.do(run_health_check)  # Monitor task health
 
-    logger.info("Scheduler configured:")
-    logger.info("  - Team stats update: every 2 hours")
-    logger.info("  - Odds ingestion: every 30 minutes")
-    logger.info("  - Scoring: every 30 minutes")
-    logger.info("  - Prediction snapshot: every 15 minutes (45 min window)")
-    logger.info("  - Grading: every 1 hour")
-    logger.info("  - Results sync: every 2 hours")
+    log_task("Scheduler configured:")
+    log_task("  - Team stats update: every 2 hours")
+    log_task("  - Odds ingestion: every 30 minutes")
+    log_task("  - Scoring: every 30 minutes")
+    log_task("  - Prediction snapshot: every 15 minutes (45 min window)")
+    log_task("  - Grading: every 1 hour")
+    log_task("  - Results sync: every 2 hours")
+    log_task("  - Health monitoring: every 1 hour")
 
     while True:
         schedule.run_pending()
