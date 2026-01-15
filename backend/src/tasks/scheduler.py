@@ -301,10 +301,15 @@ async def update_team_stats_async() -> dict:
 def run_team_stats():
     """Update team statistics (rest, B2B, records)."""
     log_task("Running team stats update...")
-    result = asyncio.run(update_team_stats_async())
-    log_task("Team stats complete", **result)
-    _last_run_times['team_stats'] = datetime.now(timezone.utc)
-    return result
+    try:
+        result = asyncio.run(update_team_stats_async())
+        log_task("Team stats complete", **result)
+        _last_run_times['team_stats'] = datetime.now(timezone.utc)
+        return result
+    except Exception as e:
+        log_task(f"Team stats FAILED: {e}")
+        _last_run_times['team_stats'] = datetime.now(timezone.utc)  # Track attempt
+        return {"status": "failed", "error": str(e)}
 
 
 async def ingest_odds_async():
@@ -395,10 +400,15 @@ async def ingest_odds_async():
 def run_ingest():
     """Sync wrapper for odds ingestion."""
     log_task("Running odds ingestion...")
-    result = asyncio.run(ingest_odds_async())
-    log_task("Ingestion complete", **result)
-    _last_run_times['ingest'] = datetime.now(timezone.utc)
-    return result
+    try:
+        result = asyncio.run(ingest_odds_async())
+        log_task("Ingestion complete", **result)
+        _last_run_times['ingest'] = datetime.now(timezone.utc)
+        return result
+    except Exception as e:
+        log_task(f"Ingestion FAILED: {e}")
+        _last_run_times['ingest'] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
 
 
 def run_scoring_sync() -> dict:
@@ -628,38 +638,53 @@ def run_snapshot():
     The NOT EXISTS check in snapshot_predictions prevents re-snapshotting.
     """
     log_task("Running prediction snapshot...")
-    # Use 0.75 hours (45 min) window - combined with 15 min schedule,
-    # games get snapshotted 15-45 min before tip-off
-    result = snapshot_predictions(hours_ahead=0.75)
-    log_task("Snapshot complete", **result)
-    _last_run_times['snapshot'] = datetime.now(timezone.utc)
-    return result
+    try:
+        # Use 0.75 hours (45 min) window - combined with 15 min schedule,
+        # games get snapshotted 15-45 min before tip-off
+        result = snapshot_predictions(hours_ahead=0.75)
+        log_task("Snapshot complete", **result)
+        _last_run_times['snapshot'] = datetime.now(timezone.utc)
+        return result
+    except Exception as e:
+        log_task(f"Snapshot FAILED: {e}")
+        _last_run_times['snapshot'] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
 
 
 def run_grading():
     """Grade completed predictions."""
     log_task("Running prediction grading...")
-    result = grade_predictions()
-    log_task("Grading complete", **result)
-    _last_run_times['grading'] = datetime.now(timezone.utc)
-    return result
+    try:
+        result = grade_predictions()
+        log_task("Grading complete", **result)
+        _last_run_times['grading'] = datetime.now(timezone.utc)
+        return result
+    except Exception as e:
+        log_task(f"Grading FAILED: {e}")
+        _last_run_times['grading'] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
 
 
 def run_results_sync():
     """Sync game results from completed games, then grade predictions."""
     log_task("Running results sync...")
-    result = sync_game_results()
-    log_task("Results sync complete", **result)
-    _last_run_times['results_sync'] = datetime.now(timezone.utc)
+    try:
+        result = sync_game_results()
+        log_task("Results sync complete", **result)
+        _last_run_times['results_sync'] = datetime.now(timezone.utc)
 
-    # Automatically grade predictions after syncing results
-    if result.get('results_created', 0) > 0 or result.get('games_synced', 0) > 0:
-        log_task("New results found, running prediction grading...")
-        grade_result = grade_predictions()
-        log_task("Grading complete", **grade_result)
-        result['grading'] = grade_result
+        # Automatically grade predictions after syncing results
+        if result.get('results_created', 0) > 0 or result.get('games_synced', 0) > 0:
+            log_task("New results found, running prediction grading...")
+            grade_result = grade_predictions()
+            log_task("Grading complete", **grade_result)
+            result['grading'] = grade_result
 
-    return result
+        return result
+    except Exception as e:
+        log_task(f"Results sync FAILED: {e}")
+        _last_run_times['results_sync'] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
 
 
 def sync_game_results() -> dict:

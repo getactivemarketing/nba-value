@@ -59,12 +59,14 @@ async def scheduler_status(db: AsyncSession = Depends(get_db)) -> dict:
     }
 
     # Expected intervals in minutes (with 2x buffer for "overdue")
+    # Note: Some tasks may not produce new records every run (e.g., snapshot only
+    # creates records for games within 45 min of tip, team_stats updates daily)
     task_checks = {
         "scoring": {"table": "value_scores", "column": "created_at", "interval": 60},
         "ingest": {"table": "markets", "column": "updated_at", "interval": 60},
-        "team_stats": {"table": "team_stats", "column": "created_at", "interval": 240},
-        "snapshot": {"table": "prediction_snapshots", "column": "snapshot_time", "interval": 30},
-        "grading": {"table": "prediction_snapshots", "column": "updated_at", "interval": 120},
+        "team_stats": {"table": "team_stats", "column": "created_at", "interval": 1440},  # Daily updates are fine
+        "snapshot": {"table": "prediction_snapshots", "column": "snapshot_time", "interval": 1440},  # Only creates before games
+        "grading": {"table": "game_results", "column": "created_at", "interval": 1440},  # Depends on game results
     }
 
     now = datetime.now(timezone.utc)
