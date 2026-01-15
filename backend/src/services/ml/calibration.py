@@ -162,6 +162,12 @@ class CalibrationLayer:
         else:  # platt
             calibrated = calibrator.predict_proba(proba.reshape(-1, 1))[:, 1]
 
+        # Apply regression to mean - pull extreme probabilities back toward 0.50
+        # This prevents overconfident predictions from calibration overfitting
+        # A regression_strength of 0.20 means: 0.80 becomes 0.80*0.80 + 0.50*0.20 = 0.74
+        REGRESSION_STRENGTH = 0.20
+        calibrated = calibrated * (1 - REGRESSION_STRENGTH) + 0.50 * REGRESSION_STRENGTH
+
         # Ensure bounds
         calibrated = np.clip(calibrated, 0.001, 0.999)
 

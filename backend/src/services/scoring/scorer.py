@@ -111,7 +111,7 @@ class ScoringService:
         self,
         mov_model=None,  # MOVModel or RidgeMOVModel
         calibration_layer: CalibrationLayer | None = None,
-        market_regression_weight: float = 0.40,  # How much to weight market vs model
+        market_regression_weight: float = 0.25,  # How much to weight market vs model
     ):
         """
         Initialize scoring service.
@@ -120,7 +120,7 @@ class ScoringService:
             mov_model: Pre-trained MOV model (uses baseline if None)
             calibration_layer: Calibration layer (uses identity if None)
             market_regression_weight: Weight for market-implied MOV (0.0 = pure model, 1.0 = pure market)
-                                     Default 0.40 means 60% model, 40% market
+                                     Default 0.25 means 75% model, 25% market
         """
         self.mov_model = mov_model if mov_model is not None else MOVModel()
         self.calibration = calibration_layer or CalibrationLayer()
@@ -222,6 +222,22 @@ class ScoringService:
             input_data.odds_decimal,
             input_data.opposite_odds,
         )
+
+        # Step 4b: Apply probability bounds to prevent unrealistic edges
+        # Cap p_true within ±12% of p_market (max realistic edge is ~10-12%)
+        # This prevents the model from claiming impossible 30-50% edges
+        MAX_EDGE = 0.12  # 12% max edge
+        p_true_unbounded = p_true
+        p_true = max(p_market - MAX_EDGE, min(p_market + MAX_EDGE, p_true))
+        p_true = max(0.05, min(0.95, p_true))  # Also clip to valid probability range
+
+        if abs(p_true_unbounded - p_true) > 0.01:
+            logger.debug(
+                "Probability bounded",
+                p_true_original=p_true_unbounded,
+                p_true_bounded=p_true,
+                p_market=p_market,
+            )
 
         # Step 5: Calculate raw edge
         raw_edge = p_true - p_market
@@ -611,6 +627,6 @@ def get_scoring_service() -> ScoringService:
         _scoring_service = ScoringService(
             mov_model=mov_model,
             calibration_layer=calibration,
-            market_regression_weight=0.50,  # 50% model, 50% market - conservative blend
+            market_regression_weight=0.25,  # 25% market, 75% model - reduced from 50% due to edge dilution
         )
     return _scoring_service
