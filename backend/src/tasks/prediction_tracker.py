@@ -223,10 +223,16 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
             direction = "toward home" if line_movement["spread_movement"] < 0 else "toward away"
             factors.append(f"Line moved {abs(line_movement['spread_movement'])} pts {direction}")
 
+        # Calculate game_date from tip_time (use Eastern Time for NBA game dates)
+        # tip_time is UTC, convert to ET for the game date
+        eastern_offset = timedelta(hours=-5)
+        tip_time_et = tip_time + eastern_offset if tip_time.tzinfo else tip_time.replace(tzinfo=timezone.utc) + eastern_offset
+        game_date = tip_time_et.date()
+
         # Insert snapshot with both algorithm scores, total bet, and line movement
         cur.execute('''
             INSERT INTO prediction_snapshots (
-                game_id, snapshot_time, home_team, away_team, tip_time,
+                game_id, snapshot_time, home_team, away_team, tip_time, game_date,
                 predicted_winner, winner_probability, winner_confidence,
                 best_bet_type, best_bet_team, best_bet_line,
                 best_bet_value_score, best_bet_edge, best_bet_odds,
@@ -241,9 +247,9 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
                 opening_total, current_total, total_movement,
                 line_movement_direction
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ''', (
-            game_id, now, home_team, away_team, tip_time,
+            game_id, now, home_team, away_team, tip_time, game_date,
             predicted_winner, round(winner_prob * 100, 1), confidence,
             best_bet['type'] if best_bet else None,
             best_bet['team'] if best_bet else None,

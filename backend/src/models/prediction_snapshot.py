@@ -1,9 +1,9 @@
 """Prediction snapshot model for tracking picks before games start."""
 
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
 
-from sqlalchemy import String, Integer, Numeric, DateTime, Boolean, Text
+from sqlalchemy import String, Integer, Numeric, DateTime, Boolean, Text, Date
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.database import Base
@@ -22,6 +22,7 @@ class PredictionSnapshot(Base):
     home_team: Mapped[str] = mapped_column(String(10), nullable=False)
     away_team: Mapped[str] = mapped_column(String(10), nullable=False)
     tip_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    game_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
 
     # Winner prediction
     predicted_winner: Mapped[str] = mapped_column(String(10), nullable=False)
