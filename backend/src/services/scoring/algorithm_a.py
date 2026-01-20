@@ -3,14 +3,14 @@
 import numpy as np
 from dataclasses import dataclass
 
-# Edge scale per market type (to be tuned via backtesting)
+# Edge scale per market type (calibrated for MAX_EDGE of 6%)
 # These represent the edge at which tanh gives ~76% (tanh(1) ≈ 0.76)
-# Based on trained model, edges typically range 5-15% so use 10% as baseline
+# With 6% max edge, we want ~5-6% edge to give high value scores
 EDGE_SCALE = {
-    "spread": 0.20,  # 20% edge = ~76% value score (more conservative)
-    "moneyline": 0.15,  # 15% edge = ~76% value score
-    "total": 0.20,  # 20% edge = ~76% value score
-    "prop": 0.10,
+    "spread": 0.07,  # 5% edge = ~61% value, 6% edge = ~70% value
+    "moneyline": 0.06,  # 5% edge = ~68% value, 6% edge = ~76% value
+    "total": 0.07,  # Same as spread
+    "prop": 0.05,
 }
 
 

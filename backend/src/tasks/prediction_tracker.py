@@ -21,6 +21,11 @@ logger = structlog.get_logger()
 
 DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
 
+# Minimum value score to consider a bet worth tracking
+# Below this threshold, we don't record a "best bet" - it's a pass
+# Set to 65 after analysis showed low-value bets (40-60) had poor win rates
+MIN_VALUE_THRESHOLD = 65
+
 
 def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
     """
@@ -130,8 +135,8 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
             is_home = 'home' in outcome.lower()
             active_algo = (active_algorithm or 'b').lower()
 
-            # Track best value bet for Algorithm A
-            if algo_a_score and float(algo_a_score) > best_score_a:
+            # Track best value bet for Algorithm A (only if meets threshold)
+            if algo_a_score and float(algo_a_score) > best_score_a and float(algo_a_score) >= MIN_VALUE_THRESHOLD:
                 best_score_a = float(algo_a_score)
                 best_bet_a = {
                     "type": mtype,
@@ -145,8 +150,8 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
                     "p_market": float(p_market) if p_market else 0,
                 }
 
-            # Track best value bet for Algorithm B
-            if algo_b_score and float(algo_b_score) > best_score_b:
+            # Track best value bet for Algorithm B (only if meets threshold)
+            if algo_b_score and float(algo_b_score) > best_score_b and float(algo_b_score) >= MIN_VALUE_THRESHOLD:
                 best_score_b = float(algo_b_score)
                 best_bet_b = {
                     "type": mtype,
@@ -160,8 +165,8 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
                     "p_market": float(p_market) if p_market else 0,
                 }
 
-            # Track best total bet separately (using algo_a for consistency)
-            if mtype == 'total' and algo_a_score and float(algo_a_score) > best_total_score:
+            # Track best total bet separately (only if meets threshold)
+            if mtype == 'total' and algo_a_score and float(algo_a_score) > best_total_score and float(algo_a_score) >= MIN_VALUE_THRESHOLD:
                 best_total_score = float(algo_a_score)
                 best_total = {
                     "direction": outcome.replace('_', ''),  # "over" or "under"
@@ -291,8 +296,10 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
         snapshots_created += 1
         logger.info(f"Snapshotted {away_team} @ {home_team}: {predicted_winner} to win ({confidence})")
 
-        if best_bet and best_bet['value_score'] >= 50:
+        if best_bet and best_bet['value_score'] >= MIN_VALUE_THRESHOLD:
             logger.info(f"  Best bet: {best_bet['team']} {best_bet['type']} {best_bet['line'] or ''} ({best_bet['value_score']}%)")
+        else:
+            logger.info(f"  No qualifying bet (threshold: {MIN_VALUE_THRESHOLD})")
 
         if line_movement.get("spread_movement") and abs(line_movement["spread_movement"]) >= 0.5:
             logger.info(f"  Line move: {line_movement['opening_spread']} -> {line_movement['current_spread']} ({line_movement['direction']})")

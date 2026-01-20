@@ -111,7 +111,7 @@ class ScoringService:
         self,
         mov_model=None,  # MOVModel or RidgeMOVModel
         calibration_layer: CalibrationLayer | None = None,
-        market_regression_weight: float = 0.25,  # How much to weight market vs model
+        market_regression_weight: float = 0.50,  # How much to weight market vs model
     ):
         """
         Initialize scoring service.
@@ -120,7 +120,7 @@ class ScoringService:
             mov_model: Pre-trained MOV model (uses baseline if None)
             calibration_layer: Calibration layer (uses identity if None)
             market_regression_weight: Weight for market-implied MOV (0.0 = pure model, 1.0 = pure market)
-                                     Default 0.25 means 75% model, 25% market
+                                     Default 0.50 means 50% model, 50% market (balanced)
         """
         self.mov_model = mov_model if mov_model is not None else MOVModel()
         self.calibration = calibration_layer or CalibrationLayer()
@@ -224,9 +224,10 @@ class ScoringService:
         )
 
         # Step 4b: Apply probability bounds to prevent unrealistic edges
-        # Cap p_true within ±12% of p_market (max realistic edge is ~10-12%)
+        # Cap p_true within ±6% of p_market (realistic edge in sports betting is 2-6%)
         # This prevents the model from claiming impossible 30-50% edges
-        MAX_EDGE = 0.12  # 12% max edge
+        # Reduced from 12% after analysis showed systematic overconfidence
+        MAX_EDGE = 0.06  # 6% max edge - more realistic for sports betting
         p_true_unbounded = p_true
         p_true = max(p_market - MAX_EDGE, min(p_market + MAX_EDGE, p_true))
         p_true = max(0.05, min(0.95, p_true))  # Also clip to valid probability range
@@ -627,6 +628,6 @@ def get_scoring_service() -> ScoringService:
         _scoring_service = ScoringService(
             mov_model=mov_model,
             calibration_layer=calibration,
-            market_regression_weight=0.25,  # 25% market, 75% model - reduced from 50% due to edge dilution
+            market_regression_weight=0.50,  # 50% market, 50% model - increased to reduce overconfidence
         )
     return _scoring_service
