@@ -9,24 +9,47 @@ import structlog
 logger = structlog.get_logger()
 
 # Feature names expected by the model (must match training)
+# Note: Percentage features are CENTERED around 0.5 to avoid bias
 SPREAD_V2_FEATURE_NAMES = [
     # Basic rolling stats (6 features)
     'home_ppg', 'home_opp_ppg', 'home_net_ppg',
     'away_ppg', 'away_opp_ppg', 'away_net_ppg',
     # Scoring variance (2 features)
     'home_scoring_std', 'away_scoring_std',
-    # Win rate L10 (2 features)
-    'home_win_pct_l10', 'away_win_pct_l10',
-    # ATS tendencies (2 features)
-    'home_ats_pct_l10', 'away_ats_pct_l10',
-    # Home/away performance (4 features)
-    'home_home_win_pct', 'home_away_win_pct',
-    'away_home_win_pct', 'away_away_win_pct',
+    # Win rate L10 - CENTERED (2 features)
+    'home_win_pct_l10_centered', 'away_win_pct_l10_centered',
+    # ATS tendencies - CENTERED (2 features)
+    'home_ats_pct_centered', 'away_ats_pct_centered',
+    # Home/away performance - CENTERED (4 features)
+    'home_home_win_pct_centered', 'home_away_win_pct_centered',
+    'away_home_win_pct_centered', 'away_away_win_pct_centered',
     # Rest/fatigue (5 features)
     'home_rest_days', 'away_rest_days',
     'rest_advantage', 'home_b2b', 'away_b2b',
     # Schedule density (2 features)
     'home_games_last_7', 'away_games_last_7',
+]
+
+# Original feature names (before centering) - used to fetch from team_stats
+SPREAD_V2_RAW_FEATURES = [
+    'home_ppg', 'home_opp_ppg', 'home_net_ppg',
+    'away_ppg', 'away_opp_ppg', 'away_net_ppg',
+    'home_scoring_std', 'away_scoring_std',
+    'home_win_pct_l10', 'away_win_pct_l10',
+    'home_ats_pct_l10', 'away_ats_pct_l10',
+    'home_home_win_pct', 'home_away_win_pct',
+    'away_home_win_pct', 'away_away_win_pct',
+    'home_rest_days', 'away_rest_days',
+    'rest_advantage', 'home_b2b', 'away_b2b',
+    'home_games_last_7', 'away_games_last_7',
+]
+
+# Features that need centering (subtract 0.5)
+FEATURES_TO_CENTER = [
+    'home_win_pct_l10', 'away_win_pct_l10',
+    'home_ats_pct_l10', 'away_ats_pct_l10',
+    'home_home_win_pct', 'home_away_win_pct',
+    'away_home_win_pct', 'away_away_win_pct',
 ]
 
 # Minimum edge threshold for spread bets (from backtesting: 4+ points = 52.6% win rate)
@@ -145,28 +168,48 @@ class SpreadModelV2:
         )
 
     def _prepare_features(self, features: dict[str, float]) -> list[float]:
-        """Prepare feature vector in correct order."""
+        """Prepare feature vector in correct order, centering percentage features."""
         vector = []
+
+        # Map from centered feature names to raw feature names
+        centered_to_raw = {
+            'home_win_pct_l10_centered': 'home_win_pct_l10',
+            'away_win_pct_l10_centered': 'away_win_pct_l10',
+            'home_ats_pct_centered': 'home_ats_pct_l10',
+            'away_ats_pct_centered': 'away_ats_pct_l10',
+            'home_home_win_pct_centered': 'home_home_win_pct',
+            'home_away_win_pct_centered': 'home_away_win_pct',
+            'away_home_win_pct_centered': 'away_home_win_pct',
+            'away_away_win_pct_centered': 'away_away_win_pct',
+        }
+
         for f in self.feature_names:
-            val = features.get(f)
-            if val is None:
-                # Use sensible defaults
-                if 'ppg' in f:
-                    val = 110.0
-                elif 'std' in f:
-                    val = 10.0
-                elif 'pct' in f:
-                    val = 0.5
-                elif 'rest' in f:
-                    val = 1
-                elif 'b2b' in f:
-                    val = 0
-                elif 'games_last_7' in f:
-                    val = 3
-                elif 'advantage' in f:
-                    val = 0
-                else:
-                    val = 0.0
+            # Check if this is a centered feature
+            if f in centered_to_raw:
+                raw_name = centered_to_raw[f]
+                val = features.get(raw_name)
+                if val is None:
+                    val = 0.5  # Default to 50%
+                # Center around 0.5
+                val = float(val) - 0.5
+            else:
+                val = features.get(f)
+                if val is None:
+                    # Use sensible defaults
+                    if 'ppg' in f:
+                        val = 110.0
+                    elif 'std' in f:
+                        val = 10.0
+                    elif 'rest' in f:
+                        val = 1
+                    elif 'b2b' in f:
+                        val = 0
+                    elif 'games_last_7' in f:
+                        val = 3
+                    elif 'advantage' in f:
+                        val = 0
+                    else:
+                        val = 0.0
             vector.append(float(val))
         return vector
 

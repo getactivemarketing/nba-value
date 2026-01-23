@@ -87,13 +87,13 @@ def fetch_games_with_team_stats(db_url: str = None, lookback: int = 10) -> tuple
         'away_ppg', 'away_opp_ppg', 'away_net_ppg',
         # Scoring variance (2 features)
         'home_scoring_std', 'away_scoring_std',
-        # Win rate L10 (2 features)
-        'home_win_pct_l10', 'away_win_pct_l10',
-        # ATS tendencies (2 features) - KEY NEW FEATURES
-        'home_ats_pct_l10', 'away_ats_pct_l10',
-        # Home/away performance (4 features)
-        'home_home_win_pct', 'home_away_win_pct',
-        'away_home_win_pct', 'away_away_win_pct',
+        # Win rate L10 - CENTERED around 0.5 (2 features)
+        'home_win_pct_l10_centered', 'away_win_pct_l10_centered',
+        # ATS tendencies - CENTERED around 0.5 (2 features)
+        'home_ats_pct_centered', 'away_ats_pct_centered',
+        # Home/away performance - CENTERED (4 features)
+        'home_home_win_pct_centered', 'home_away_win_pct_centered',
+        'away_home_win_pct_centered', 'away_away_win_pct_centered',
         # Rest/fatigue (5 features)
         'home_rest_days', 'away_rest_days',
         'rest_advantage', 'home_b2b', 'away_b2b',
@@ -168,13 +168,13 @@ def fetch_games_with_team_stats(db_url: str = None, lookback: int = 10) -> tuple
                 away_ppg, away_opp_ppg, away_net_ppg,
                 # Variance (2)
                 home_scoring_std, away_scoring_std,
-                # Win rate (2)
-                home_win_pct, away_win_pct,
-                # ATS (2)
-                home_ats_pct, away_ats_pct,
-                # Home/away splits (4)
-                home_home_win_pct, home_away_win_pct,
-                away_home_win_pct, away_away_win_pct,
+                # Win rate - CENTERED (2) - 0 = average, positive = above average
+                home_win_pct - 0.5, away_win_pct - 0.5,
+                # ATS - CENTERED (2) - 0 = average, positive = covering well
+                home_ats_pct - 0.5, away_ats_pct - 0.5,
+                # Home/away splits - CENTERED (4)
+                home_home_win_pct - 0.5, home_away_win_pct - 0.5,
+                away_home_win_pct - 0.5, away_away_win_pct - 0.5,
                 # Rest (5)
                 home_rest_days, away_rest_days,
                 rest_advantage, home_b2b, away_b2b,
