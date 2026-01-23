@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from src.database import async_session
 from src.models import Game, Market, ValueScore, ModelPrediction, Team, TeamStats, GameResult
 from src.services.injuries import get_all_team_injury_reports, TeamInjuryReport
+from src.config import settings
 
 router = APIRouter()
 
@@ -1495,7 +1496,8 @@ async def get_top_picks(
                 spreads.append(pick)
             elif market.market_type == "moneyline" and len(moneylines) < limit:
                 moneylines.append(pick)
-            elif market.market_type == "total" and len(totals) < limit:
+            elif market.market_type == "total" and len(totals) < limit and not settings.suppress_totals:
+                # Only include totals if not suppressed (totals model has 41% win rate)
                 totals.append(pick)
 
         # Sort by edge for best_edges

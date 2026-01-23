@@ -26,6 +26,14 @@ DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rl
 # Set to 65 after analysis showed low-value bets (40-60) had poor win rates
 MIN_VALUE_THRESHOLD = 65
 
+# Import suppress_totals flag from config (centralized setting)
+# Totals model has 41% win rate, suppressed until proper model is trained
+try:
+    from src.config import settings
+    SUPPRESS_TOTALS = settings.suppress_totals
+except ImportError:
+    SUPPRESS_TOTALS = True  # Default to suppressed if config unavailable
+
 
 def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
     """
@@ -165,8 +173,8 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
                     "p_market": float(p_market) if p_market else 0,
                 }
 
-            # Track best total bet separately (only if meets threshold)
-            if mtype == 'total' and algo_a_score and float(algo_a_score) > best_total_score and float(algo_a_score) >= MIN_VALUE_THRESHOLD:
+            # Track best total bet separately (only if meets threshold and not suppressed)
+            if not SUPPRESS_TOTALS and mtype == 'total' and algo_a_score and float(algo_a_score) > best_total_score and float(algo_a_score) >= MIN_VALUE_THRESHOLD:
                 best_total_score = float(algo_a_score)
                 best_total = {
                     "direction": outcome.replace('_', ''),  # "over" or "under"

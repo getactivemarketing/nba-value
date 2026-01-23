@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Model Flags
+    # Suppress totals (over/under) betting - model has 41% win rate (need 52.4% to break even)
+    # Set to False when a proper totals model is trained
+    suppress_totals: bool = True
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
