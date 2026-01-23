@@ -241,7 +241,10 @@ async def _run_pre_game_scoring_async() -> dict:
 
 
 def _stats_to_features(stats: TeamStats | None, prefix: str) -> dict[str, float]:
-    """Convert TeamStats model to feature dict."""
+    """Convert TeamStats model to feature dict.
+
+    Includes v2 spread model features: ATS tendencies, home/away splits, schedule density.
+    """
     if stats is None:
         # Return reasonable defaults
         return {
@@ -255,9 +258,41 @@ def _stats_to_features(stats: TeamStats | None, prefix: str) -> dict[str, float]
             f"{prefix}_rest_days": 1,
             f"{prefix}_b2b": 0,
             f"{prefix}_win_pct_10": 0.5,
+            # V2 features - defaults
+            f"{prefix}_ppg": 110.0,
+            f"{prefix}_opp_ppg": 110.0,
+            f"{prefix}_net_ppg": 0.0,
+            f"{prefix}_scoring_std": 10.0,  # Default variance
+            f"{prefix}_ats_pct_l10": 0.5,
+            f"{prefix}_home_win_pct": 0.5,
+            f"{prefix}_away_win_pct": 0.5,
+            f"{prefix}_games_last_7": 3,
         }
 
+    # Compute ATS percentage from L10 record
+    ats_wins = stats.ats_wins_l10 or 0
+    ats_losses = stats.ats_losses_l10 or 0
+    ats_total = ats_wins + ats_losses
+    ats_pct = ats_wins / ats_total if ats_total > 0 else 0.5
+
+    # Compute home/away win percentages
+    home_wins = stats.home_wins or 0
+    home_losses = stats.home_losses or 0
+    home_total = home_wins + home_losses
+    home_win_pct = home_wins / home_total if home_total > 0 else 0.5
+
+    away_wins = stats.away_wins or 0
+    away_losses = stats.away_losses or 0
+    away_total = away_wins + away_losses
+    away_win_pct = away_wins / away_total if away_total > 0 else 0.5
+
+    # PPG for net calculation
+    ppg = float(stats.ppg_10) if stats.ppg_10 else 110.0
+    opp_ppg = float(stats.opp_ppg_10) if stats.opp_ppg_10 else 110.0
+    net_ppg = ppg - opp_ppg
+
     return {
+        # Original features
         f"{prefix}_ortg_5": float(stats.ortg_5) if stats.ortg_5 else None,
         f"{prefix}_ortg_10": float(stats.ortg_10) if stats.ortg_10 else None,
         f"{prefix}_ortg_20": float(stats.ortg_20) if stats.ortg_20 else None,
@@ -270,13 +305,22 @@ def _stats_to_features(stats: TeamStats | None, prefix: str) -> dict[str, float]
         f"{prefix}_net_rtg_season": float(stats.net_rtg_season) if stats.net_rtg_season else 0.0,
         f"{prefix}_pace_10": float(stats.pace_10) if stats.pace_10 else 100.0,
         f"{prefix}_pace_season": float(stats.pace_season) if stats.pace_season else 100.0,
-        f"{prefix}_ppg_10": float(stats.ppg_10) if stats.ppg_10 else 110.0,
+        f"{prefix}_ppg_10": ppg,
         f"{prefix}_ppg_season": float(stats.ppg_season) if stats.ppg_season else 110.0,
-        f"{prefix}_opp_ppg_10": float(stats.opp_ppg_10) if stats.opp_ppg_10 else 110.0,
+        f"{prefix}_opp_ppg_10": opp_ppg,
         f"{prefix}_opp_ppg_season": float(stats.opp_ppg_season) if stats.opp_ppg_season else 110.0,
         f"{prefix}_rest_days": stats.days_rest if stats.days_rest else 1,
         f"{prefix}_b2b": 1 if stats.is_back_to_back else 0,
         f"{prefix}_win_pct_10": float(stats.win_pct_10) if stats.win_pct_10 else 0.5,
+        # V2 spread model features
+        f"{prefix}_ppg": ppg,
+        f"{prefix}_opp_ppg": opp_ppg,
+        f"{prefix}_net_ppg": net_ppg,
+        f"{prefix}_scoring_std": 10.0,  # Estimated default - would need historical data to compute
+        f"{prefix}_ats_pct_l10": ats_pct,
+        f"{prefix}_home_win_pct": home_win_pct,
+        f"{prefix}_away_win_pct": away_win_pct,
+        f"{prefix}_games_last_7": stats.games_last_7_days if stats.games_last_7_days else 3,
     }
 
 

@@ -15,6 +15,7 @@ from src.services.ml.probability import (
     estimate_game_total,
     devig_two_way_odds,
 )
+from src.services.ml.spread_model_v2 import SpreadModelV2, get_spread_model_v2, SPREAD_MIN_EDGE_POINTS
 from src.services.scoring.algorithm_a import compute_value_score_algo_a, AlgoAResult
 from src.services.scoring.algorithm_b import compute_value_score_algo_b, AlgoBResult
 from src.services.scoring.confidence import compute_confidence_multiplier, ConfidenceComponents
@@ -111,6 +112,7 @@ class ScoringService:
         self,
         mov_model=None,  # MOVModel or RidgeMOVModel
         calibration_layer: CalibrationLayer | None = None,
+        spread_model_v2: SpreadModelV2 | None = None,
         market_regression_weight: float = 0.50,  # How much to weight market vs model
     ):
         """
@@ -119,11 +121,13 @@ class ScoringService:
         Args:
             mov_model: Pre-trained MOV model (uses baseline if None)
             calibration_layer: Calibration layer (uses identity if None)
+            spread_model_v2: Spread model v2 with ATS features (uses baseline if None)
             market_regression_weight: Weight for market-implied MOV (0.0 = pure model, 1.0 = pure market)
                                      Default 0.50 means 50% model, 50% market (balanced)
         """
         self.mov_model = mov_model if mov_model is not None else MOVModel()
         self.calibration = calibration_layer or CalibrationLayer()
+        self.spread_model_v2 = spread_model_v2
         self.market_regression_weight = market_regression_weight
 
     def score_market(self, input_data: ScoringInput) -> ScoringResult:
@@ -148,7 +152,25 @@ class ScoringService:
         )
 
         # Step 1: Get MOV prediction
-        mov_pred = self.mov_model.predict(features)
+        # For spreads, use spread_model_v2 if available (better ATS features)
+        spread_v2_pred = None
+        if input_data.market_type == "spread" and self.spread_model_v2 is not None:
+            spread_v2_pred = self.spread_model_v2.predict(features, input_data.line)
+            # Create MOVPrediction from spread v2 result
+            mov_pred = MOVPrediction(
+                predicted_mov=spread_v2_pred.predicted_mov,
+                mov_std=spread_v2_pred.mov_std,
+                confidence=spread_v2_pred.confidence,
+                features_used=self.spread_model_v2.feature_names,
+            )
+            logger.debug(
+                "Using spread model v2",
+                predicted_mov=spread_v2_pred.predicted_mov,
+                edge_points=spread_v2_pred.edge_points,
+                meets_threshold=spread_v2_pred.meets_threshold,
+            )
+        else:
+            mov_pred = self.mov_model.predict(features)
 
         # Step 1b: Apply market regression for spread bets
         # This blends our model's MOV with the market-implied MOV to reduce overconfidence
@@ -577,12 +599,14 @@ from pathlib import Path
 MODEL_DIR = Path(__file__).parent.parent.parent.parent / "models"
 MOV_MODEL_PATH = MODEL_DIR / "mov_model.pkl"
 CALIBRATION_PATH = MODEL_DIR / "calibration.pkl"
+SPREAD_V2_MODEL_PATH = MODEL_DIR / "spread_model_v2.pkl"
 
 
 def load_trained_models() -> tuple:
-    """Load trained MOV model and calibration layer if available."""
+    """Load trained MOV model, spread model v2, and calibration layer if available."""
     mov_model = None
     calibration = None
+    spread_model_v2 = None
 
     # Try to load MOV model
     if MOV_MODEL_PATH.exists():
@@ -608,6 +632,18 @@ def load_trained_models() -> tuple:
         except Exception as e:
             logger.warning(f"Failed to load MOV model: {e}")
 
+    # Try to load spread model v2
+    if SPREAD_V2_MODEL_PATH.exists():
+        try:
+            spread_model_v2 = get_spread_model_v2()
+            logger.info(
+                "Loaded spread model v2",
+                is_trained=spread_model_v2.is_trained,
+                min_edge_threshold=SPREAD_MIN_EDGE_POINTS,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load spread model v2: {e}")
+
     # Try to load calibration
     if CALIBRATION_PATH.exists():
         try:
@@ -617,17 +653,18 @@ def load_trained_models() -> tuple:
         except Exception as e:
             logger.warning(f"Failed to load calibration: {e}")
 
-    return mov_model, calibration
+    return mov_model, calibration, spread_model_v2
 
 
 def get_scoring_service() -> ScoringService:
     """Get or create the scoring service singleton."""
     global _scoring_service
     if _scoring_service is None:
-        mov_model, calibration = load_trained_models()
+        mov_model, calibration, spread_model_v2 = load_trained_models()
         _scoring_service = ScoringService(
             mov_model=mov_model,
             calibration_layer=calibration,
+            spread_model_v2=spread_model_v2,
             market_regression_weight=0.50,  # 50% market, 50% model - increased to reduce overconfidence
         )
     return _scoring_service
