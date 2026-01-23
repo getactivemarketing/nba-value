@@ -518,8 +518,11 @@ def grade_predictions(db_url: str = None) -> dict:
 
     Looks for games that have:
     - A prediction snapshot
-    - Final scores in game_results
+    - Final scores in game_results (or games table)
     - Not yet graded
+
+    IMPORTANT: Uses the best_bet_line and best_total_line captured at snapshot time
+    for grading, NOT the closing_spread/total from game_results (which may be incorrect).
 
     Grades both Algorithm A and Algorithm B picks for comparison.
 
@@ -531,13 +534,15 @@ def grade_predictions(db_url: str = None) -> dict:
     cur = conn.cursor()
 
     # Find ungraded predictions with completed games
+    # Use snapshot's best_bet_line for grading (captured pre-game), not game_results closing lines
     cur.execute('''
         SELECT
             ps.id, ps.game_id, ps.predicted_winner, ps.winner_probability,
             ps.best_bet_type, ps.best_bet_team, ps.best_bet_line,
             ps.best_bet_value_score, ps.best_bet_odds,
             gr.actual_winner, gr.home_score, gr.away_score,
-            gr.closing_spread, gr.closing_total, gr.spread_result, gr.total_result,
+            ps.best_bet_line as snapshot_spread, ps.best_total_line as snapshot_total,
+            NULL as spread_result, NULL as total_result,
             ps.home_team, ps.away_team,
             ps.algo_a_value_score, ps.algo_b_value_score, ps.active_algorithm,
             ps.best_total_direction, ps.best_total_line, ps.best_total_odds
@@ -568,10 +573,37 @@ def grade_predictions(db_url: str = None) -> dict:
         (pred_id, game_id, predicted_winner, winner_prob,
          bet_type, bet_team, bet_line, bet_value, bet_odds,
          actual_winner, home_score, away_score,
-         closing_spread, closing_total, spread_result, total_result,
+         snapshot_spread, snapshot_total, _spread_result, _total_result,
          home_team, away_team,
          algo_a_value, algo_b_value, active_algo,
          total_direction, total_line, total_odds) = row
+
+        # Use the pre-game snapshot lines for grading (these are the actual betting lines)
+        # DO NOT use closing_spread/total from game_results (may contain final margins)
+        closing_spread = snapshot_spread  # Line captured at snapshot time
+        closing_total = snapshot_total    # Total captured at snapshot time
+
+        # Calculate spread_result ourselves using the snapshot's betting line
+        spread_result = None
+        if closing_spread is not None and home_score is not None and away_score is not None:
+            home_adjusted = home_score + float(closing_spread)
+            if home_adjusted > away_score:
+                spread_result = 'home_cover'
+            elif home_adjusted < away_score:
+                spread_result = 'away_cover'
+            else:
+                spread_result = 'push'
+
+        # Calculate total_result ourselves using the snapshot's total line
+        total_result = None
+        if closing_total is not None and home_score is not None and away_score is not None:
+            actual_total = home_score + away_score
+            if actual_total > float(closing_total):
+                total_result = 'over'
+            elif actual_total < float(closing_total):
+                total_result = 'under'
+            else:
+                total_result = 'push'
 
         # Grade winner prediction
         winner_correct = (predicted_winner == actual_winner)
