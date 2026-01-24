@@ -312,6 +312,7 @@ def _stats_to_features(stats: TeamStats | None, prefix: str) -> dict[str, float]
         f"{prefix}_rest_days": stats.days_rest if stats.days_rest else 1,
         f"{prefix}_b2b": 1 if stats.is_back_to_back else 0,
         f"{prefix}_win_pct_10": float(stats.win_pct_10) if stats.win_pct_10 else 0.5,
+        f"{prefix}_win_pct_l10": float(stats.win_pct_10) if stats.win_pct_10 else 0.5,  # Alias for spread_model_v2
         # V2 spread model features
         f"{prefix}_ppg": ppg,
         f"{prefix}_opp_ppg": opp_ppg,

@@ -354,6 +354,11 @@ class ScoringService:
             else:
                 features[key] = value
 
+        # Add rest_advantage (home rest - away rest) for spread_model_v2
+        home_rest = features.get("home_rest_days", 1) or 1
+        away_rest = features.get("away_rest_days", 1) or 1
+        features["rest_advantage"] = home_rest - away_rest
+
         return features
 
     def _mov_to_probability(
