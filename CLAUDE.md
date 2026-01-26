@@ -74,12 +74,12 @@ Runs every 15-30 minutes:
 
 ## Current Model Performance
 
-Historical win rates (as of last analysis):
-- High value (70+): ~45-50%
-- Medium value (65-69): ~48%
-- Totals: ~41%
+Historical win rates (as of 2026-01-26):
+- High value (70-79): 85.7% (6-1)
+- Medium value (60-69): 57.1% (16-12)
+- Below threshold (<60): 30.2% (13-30)
 
-The model needs improvement - currently near break-even on spreads, negative on totals.
+Spread model v2 is showing positive results at 60+ value scores. Totals model is suppressed until fixed.
 
 ## Development Guidelines
 
@@ -114,12 +114,35 @@ python3 -m src.tasks.prediction_tracker summary 7
 
 ## Recent Fixes & Changes
 
+- **2026-01-26**: Fixed evaluation page spread/total storage issues:
+  - **Root cause**: `markets.line` and `game_results.closing_spread` contained corrupted data (final margins instead of actual spread lines)
+  - **Grading fix**: Now derives `home_spread` from `best_bet_line` and `best_bet_team` instead of relying on corrupt `current_spread`
+  - **API fix**: `/evaluation/daily` endpoint now queries `prediction_snapshots` instead of `markets` table
+  - **Line movement fallback**: `get_line_movement()` now queries `markets` table when `odds_snapshots` is empty
+  - **Model update**: Added 27 missing columns to `PredictionSnapshot` SQLAlchemy model
+
+- **2026-01-26**: Fixed spread model v2 feature name mismatches:
+  - Model expected `home_win_pct_l10` but scorer provided `home_win_pct_10`
+  - Model expected `rest_advantage` but it wasn't being calculated
+  - Added alias and calculation in `scoring.py` and `scorer.py`
+
 - **2026-01-23**: Fixed prediction grading to use pre-game snapshot lines instead of potentially incorrect `game_results.closing_spread` values. Added `regrade_predictions.py` script.
+
+## Known Data Issues
+
+- **`markets.line`**: May contain stale/corrupt data for completed games. Do NOT use for historical analysis.
+- **`game_results.closing_spread`**: Some records have incorrect values. Use `prediction_snapshots.best_bet_line` instead.
+- **`odds_snapshots`**: Table is not being populated (empty since Jan 6). Line movement tracking relies on fallback to `markets` table.
+
+**Source of Truth for Grading:**
+- Use `prediction_snapshots.best_bet_line` for the actual spread line at snapshot time
+- Derive `home_spread` from `best_bet_line` and `best_bet_team` (if away bet, negate the line)
+- Use `prediction_snapshots.best_total_line` for total line
 
 ## Future Improvements (Potential)
 
-- Improve model accuracy (currently ~48% on spreads)
+- Fix `odds_snapshots` population for proper line movement tracking
+- Improve totals model (currently suppressed)
 - Add player prop betting
-- Implement line movement tracking for sharp money signals
 - Build alert system for high-value opportunities
 - Add backtesting framework for model iterations
