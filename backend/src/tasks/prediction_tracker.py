@@ -371,6 +371,27 @@ def get_line_movement(cur, game_id: str) -> dict:
         result["current_spread"] = float(current[0]) if current[0] else None
         result["current_total"] = float(current[1]) if current[1] else None
 
+    # Fallback: If odds_snapshots is empty, get current lines from markets table
+    if result["current_spread"] is None or result["current_total"] is None:
+        cur.execute('''
+            SELECT
+                (SELECT line FROM markets WHERE game_id = %s AND market_type = 'spread'
+                 AND outcome_label ILIKE '%%home%%' LIMIT 1) as home_spread,
+                (SELECT line FROM markets WHERE game_id = %s AND market_type = 'total'
+                 AND outcome_label ILIKE '%%over%%' LIMIT 1) as total_line
+        ''', (game_id, game_id))
+        fallback = cur.fetchone()
+        if fallback:
+            if result["current_spread"] is None and fallback[0]:
+                result["current_spread"] = float(fallback[0])
+            if result["current_total"] is None and fallback[1]:
+                result["current_total"] = float(fallback[1])
+            # Use as opening lines too if not available
+            if result["opening_spread"] is None:
+                result["opening_spread"] = result["current_spread"]
+            if result["opening_total"] is None:
+                result["opening_total"] = result["current_total"]
+
     # Calculate movement
     if result["opening_spread"] is not None and result["current_spread"] is not None:
         # Movement: current - opening
@@ -542,14 +563,14 @@ def grade_predictions(db_url: str = None) -> dict:
     cur = conn.cursor()
 
     # Find ungraded predictions with completed games
-    # Use snapshot's best_bet_line for grading (captured pre-game), not game_results closing lines
+    # Use snapshot's current_spread/current_total for grading (captured pre-game), not game_results closing lines
     cur.execute('''
         SELECT
             ps.id, ps.game_id, ps.predicted_winner, ps.winner_probability,
             ps.best_bet_type, ps.best_bet_team, ps.best_bet_line,
             ps.best_bet_value_score, ps.best_bet_odds,
             gr.actual_winner, gr.home_score, gr.away_score,
-            ps.best_bet_line as snapshot_spread, ps.best_total_line as snapshot_total,
+            ps.current_spread as snapshot_spread, ps.current_total as snapshot_total,
             NULL as spread_result, NULL as total_result,
             ps.home_team, ps.away_team,
             ps.algo_a_value_score, ps.algo_b_value_score, ps.active_algorithm,
@@ -586,15 +607,31 @@ def grade_predictions(db_url: str = None) -> dict:
          algo_a_value, algo_b_value, active_algo,
          total_direction, total_line, total_odds) = row
 
-        # Use the pre-game snapshot lines for grading (these are the actual betting lines)
-        # DO NOT use closing_spread/total from game_results (may contain final margins)
-        closing_spread = snapshot_spread  # Line captured at snapshot time
-        closing_total = snapshot_total    # Total captured at snapshot time
+        # Derive home_spread from best_bet_line when bet_type is 'spread'
+        # best_bet_line is from the perspective of bet_team:
+        #   - If bet_team is AWAY, bet_line is positive (away getting points), so home_spread = -bet_line
+        #   - If bet_team is HOME, bet_line is negative (home giving points), so home_spread = bet_line
+        # Fall back to current_spread only if best_bet is not a spread bet
+        if bet_type == 'spread' and bet_line is not None:
+            if bet_team == away_team:
+                closing_spread = -float(bet_line)  # Convert away spread to home spread
+            else:
+                closing_spread = float(bet_line)  # Already home spread
+        else:
+            closing_spread = float(snapshot_spread) if snapshot_spread is not None else None
 
-        # Calculate spread_result ourselves using the snapshot's betting line
+        # For totals, prefer best_total_line over current_total
+        if total_line is not None:
+            closing_total = float(total_line)
+        elif snapshot_total is not None:
+            closing_total = float(snapshot_total)
+        else:
+            closing_total = None
+
+        # Calculate spread_result ourselves using the derived home spread
         spread_result = None
         if closing_spread is not None and home_score is not None and away_score is not None:
-            home_adjusted = home_score + float(closing_spread)
+            home_adjusted = home_score + closing_spread
             if home_adjusted > away_score:
                 spread_result = 'home_cover'
             elif home_adjusted < away_score:
@@ -602,7 +639,7 @@ def grade_predictions(db_url: str = None) -> dict:
             else:
                 spread_result = 'push'
 
-        # Calculate total_result ourselves using the snapshot's total line
+        # Calculate total_result ourselves using the closing total
         total_result = None
         if closing_total is not None and home_score is not None and away_score is not None:
             actual_total = home_score + away_score

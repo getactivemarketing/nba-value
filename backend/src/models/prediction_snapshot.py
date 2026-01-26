@@ -54,6 +54,39 @@ class PredictionSnapshot(Base):
     # Key factors that drove the prediction
     factors: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of factor strings
 
+    # Best total bet (separate from spread bet)
+    best_total_direction: Mapped[str | None] = mapped_column(String(10), nullable=True)  # over/under
+    best_total_line: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), nullable=True)
+    best_total_value_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    best_total_edge: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    best_total_odds: Mapped[Decimal | None] = mapped_column(Numeric(6, 3), nullable=True)
+    best_total_result: Mapped[str | None] = mapped_column(String(20), nullable=True)  # win/loss/push
+    best_total_profit: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+
+    # Line movement tracking (captured at snapshot)
+    opening_spread: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), nullable=True)
+    current_spread: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), nullable=True)
+    spread_movement: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), nullable=True)
+    opening_total: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), nullable=True)
+    current_total: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), nullable=True)
+    total_movement: Mapped[Decimal | None] = mapped_column(Numeric(5, 1), nullable=True)
+    line_movement_direction: Mapped[str | None] = mapped_column(String(20), nullable=True)  # toward_home/toward_away
+
+    # Algorithm comparison (A=edge-based, B=combined-edge)
+    algo_a_value_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    algo_a_edge_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    algo_a_confidence: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    algo_b_value_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    algo_b_combined_edge: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    algo_b_confidence: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    active_algorithm: Mapped[str | None] = mapped_column(String(10), nullable=True)  # a or b
+
+    # Algorithm grading results
+    algo_a_bet_result: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    algo_b_bet_result: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    algo_a_profit: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    algo_b_profit: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+
     # Injury context (for backtesting injury model)
     home_injury_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     away_injury_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
