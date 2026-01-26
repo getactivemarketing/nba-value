@@ -349,6 +349,7 @@ async def get_daily_results(
     Get daily performance breakdown for recent days.
 
     Shows each day's bets, wins, losses, and P/L.
+    Uses prediction_snapshots for accurate line data (markets table may have stale data).
     """
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
@@ -356,54 +357,42 @@ async def get_daily_results(
     cutoff = date.today() - timedelta(days=days)
     value_col = 'algo_a_value_score' if algorithm == 'a' else 'algo_b_value_score'
 
-    # Get scored bets with results - JOIN to avoid N+1 queries
+    # Query prediction_snapshots for accurate graded data
     cur.execute(f'''
-        WITH ranked_bets AS (
-            SELECT
-                vs.{value_col} as value_score, mp.p_true,
-                m.market_type, m.outcome_label, m.line, m.odds_decimal,
-                g.home_team_id, g.away_team_id, g.game_date, g.game_id,
-                ROW_NUMBER() OVER (
-                    PARTITION BY g.game_id, m.market_type,
-                        CASE
-                            WHEN m.market_type = 'total' THEN
-                                CASE WHEN m.outcome_label ILIKE '%%over%%' THEN 'over' ELSE 'under' END
-                            ELSE
-                                CASE WHEN m.outcome_label ILIKE '%%home%%' THEN 'home' ELSE 'away' END
-                        END
-                    ORDER BY vs.{value_col} DESC, vs.calc_time DESC
-                ) as rn
-            FROM value_scores vs
-            JOIN model_predictions mp ON mp.prediction_id = vs.prediction_id
-            JOIN markets m ON m.market_id = vs.market_id
-            JOIN games g ON g.game_id = m.game_id
-            WHERE g.game_date >= %s
-            AND vs.{value_col} >= %s
-        )
-        SELECT rb.value_score, rb.p_true, rb.market_type, rb.outcome_label,
-               rb.line, rb.odds_decimal, rb.home_team_id, rb.away_team_id,
-               gr.game_date as result_date, gr.home_score, gr.away_score
-        FROM ranked_bets rb
-        JOIN game_results gr ON gr.home_team_id = rb.home_team_id
-                            AND gr.away_team_id = rb.away_team_id
-                            AND gr.game_date = rb.game_date
-        WHERE rb.rn = 1
+        SELECT
+            ps.game_date,
+            ps.home_team,
+            ps.away_team,
+            ps.best_bet_type,
+            ps.best_bet_team,
+            ps.best_bet_line,
+            ps.best_bet_odds,
+            ps.{value_col} as value_score,
+            ps.best_bet_result,
+            ps.best_bet_profit,
+            ps.home_score,
+            ps.away_score
+        FROM prediction_snapshots ps
+        WHERE ps.game_date >= %s
+        AND ps.winner_correct IS NOT NULL
+        AND ps.{value_col} >= %s
+        AND ps.best_bet_type IS NOT NULL
+        ORDER BY ps.game_date DESC, ps.tip_time DESC
     ''', (cutoff, min_value))
 
-    scores = cur.fetchall()
+    rows = cur.fetchall()
 
     # Group by date
     daily = {}
 
-    for row in scores:
-        (value_score, p_true, market_type, outcome_label,
-         line, odds, home, away, result_date, home_score, away_score) = row
+    for row in rows:
+        (game_date, home, away, bet_type, bet_team, bet_line, bet_odds,
+         value_score, bet_result, bet_profit, home_score, away_score) = row
 
-        won, pushed, _ = _calculate_bet_result(market_type, outcome_label,
-                                               float(line) if line else None,
-                                               home_score, away_score)
+        if value_score is None:
+            continue
 
-        date_str = result_date.isoformat()
+        date_str = game_date.isoformat()
         if date_str not in daily:
             daily[date_str] = {
                 'date': date_str,
@@ -414,35 +403,35 @@ async def get_daily_results(
                 'profit': 0.0,
             }
 
-        # Determine bet description
-        is_home = 'home' in outcome_label.lower()
-        team = home if is_home else away
-        if market_type == 'total':
-            team = 'Over' if 'over' in outcome_label.lower() else 'Under'
-        line_str = f'{float(line):+.1f}' if line and market_type != 'moneyline' else ''
+        # Format bet description
+        if bet_type == 'total':
+            # For totals, bet_team would be 'over' or 'under'
+            team_str = bet_team.capitalize() if bet_team else 'Total'
+        else:
+            team_str = bet_team or ''
 
-        bet_profit = 0.0
-        if pushed:
+        line_str = f'{float(bet_line):+.1f}' if bet_line and bet_type != 'moneyline' else ''
+
+        # Use pre-calculated result from grading
+        if bet_result == 'push':
             daily[date_str]['pushes'] += 1
-            bet_result = 'push'
-        elif won:
+            profit = 0.0
+        elif bet_result == 'win':
             daily[date_str]['wins'] += 1
-            bet_profit = 100 * (float(odds) - 1)
-            bet_result = 'win'
+            profit = float(bet_profit) if bet_profit else 90.91
         else:
             daily[date_str]['losses'] += 1
-            bet_profit = -100
-            bet_result = 'loss'
+            profit = float(bet_profit) if bet_profit else -100.0
 
-        daily[date_str]['profit'] += bet_profit
+        daily[date_str]['profit'] += profit
 
         daily[date_str]['bets'].append({
             'matchup': f'{away} @ {home}',
-            'bet': f'{team} {market_type} {line_str}'.strip(),
+            'bet': f'{team_str} {bet_type} {line_str}'.strip(),
             'value_score': round(float(value_score)),
-            'result': bet_result,
-            'profit': bet_profit,
-            'final_score': f'{away_score}-{home_score}',
+            'result': bet_result or 'pending',
+            'profit': round(profit, 2),
+            'final_score': f'{away_score}-{home_score}' if home_score else 'N/A',
         })
 
     cur.close()
