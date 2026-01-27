@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useEvaluationSummary, usePerformanceByBucket, useDailyResults, usePredictionPerformance } from '@/hooks/useEvaluation';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { CumulativePLChart } from '@/components/Charts';
 
 export function Evaluation() {
   const [days, setDays] = useState(14);
@@ -99,6 +100,11 @@ export function Evaluation() {
           </div>
         )}
       </div>
+
+      {/* Cumulative P/L Chart */}
+      {!dailyLoading && dailyResults && dailyResults.length > 0 && (
+        <CumulativePLChart dailyResults={dailyResults} />
+      )}
 
       {/* Performance by Value Bucket */}
       <div className="card">

@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
 from src.database import init_db
-from src.api import health, markets, bets, evaluation, admin, trends
+from src.api import health, markets, bets, evaluation, admin, trends, backtest
 
 # Configure structured logging
 structlog.configure(
@@ -93,6 +93,7 @@ app.include_router(bets.router, prefix=settings.api_v1_prefix, tags=["Bets"])
 app.include_router(evaluation.router, prefix=settings.api_v1_prefix, tags=["Evaluation"])
 app.include_router(admin.router, prefix=settings.api_v1_prefix, tags=["Admin"])
 app.include_router(trends.router, prefix=settings.api_v1_prefix, tags=["Trends"])
+app.include_router(backtest.router, prefix=settings.api_v1_prefix, tags=["Backtest"])
 
 
 @app.get("/")

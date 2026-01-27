@@ -4,6 +4,7 @@ import { getTeamLogo, getTeamColor } from '@/lib/teamLogos';
 import type { Market, Algorithm } from '@/types/market';
 import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries, HeadToHead } from '@/lib/api';
 import { TornadoChart } from './TornadoChart';
+import { ValueBadge } from '@/components/ui/ValueBadge';
 
 interface GameCardProps {
   gameId: string;
@@ -78,26 +79,6 @@ function getTotalLine(markets: Market[]): number | null {
   return getConsensusLine(markets, 'total');
 }
 
-// Value score badge matching Covers style
-function ValueBadge({ score, size = 'md' }: { score: number; size?: 'sm' | 'md' | 'lg' }) {
-  const getColor = (s: number) => {
-    if (s >= 70) return 'bg-emerald-600';
-    if (s >= 50) return 'bg-amber-500';
-    return 'bg-slate-400';
-  };
-
-  const sizeClasses = {
-    sm: 'text-xs px-2 py-0.5',
-    md: 'text-sm px-3 py-1',
-    lg: 'text-base px-4 py-1.5 font-bold',
-  };
-
-  return (
-    <span className={`${getColor(score)} ${sizeClasses[size]} text-white rounded font-semibold`}>
-      {Math.round(score)}%
-    </span>
-  );
-}
 
 // Injury severity badge
 function InjuryBadge({ severity, impact }: { severity: string; impact: number }) {

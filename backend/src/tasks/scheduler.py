@@ -313,7 +313,7 @@ def run_team_stats():
 
 
 async def ingest_odds_async():
-    """Fetch and store odds from API."""
+    """Fetch and store odds from API, including snapshots for line movement tracking."""
     client = OddsAPIClient()
     now = datetime.now(timezone.utc)
 
@@ -330,12 +330,16 @@ async def ingest_odds_async():
 
     games_created = 0
     markets_created = 0
+    snapshots_created = 0
 
     for game_data in odds_data:
         home_team = get_team_abbrev(game_data["home_team"])
         away_team = get_team_abbrev(game_data["away_team"])
         commence_time = datetime.fromisoformat(game_data["commence_time"].replace("Z", "+00:00"))
         game_id = game_data["id"]
+
+        # Calculate minutes to tip for snapshots
+        minutes_to_tip = int((commence_time - now).total_seconds() / 60)
 
         # Convert to Eastern Time for game_date (NBA games are scheduled in ET)
         eastern_offset = timedelta(hours=-5)
@@ -354,9 +358,17 @@ async def ingest_odds_async():
         ''', (game_id, 'NBA', 2025, game_date_et, commence_time, home_team, away_team, 'scheduled', now, now))
         games_created += 1
 
-        # Process markets
+        # Process markets and collect data for snapshots
         for bookmaker in game_data.get("bookmakers", [])[:1]:
             book_name = bookmaker["key"]
+
+            # Collect odds data for snapshot
+            snapshot_data = {
+                'home_spread': None, 'home_spread_odds': None,
+                'away_spread': None, 'away_spread_odds': None,
+                'home_ml_odds': None, 'away_ml_odds': None,
+                'total_line': None, 'over_odds': None, 'under_odds': None,
+            }
 
             for market in bookmaker.get("markets", []):
                 market_key = market["key"]
@@ -368,13 +380,30 @@ async def ingest_odds_async():
 
                     if market_key == "h2h":
                         market_type = "moneyline"
-                        outcome_label = "home_win" if outcome_name == game_data["home_team"] else "away_win"
+                        if outcome_name == game_data["home_team"]:
+                            outcome_label = "home_win"
+                            snapshot_data['home_ml_odds'] = odds
+                        else:
+                            outcome_label = "away_win"
+                            snapshot_data['away_ml_odds'] = odds
                     elif market_key == "spreads":
                         market_type = "spread"
-                        outcome_label = "home_spread" if outcome_name == game_data["home_team"] else "away_spread"
+                        if outcome_name == game_data["home_team"]:
+                            outcome_label = "home_spread"
+                            snapshot_data['home_spread'] = line
+                            snapshot_data['home_spread_odds'] = odds
+                        else:
+                            outcome_label = "away_spread"
+                            snapshot_data['away_spread'] = line
+                            snapshot_data['away_spread_odds'] = odds
                     elif market_key == "totals":
                         market_type = "total"
                         outcome_label = outcome_name.lower()
+                        if outcome_name == "Over":
+                            snapshot_data['total_line'] = line
+                            snapshot_data['over_odds'] = odds
+                        else:
+                            snapshot_data['under_odds'] = odds
                     else:
                         continue
 
@@ -391,10 +420,30 @@ async def ingest_odds_async():
                     ''', (market_id, game_id, market_type, outcome_label, line, odds, book_name, True, now, now))
                     markets_created += 1
 
+            # Insert odds snapshot for this game/book (only for scheduled games)
+            if minutes_to_tip > 0:
+                cur.execute('''
+                    INSERT INTO odds_snapshots (
+                        game_id, market_type, book_key, snapshot_time, minutes_to_tip,
+                        home_spread, home_spread_odds, away_spread, away_spread_odds,
+                        home_ml_odds, away_ml_odds,
+                        total_line, over_odds, under_odds,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (
+                    game_id, 'all', book_name, now, minutes_to_tip,
+                    snapshot_data['home_spread'], snapshot_data['home_spread_odds'],
+                    snapshot_data['away_spread'], snapshot_data['away_spread_odds'],
+                    snapshot_data['home_ml_odds'], snapshot_data['away_ml_odds'],
+                    snapshot_data['total_line'], snapshot_data['over_odds'], snapshot_data['under_odds'],
+                    now
+                ))
+                snapshots_created += 1
+
     cur.close()
     conn.close()
 
-    return {"games": games_created, "markets": markets_created}
+    return {"games": games_created, "markets": markets_created, "snapshots": snapshots_created}
 
 
 def run_ingest():
