@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Market, BetDetail, BetHistory, MarketFilters } from '@/types/market';
+import type { Market, BetDetail, BetHistory, MarketFilters, Algorithm } from '@/types/market';
 import type { PerformanceBucket } from '@/types/evaluation';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api/v1';
