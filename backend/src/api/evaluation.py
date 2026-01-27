@@ -1,364 +1,180 @@
 """Evaluation and analytics API endpoints."""
 
 from datetime import date, timedelta
-from typing import Literal
 
 import psycopg2
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from src.database import get_db
-from src.schemas.evaluation import (
-    AlgorithmComparisonResponse,
-    CalibrationResponse,
-    PerformanceByBucketResponse,
-)
+from fastapi import APIRouter, Query
 
 router = APIRouter()
 
 DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
 
 
-def _calculate_bet_result(market_type: str, outcome_label: str, line: float,
-                          home_score: int, away_score: int) -> tuple[bool, bool, float]:
-    """Calculate if bet won, pushed, and profit. Returns (won, pushed, profit)."""
-    home_margin = home_score - away_score
-    total_pts = home_score + away_score
-    is_home = 'home' in outcome_label.lower()
+@router.get("/evaluation/summary")
+async def get_evaluation_summary(
+    days: int = Query(14, ge=1, le=90),
+    min_value: float = Query(65, ge=0, le=100),
+) -> dict:
+    """
+    Get overall model performance summary.
 
-    if market_type == 'spread':
-        if is_home:
-            margin = home_margin + (line or 0)
-        else:
-            margin = -home_margin + (line or 0)
-        return (margin > 0, margin == 0, margin)
-
-    elif market_type == 'moneyline':
-        if is_home:
-            return (home_margin > 0, False, home_margin)
-        else:
-            return (home_margin < 0, False, -home_margin)
-
-    elif market_type == 'total':
-        is_over = 'over' in outcome_label.lower()
-        if is_over:
-            return (total_pts > (line or 0), total_pts == (line or 0), total_pts - (line or 0))
-        else:
-            return (total_pts < (line or 0), total_pts == (line or 0), (line or 0) - total_pts)
-
-    return (False, False, 0)
-
-
-def _backtest_algorithm(days: int, min_value: float, algorithm: Literal['a', 'b']) -> dict:
-    """Run backtest for an algorithm and return metrics."""
+    Returns metrics including win rate, ROI, and profit for bets above min_value threshold.
+    Uses prediction_snapshots for accurate graded data.
+    """
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
 
     cutoff = date.today() - timedelta(days=days)
-    value_col = 'algo_a_value_score' if algorithm == 'a' else 'algo_b_value_score'
 
-    # Query value scores with game results - JOIN in one query to avoid N+1
-    cur.execute(f'''
-        WITH ranked_bets AS (
-            SELECT
-                vs.{value_col} as value_score, mp.p_true, mp.raw_edge,
-                m.market_type, m.outcome_label, m.line, m.odds_decimal,
-                g.home_team_id, g.away_team_id, g.game_date,
-                ROW_NUMBER() OVER (
-                    PARTITION BY g.game_id, m.market_type,
-                        CASE
-                            WHEN m.market_type = 'total' THEN
-                                CASE WHEN m.outcome_label ILIKE '%%over%%' THEN 'over' ELSE 'under' END
-                            ELSE
-                                CASE WHEN m.outcome_label ILIKE '%%home%%' THEN 'home' ELSE 'away' END
-                        END
-                    ORDER BY vs.{value_col} DESC, vs.calc_time DESC
-                ) as rn
-            FROM value_scores vs
-            JOIN model_predictions mp ON mp.prediction_id = vs.prediction_id
-            JOIN markets m ON m.market_id = vs.market_id
-            JOIN games g ON g.game_id = m.game_id
-            WHERE g.game_date >= %s
-            AND vs.{value_col} >= %s
-        )
-        SELECT rb.value_score, rb.p_true, rb.raw_edge, rb.market_type, rb.outcome_label,
-               rb.line, rb.odds_decimal, gr.home_score, gr.away_score
-        FROM ranked_bets rb
-        JOIN game_results gr ON gr.home_team_id = rb.home_team_id
-                            AND gr.away_team_id = rb.away_team_id
-                            AND gr.game_date = rb.game_date
-        WHERE rb.rn = 1
+    # Get performance from prediction_snapshots
+    cur.execute('''
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN best_bet_result = 'win' THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN best_bet_result = 'loss' THEN 1 ELSE 0 END) as losses,
+            SUM(CASE WHEN best_bet_result = 'push' THEN 1 ELSE 0 END) as pushes,
+            SUM(COALESCE(best_bet_profit, 0)) as profit
+        FROM prediction_snapshots
+        WHERE game_date >= %s
+        AND winner_correct IS NOT NULL
+        AND best_bet_value_score >= %s
+        AND best_bet_type IS NOT NULL
     ''', (cutoff, min_value))
 
-    scores = cur.fetchall()
-
-    wins = 0
-    losses = 0
-    pushes = 0
-    profit = 0
-    brier_sum = 0
-    brier_count = 0
-
-    for row in scores:
-        (value_score, p_true, raw_edge, market_type, outcome_label,
-         line, odds, home_score, away_score) = row
-
-        won, pushed, _ = _calculate_bet_result(market_type, outcome_label,
-                                               float(line) if line else None,
-                                               home_score, away_score)
-
-        if pushed:
-            pushes += 1
-        elif won:
-            wins += 1
-            profit += 100 * (float(odds) - 1)
-        else:
-            losses += 1
-            profit -= 100
-
-        # Brier score: (p_true - actual)^2
-        actual = 1.0 if won else 0.0
-        brier_sum += (float(p_true) - actual) ** 2
-        brier_count += 1
+    row = cur.fetchone()
+    total, wins, losses, pushes, profit = row
 
     cur.close()
     conn.close()
 
-    total_bets = wins + losses
+    total_bets = (wins or 0) + (losses or 0)
 
     return {
-        'brier_score': brier_sum / brier_count if brier_count > 0 else None,
-        'log_loss': None,  # TODO
-        'clv_avg': None,  # TODO
-        'roi': (profit / (total_bets * 100)) if total_bets > 0 else None,
-        'win_rate': (wins / total_bets) if total_bets > 0 else None,
-        'bet_count': total_bets,
-        'wins': wins,
-        'losses': losses,
-        'pushes': pushes,
-        'profit': profit,
+        'period_days': days,
+        'min_value_threshold': min_value,
+        'total_bets': total_bets,
+        'wins': wins or 0,
+        'losses': losses or 0,
+        'pushes': pushes or 0,
+        'win_rate': round((wins or 0) / total_bets * 100, 1) if total_bets > 0 else None,
+        'profit': round(float(profit or 0), 2),
+        'roi': round(float(profit or 0) / (total_bets * 100) * 100, 1) if total_bets > 0 else None,
     }
 
 
-@router.get("/evaluation/compare", response_model=AlgorithmComparisonResponse)
-async def compare_algorithms(
-    start_date: date | None = None,
-    end_date: date | None = None,
-    market_type: str | None = None,
-    days: int = Query(14, ge=1, le=90),
-    min_value: float = Query(50, ge=0, le=100),
-    db: AsyncSession = Depends(get_db),
-) -> AlgorithmComparisonResponse:
-    """
-    Compare Algorithm A vs Algorithm B performance.
-
-    Returns metrics including:
-    - Brier score
-    - ROI
-    - Win rate
-    - Bet count and P/L
-    """
-    algo_a = _backtest_algorithm(days, min_value, 'a')
-    algo_b = _backtest_algorithm(days, min_value, 'b')
-
-    # Determine recommendation
-    if algo_a['bet_count'] < 10 or algo_b['bet_count'] < 10:
-        recommendation = 'insufficient_data'
-    elif algo_a['roi'] and algo_b['roi']:
-        if algo_a['roi'] > algo_b['roi'] + 0.05:
-            recommendation = 'algo_a'
-        elif algo_b['roi'] > algo_a['roi'] + 0.05:
-            recommendation = 'algo_b'
-        else:
-            recommendation = 'no_difference'
-    else:
-        recommendation = 'insufficient_data'
-
-    return AlgorithmComparisonResponse(
-        period_start=start_date or (date.today() - timedelta(days=days)),
-        period_end=end_date or date.today(),
-        algo_a_metrics={
-            "brier_score": algo_a['brier_score'],
-            "log_loss": algo_a['log_loss'],
-            "clv_avg": algo_a['clv_avg'],
-            "roi": algo_a['roi'],
-            "win_rate": algo_a['win_rate'],
-            "bet_count": algo_a['bet_count'],
-        },
-        algo_b_metrics={
-            "brier_score": algo_b['brier_score'],
-            "log_loss": algo_b['log_loss'],
-            "clv_avg": algo_b['clv_avg'],
-            "roi": algo_b['roi'],
-            "win_rate": algo_b['win_rate'],
-            "bet_count": algo_b['bet_count'],
-        },
-        recommendation=recommendation,
-    )
-
-
-@router.get("/evaluation/calibration", response_model=list[CalibrationResponse])
-async def get_calibration_curves(
-    market_type: str | None = None,
-    algorithm: str = "a",
-    db: AsyncSession = Depends(get_db),
-) -> list[CalibrationResponse]:
-    """
-    Get calibration curve data for model evaluation.
-
-    Returns predicted vs actual probabilities binned by prediction confidence.
-    """
-    # TODO: Implement
-    return []
-
-
-def _performance_by_bucket(days: int, algorithm: Literal['a', 'b']) -> list[dict]:
-    """Calculate performance by value score bucket."""
+def _performance_by_bucket(days: int) -> list[dict]:
+    """Calculate performance by value score bucket using prediction_snapshots."""
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
 
     cutoff = date.today() - timedelta(days=days)
-    value_col = 'algo_a_value_score' if algorithm == 'a' else 'algo_b_value_score'
 
-    # Get all scored bets with results - JOIN to avoid N+1 queries
-    cur.execute(f'''
-        WITH ranked_bets AS (
-            SELECT
-                vs.{value_col} as value_score, mp.p_true,
-                m.market_type, m.outcome_label, m.line, m.odds_decimal,
-                g.home_team_id, g.away_team_id, g.game_date,
-                ROW_NUMBER() OVER (
-                    PARTITION BY g.game_id, m.market_type,
-                        CASE
-                            WHEN m.market_type = 'total' THEN
-                                CASE WHEN m.outcome_label ILIKE '%%over%%' THEN 'over' ELSE 'under' END
-                            ELSE
-                                CASE WHEN m.outcome_label ILIKE '%%home%%' THEN 'home' ELSE 'away' END
-                        END
-                    ORDER BY vs.{value_col} DESC, vs.calc_time DESC
-                ) as rn
-            FROM value_scores vs
-            JOIN model_predictions mp ON mp.prediction_id = vs.prediction_id
-            JOIN markets m ON m.market_id = vs.market_id
-            JOIN games g ON g.game_id = m.game_id
-            WHERE g.game_date >= %s
-        )
-        SELECT rb.value_score, rb.p_true, rb.market_type, rb.outcome_label,
-               rb.line, rb.odds_decimal, gr.home_score, gr.away_score
-        FROM ranked_bets rb
-        JOIN game_results gr ON gr.home_team_id = rb.home_team_id
-                            AND gr.away_team_id = rb.away_team_id
-                            AND gr.game_date = rb.game_date
-        WHERE rb.rn = 1
+    # Query prediction_snapshots for accurate graded data
+    cur.execute('''
+        SELECT
+            best_bet_value_score,
+            best_bet_result,
+            best_bet_profit,
+            best_bet_odds
+        FROM prediction_snapshots
+        WHERE game_date >= %s
+        AND winner_correct IS NOT NULL
+        AND best_bet_type IS NOT NULL
+        AND best_bet_value_score IS NOT NULL
     ''', (cutoff,))
 
-    scores = cur.fetchall()
+    rows = cur.fetchall()
 
     # Buckets
     buckets = {
-        '0-50': {'wins': 0, 'losses': 0, 'profit': 0},
-        '50-60': {'wins': 0, 'losses': 0, 'profit': 0},
-        '60-70': {'wins': 0, 'losses': 0, 'profit': 0},
-        '70-80': {'wins': 0, 'losses': 0, 'profit': 0},
-        '80-90': {'wins': 0, 'losses': 0, 'profit': 0},
-        '90-100': {'wins': 0, 'losses': 0, 'profit': 0},
+        '<50': {'wins': 0, 'losses': 0, 'profit': 0},
+        '50-59': {'wins': 0, 'losses': 0, 'profit': 0},
+        '60-69': {'wins': 0, 'losses': 0, 'profit': 0},
+        '70-79': {'wins': 0, 'losses': 0, 'profit': 0},
+        '80+': {'wins': 0, 'losses': 0, 'profit': 0},
     }
 
-    for row in scores:
-        (value_score, p_true, market_type, outcome_label,
-         line, odds, home_score, away_score) = row
+    for row in rows:
+        value_score, result, profit, odds = row
+
+        if value_score is None or result is None:
+            continue
 
         value = float(value_score)
 
         # Determine bucket
         if value < 50:
-            bucket = '0-50'
+            bucket = '<50'
         elif value < 60:
-            bucket = '50-60'
+            bucket = '50-59'
         elif value < 70:
-            bucket = '60-70'
+            bucket = '60-69'
         elif value < 80:
-            bucket = '70-80'
-        elif value < 90:
-            bucket = '80-90'
+            bucket = '70-79'
         else:
-            bucket = '90-100'
+            bucket = '80+'
 
-        won, pushed, _ = _calculate_bet_result(market_type, outcome_label,
-                                               float(line) if line else None,
-                                               home_score, away_score)
-
-        if pushed:
+        if result == 'push':
             continue
-
-        if won:
+        elif result == 'win':
             buckets[bucket]['wins'] += 1
-            buckets[bucket]['profit'] += 100 * (float(odds) - 1)
+            buckets[bucket]['profit'] += float(profit) if profit else 90.91
         else:
             buckets[bucket]['losses'] += 1
-            buckets[bucket]['profit'] -= 100
+            buckets[bucket]['profit'] += float(profit) if profit else -100
 
     cur.close()
     conn.close()
 
     # Format results
     results = []
-    for bucket_name, data in buckets.items():
+    for bucket_name in ['80+', '70-79', '60-69', '50-59', '<50']:
+        data = buckets[bucket_name]
         total = data['wins'] + data['losses']
         results.append({
             'bucket': bucket_name,
             'bet_count': total,
             'wins': data['wins'],
             'losses': data['losses'],
-            'win_rate': data['wins'] / total if total > 0 else None,
-            'roi': data['profit'] / (total * 100) if total > 0 else None,
-            'profit': data['profit'],
-            'clv_avg': None,
+            'win_rate': round(data['wins'] / total * 100, 1) if total > 0 else None,
+            'roi': round(data['profit'] / (total * 100) * 100, 1) if total > 0 else None,
+            'profit': round(data['profit'], 2),
         })
 
     return results
 
 
-@router.get("/evaluation/performance", response_model=list[PerformanceByBucketResponse])
+@router.get("/evaluation/performance")
 async def get_performance_by_bucket(
-    algorithm: str = "a",
-    bucket_type: str = Query("score", pattern="^(score|edge|confidence)$"),
     days: int = Query(14, ge=1, le=90),
-    db: AsyncSession = Depends(get_db),
-) -> list[PerformanceByBucketResponse]:
+) -> list[dict]:
     """
     Get performance metrics grouped by Value Score buckets.
 
-    Shows win rate, ROI, and CLV for different score ranges.
+    Shows win rate, ROI, and profit for different score ranges.
+    Uses prediction_snapshots for accurate graded data.
     """
-    results = _performance_by_bucket(days, algorithm)  # type: ignore
-
-    return [
-        PerformanceByBucketResponse(**r)
-        for r in results if r['bet_count'] > 0
-    ]
+    return _performance_by_bucket(days)
 
 
 @router.get("/evaluation/daily")
 async def get_daily_results(
     days: int = Query(7, ge=1, le=30),
-    algorithm: Literal['a', 'b'] = Query('b'),
-    min_value: float = Query(50, ge=0, le=100),
+    min_value: float = Query(65, ge=0, le=100),
 ) -> list[dict]:
     """
     Get daily performance breakdown for recent days.
 
     Shows each day's bets, wins, losses, and P/L.
-    Uses prediction_snapshots for accurate line data (markets table may have stale data).
+    Uses prediction_snapshots for accurate line data.
     """
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
 
     cutoff = date.today() - timedelta(days=days)
-    value_col = 'algo_a_value_score' if algorithm == 'a' else 'algo_b_value_score'
 
     # Query prediction_snapshots for accurate graded data
-    cur.execute(f'''
+    cur.execute('''
         SELECT
             ps.game_date,
             ps.home_team,
@@ -367,7 +183,7 @@ async def get_daily_results(
             ps.best_bet_team,
             ps.best_bet_line,
             ps.best_bet_odds,
-            ps.{value_col} as value_score,
+            ps.best_bet_value_score as value_score,
             ps.best_bet_result,
             ps.best_bet_profit,
             ps.home_score,
@@ -375,7 +191,7 @@ async def get_daily_results(
         FROM prediction_snapshots ps
         WHERE ps.game_date >= %s
         AND ps.winner_correct IS NOT NULL
-        AND ps.{value_col} >= %s
+        AND ps.best_bet_value_score >= %s
         AND ps.best_bet_type IS NOT NULL
         ORDER BY ps.game_date DESC, ps.tip_time DESC
     ''', (cutoff, min_value))
@@ -447,20 +263,6 @@ async def get_daily_results(
         results.append(d)
 
     return results
-
-
-@router.get("/trends")
-async def get_trends(
-    trend_type: str = Query("team", pattern="^(team|market|time|situational)$"),
-    db: AsyncSession = Depends(get_db),
-) -> list[dict]:
-    """
-    Get trend analysis for edge patterns.
-
-    Identifies situations where the model has historically found edge.
-    """
-    # TODO: Implement trend analysis
-    return []
 
 
 @router.get("/evaluation/predictions")
