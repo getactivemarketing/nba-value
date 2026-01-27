@@ -217,6 +217,11 @@ async def get_daily_results(
                 'losses': 0,
                 'pushes': 0,
                 'profit': 0.0,
+                'by_type': {
+                    'spread': {'wins': 0, 'losses': 0, 'pushes': 0, 'profit': 0.0},
+                    'total': {'wins': 0, 'losses': 0, 'pushes': 0, 'profit': 0.0},
+                    'moneyline': {'wins': 0, 'losses': 0, 'pushes': 0, 'profit': 0.0},
+                },
             }
 
         # Format bet description
@@ -241,6 +246,18 @@ async def get_daily_results(
 
         daily[date_str]['profit'] += profit
 
+        # Track by bet type
+        bt = bet_type or 'spread'
+        if bt in daily[date_str]['by_type']:
+            if bet_result == 'push':
+                daily[date_str]['by_type'][bt]['pushes'] += 1
+            elif bet_result == 'win':
+                daily[date_str]['by_type'][bt]['wins'] += 1
+                daily[date_str]['by_type'][bt]['profit'] += profit
+            else:
+                daily[date_str]['by_type'][bt]['losses'] += 1
+                daily[date_str]['by_type'][bt]['profit'] += profit
+
         daily[date_str]['bets'].append({
             'matchup': f'{away} @ {home}',
             'bet': f'{team_str} {bet_type} {line_str}'.strip(),
@@ -260,6 +277,14 @@ async def get_daily_results(
         d['record'] = f"{d['wins']}-{d['losses']}" + (f"-{d['pushes']}" if d['pushes'] > 0 else "")
         d['roi'] = round(d['profit'] / (total_bets * 100) * 100, 1) if total_bets > 0 else 0
         d['profit'] = round(d['profit'], 2)
+
+        # Format by_type with records
+        for bt, stats in d['by_type'].items():
+            bt_total = stats['wins'] + stats['losses']
+            stats['record'] = f"{stats['wins']}-{stats['losses']}" + (f"-{stats['pushes']}" if stats['pushes'] > 0 else "")
+            stats['profit'] = round(stats['profit'], 2)
+            stats['roi'] = round(stats['profit'] / (bt_total * 100) * 100, 1) if bt_total > 0 else None
+
         results.append(d)
 
     return results
