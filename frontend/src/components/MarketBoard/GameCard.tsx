@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getTeamLogo, getTeamColor } from '@/lib/teamLogos';
-import type { Market, Algorithm } from '@/types/market';
+import type { Market } from '@/types/market';
 import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries, HeadToHead } from '@/lib/api';
 import { TornadoChart } from './TornadoChart';
 import { ValueBadge } from '@/components/ui/ValueBadge';
@@ -12,7 +12,6 @@ interface GameCardProps {
   awayTeam: string;
   tipTime: string;
   markets: Market[];
-  algorithm: Algorithm;
   homeTrends?: TeamTrends;
   awayTrends?: TeamTrends;
   homeInjuries?: TeamInjuries;
@@ -36,7 +35,7 @@ function formatLine(line: number | null, showPlus = true): string {
 }
 
 // Get best value score for a team's spread market
-function getTeamSpreadValue(markets: Market[], _team: string, isHome: boolean, algorithm: Algorithm): { score: number; line: number | null; marketId: string; winProb: number } | null {
+function getTeamSpreadValue(markets: Market[], _team: string, isHome: boolean): { score: number; line: number | null; marketId: string; winProb: number } | null {
   const spreadMarkets = markets.filter(m =>
     m.market_type === 'spread' &&
     ((isHome && m.outcome_label.includes('home')) || (!isHome && m.outcome_label.includes('away')))
@@ -45,15 +44,12 @@ function getTeamSpreadValue(markets: Market[], _team: string, isHome: boolean, a
   if (spreadMarkets.length === 0) return null;
 
   const best = spreadMarkets.reduce((a, b) => {
-    const aScore = algorithm === 'a' ? a.algo_a_value_score : a.algo_b_value_score;
-    const bScore = algorithm === 'a' ? b.algo_a_value_score : b.algo_b_value_score;
-    return bScore > aScore ? b : a;
+    return b.algo_a_value_score > a.algo_a_value_score ? b : a;
   });
 
-  const score = algorithm === 'a' ? best.algo_a_value_score : best.algo_b_value_score;
   // p_true is the model's probability this bet wins (covers the spread)
   const winProb = Math.round(best.p_true * 100);
-  return { score, line: best.line, marketId: best.market_id, winProb };
+  return { score: best.algo_a_value_score, line: best.line, marketId: best.market_id, winProb };
 }
 
 // Get consensus spread line (returns home team's perspective)
@@ -132,12 +128,12 @@ function TeamLogo({ team, size = 48 }: { team: string; size?: number }) {
   );
 }
 
-export function GameCard({ homeTeam, awayTeam, tipTime, markets, algorithm, homeTrends, awayTrends, homeInjuries, awayInjuries, prediction, tornadoChart, headToHead }: GameCardProps) {
+export function GameCard({ homeTeam, awayTeam, tipTime, markets, homeTrends, awayTrends, homeInjuries, awayInjuries, prediction, tornadoChart, headToHead }: GameCardProps) {
   const { date, time } = formatGameTime(tipTime);
 
   // Get spread values for each team
-  const awaySpread = getTeamSpreadValue(markets, awayTeam, false, algorithm);
-  const homeSpread = getTeamSpreadValue(markets, homeTeam, true, algorithm);
+  const awaySpread = getTeamSpreadValue(markets, awayTeam, false);
+  const homeSpread = getTeamSpreadValue(markets, homeTeam, true);
 
   // Get total line
   const totalLine = getTotalLine(markets);

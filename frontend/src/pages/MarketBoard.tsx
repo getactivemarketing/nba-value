@@ -5,7 +5,7 @@ import { GameCard } from '@/components/MarketBoard/GameCard';
 import { HistoricalGameCard } from '@/components/MarketBoard/HistoricalGameCard';
 import { TopPicks } from '@/components/MarketBoard/TopPicks';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
-import type { MarketFilters as Filters, Market, Algorithm } from '@/types/market';
+import type { MarketFilters as Filters, Market } from '@/types/market';
 import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries, HeadToHead } from '@/lib/api';
 
 interface GameGroup {
@@ -94,13 +94,12 @@ function GameCardSkeleton() {
 }
 
 export function MarketBoard() {
-  const [algorithm, setAlgorithm] = useState<Algorithm>('b');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
 
   const dates = useMemo(() => getDateRange(), []);
   const isViewingPast = useMemo(() => isPastDate(selectedDate), [selectedDate]);
 
-  const filters: Partial<Filters> = { algorithm };
+  const filters: Partial<Filters> = {};
   const debouncedFilters = useDebounce(filters, 300);
 
   const { data: markets, isLoading, error, isFetching } = useMarkets(debouncedFilters);
@@ -329,41 +328,13 @@ export function MarketBoard() {
         </button>
       </div>
 
-      {/* Algorithm Toggle & Loading */}
-      <div className="flex justify-between items-center">
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-500">Value Algorithm:</span>
-          <div className="flex rounded-lg overflow-hidden border border-gray-200">
-            <button
-              onClick={() => setAlgorithm('a')}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                algorithm === 'a'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              Algo A
-            </button>
-            <button
-              onClick={() => setAlgorithm('b')}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                algorithm === 'b'
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-white text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              Algo B
-            </button>
-          </div>
+      {/* Loading Indicator */}
+      {isFetching && !isLoading && (
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          Updating...
         </div>
-
-        {isFetching && !isLoading && (
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-            Updating...
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Legend */}
       <div className="flex flex-wrap gap-6 text-sm text-gray-500 bg-white rounded-lg border border-gray-200 p-3">
@@ -464,7 +435,6 @@ export function MarketBoard() {
                   awayTeam={game.awayTeam}
                   tipTime={game.tipTime}
                   markets={game.markets}
-                  algorithm={algorithm}
                   homeTrends={game.homeTrends}
                   awayTrends={game.awayTrends}
                   homeInjuries={game.homeInjuries}
