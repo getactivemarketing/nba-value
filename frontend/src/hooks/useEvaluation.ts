@@ -1,34 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { Algorithm } from '@/types/market';
 
-export function useAlgorithmComparison(
-  startDate?: string,
-  endDate?: string,
-  marketType?: string
-) {
+export function useEvaluationSummary(days: number = 14, minValue: number = 65) {
   return useQuery({
-    queryKey: ['evaluation', 'compare', startDate, endDate, marketType],
-    queryFn: () => api.getAlgorithmComparison(startDate, endDate, marketType),
+    queryKey: ['evaluation', 'summary', days, minValue],
+    queryFn: () => api.getEvaluationSummary(days, minValue),
     staleTime: 300000, // 5 minutes - evaluation data doesn't change often
   });
 }
 
-export function useCalibrationCurve(marketType?: string, algorithm: Algorithm = 'a') {
+export function usePerformanceByBucket(days: number = 14) {
   return useQuery({
-    queryKey: ['evaluation', 'calibration', marketType, algorithm],
-    queryFn: () => api.getCalibrationCurve(marketType, algorithm),
-    staleTime: 300000,
-  });
-}
-
-export function usePerformanceByBucket(
-  algorithm: Algorithm = 'a',
-  bucketType: 'score' | 'edge' | 'confidence' = 'score'
-) {
-  return useQuery({
-    queryKey: ['evaluation', 'performance', algorithm, bucketType],
-    queryFn: () => api.getPerformanceByBucket(algorithm, bucketType),
+    queryKey: ['evaluation', 'performance', days],
+    queryFn: () => api.getPerformanceByBucket(days),
     staleTime: 300000,
   });
 }
@@ -42,6 +26,15 @@ export interface DailyBet {
   final_score: string;
 }
 
+export interface BetTypeStats {
+  wins: number;
+  losses: number;
+  pushes: number;
+  profit: number;
+  record: string;
+  roi: number | null;
+}
+
 export interface DailyResult {
   date: string;
   bets: DailyBet[];
@@ -51,16 +44,17 @@ export interface DailyResult {
   profit: number;
   record: string;
   roi: number;
+  by_type: {
+    spread: BetTypeStats;
+    total: BetTypeStats;
+    moneyline: BetTypeStats;
+  };
 }
 
-export function useDailyResults(
-  days: number = 7,
-  algorithm: Algorithm = 'b',
-  minValue: number = 50
-) {
+export function useDailyResults(days: number = 7, minValue: number = 65) {
   return useQuery({
-    queryKey: ['evaluation', 'daily', days, algorithm, minValue],
-    queryFn: () => api.getDailyResults(days, algorithm, minValue),
+    queryKey: ['evaluation', 'daily', days, minValue],
+    queryFn: () => api.getDailyResults(days, minValue),
     staleTime: 300000,
   });
 }

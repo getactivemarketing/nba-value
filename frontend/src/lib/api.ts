@@ -1,6 +1,6 @@
 import axios from 'axios';
-import type { Market, BetDetail, BetHistory, MarketFilters, Algorithm } from '@/types/market';
-import type { AlgorithmComparison, CalibrationPoint, PerformanceBucket } from '@/types/evaluation';
+import type { Market, BetDetail, BetHistory, MarketFilters } from '@/types/market';
+import type { PerformanceBucket } from '@/types/evaluation';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api/v1';
 
@@ -50,48 +50,31 @@ export const api = {
   },
 
   // Evaluation
-  async getAlgorithmComparison(
-    startDate?: string,
-    endDate?: string,
-    marketType?: string
-  ): Promise<AlgorithmComparison> {
-    const params = new URLSearchParams();
-    if (startDate) params.append('start_date', startDate);
-    if (endDate) params.append('end_date', endDate);
-    if (marketType) params.append('market_type', marketType);
-
-    const response = await client.get<AlgorithmComparison>(`/evaluation/compare?${params}`);
-    return response.data;
-  },
-
-  async getCalibrationCurve(
-    marketType?: string,
-    algorithm: Algorithm = 'a'
-  ): Promise<CalibrationPoint[]> {
-    const params = new URLSearchParams({ algorithm });
-    if (marketType) params.append('market_type', marketType);
-
-    const response = await client.get<CalibrationPoint[]>(`/evaluation/calibration?${params}`);
+  async getEvaluationSummary(
+    days: number = 14,
+    minValue: number = 65
+  ): Promise<EvaluationSummary> {
+    const response = await client.get<EvaluationSummary>(
+      `/evaluation/summary?days=${days}&min_value=${minValue}`
+    );
     return response.data;
   },
 
   async getPerformanceByBucket(
-    algorithm: Algorithm = 'a',
-    bucketType: 'score' | 'edge' | 'confidence' = 'score'
+    days: number = 14
   ): Promise<PerformanceBucket[]> {
     const response = await client.get<PerformanceBucket[]>(
-      `/evaluation/performance?algorithm=${algorithm}&bucket_type=${bucketType}`
+      `/evaluation/performance?days=${days}`
     );
     return response.data;
   },
 
   async getDailyResults(
     days: number = 7,
-    algorithm: Algorithm = 'b',
-    minValue: number = 50
+    minValue: number = 65
   ): Promise<DailyResult[]> {
     const response = await client.get<DailyResult[]>(
-      `/evaluation/daily?days=${days}&algorithm=${algorithm}&min_value=${minValue}`
+      `/evaluation/daily?days=${days}&min_value=${minValue}`
     );
     return response.data;
   },
@@ -298,6 +281,15 @@ export interface DailyBet {
   final_score: string;
 }
 
+export interface BetTypeStats {
+  wins: number;
+  losses: number;
+  pushes: number;
+  profit: number;
+  record: string;
+  roi: number | null;
+}
+
 export interface DailyResult {
   date: string;
   bets: DailyBet[];
@@ -307,6 +299,23 @@ export interface DailyResult {
   profit: number;
   record: string;
   roi: number;
+  by_type: {
+    spread: BetTypeStats;
+    total: BetTypeStats;
+    moneyline: BetTypeStats;
+  };
+}
+
+export interface EvaluationSummary {
+  period_days: number;
+  min_value_threshold: number;
+  total_bets: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  win_rate: number | null;
+  profit: number;
+  roi: number | null;
 }
 
 export interface PredictionPerformance {
