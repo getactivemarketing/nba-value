@@ -428,14 +428,15 @@ async def ingest_odds_async():
                         home_spread, home_spread_odds, away_spread, away_spread_odds,
                         home_ml_odds, away_ml_odds,
                         total_line, over_odds, under_odds,
-                        created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        is_closing_line, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ''', (
                     game_id, 'all', book_name, now, minutes_to_tip,
                     snapshot_data['home_spread'], snapshot_data['home_spread_odds'],
                     snapshot_data['away_spread'], snapshot_data['away_spread_odds'],
                     snapshot_data['home_ml_odds'], snapshot_data['away_ml_odds'],
                     snapshot_data['total_line'], snapshot_data['over_odds'], snapshot_data['under_odds'],
+                    False,  # is_closing_line - these are periodic snapshots, not closing lines
                     now
                 ))
                 snapshots_created += 1
