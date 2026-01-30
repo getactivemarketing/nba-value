@@ -351,19 +351,36 @@ class BallDontLieClient:
         Returns:
             Player dict or None if not found
         """
-        players = await self.search_players(full_name)
-        if not players:
+        # BallDontLie search doesn't work well with full names
+        # Try searching by last name first, then first name
+        parts = full_name.strip().split()
+        if not parts:
             return None
 
-        # Try to find exact match first
         name_lower = full_name.lower()
+
+        # Try last name search first (more unique)
+        if len(parts) > 1:
+            last_name = parts[-1]
+            players = await self.search_players(last_name)
+
+            # Look for exact full name match
+            for p in players:
+                player_full = f"{p['first_name']} {p['last_name']}".lower()
+                if player_full == name_lower:
+                    return p
+
+        # Try first name search as fallback
+        first_name = parts[0]
+        players = await self.search_players(first_name)
+
         for p in players:
             player_full = f"{p['first_name']} {p['last_name']}".lower()
             if player_full == name_lower:
                 return p
 
-        # Return first result if no exact match
-        return players[0] if players else None
+        # No exact match found
+        return None
 
     async def get_player_season_averages_batch(
         self, player_ids: list[int], season: int = 2024
