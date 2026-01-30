@@ -135,6 +135,12 @@ export const api = {
     const response = await client.get<ModelPerformance>(`/trends/model?days=${days}`);
     return response.data;
   },
+
+  // Line Movement
+  async getLineMovement(gameId: string): Promise<LineMovementResponse> {
+    const response = await client.get<LineMovementResponse>(`/games/${gameId}/line-movement`);
+    return response.data;
+  },
 };
 
 export interface TeamTrends {
@@ -212,6 +218,16 @@ export interface HeadToHead {
   }[];
 }
 
+export interface SharpMoney {
+  signal: 'sharp_home' | 'sharp_away' | 'neutral';
+  spread_movement: number;
+  total_movement: number;
+  opening_spread: number | null;
+  current_spread: number | null;
+  opening_total: number | null;
+  current_total: number | null;
+}
+
 export interface GameWithTrends {
   game_id: string;
   home_team: string;
@@ -230,6 +246,7 @@ export interface GameWithTrends {
   prediction: GamePrediction | null;
   tornado_chart: TornadoFactor[];
   head_to_head: HeadToHead | null;
+  sharp_money: SharpMoney | null;
 }
 
 export interface HistoricalGame {
@@ -459,4 +476,32 @@ export interface ModelPerformance {
     bet_result: string;
     value_score: number;
   }[];
+}
+
+// Line Movement Types
+export interface LineMovementPoint {
+  snapshot_time: string;
+  minutes_to_tip: number;
+  home_spread: number | null;
+  away_spread: number | null;
+  total_line: number | null;
+  home_spread_odds: number | null;
+  over_odds: number | null;
+}
+
+export interface SharpMoneySignal {
+  signal: 'sharp_home' | 'sharp_away' | 'neutral';
+  spread_movement: number;
+  total_movement: number;
+  opening_spread: number | null;
+  current_spread: number | null;
+  opening_total: number | null;
+  current_total: number | null;
+  interpretation: string;
+}
+
+export interface LineMovementResponse {
+  game_id: string;
+  snapshots: LineMovementPoint[];
+  sharp_money: SharpMoneySignal;
 }

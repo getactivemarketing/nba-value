@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getTeamLogo, getTeamColor } from '@/lib/teamLogos';
 import type { Market } from '@/types/market';
-import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries, HeadToHead } from '@/lib/api';
+import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries, HeadToHead, SharpMoney } from '@/lib/api';
 import { TornadoChart } from './TornadoChart';
 import { ValueBadge } from '@/components/ui/ValueBadge';
+import { SharpMoneyBadge } from '@/components/ui/SharpMoneyBadge';
 
 interface GameCardProps {
   gameId: string;
@@ -19,6 +20,7 @@ interface GameCardProps {
   prediction?: GamePrediction | null;
   tornadoChart?: TornadoFactor[];
   headToHead?: HeadToHead | null;
+  sharpMoney?: SharpMoney | null;
 }
 
 function formatGameTime(tipTime: string): { date: string; time: string } {
@@ -128,7 +130,7 @@ function TeamLogo({ team, size = 48 }: { team: string; size?: number }) {
   );
 }
 
-export function GameCard({ homeTeam, awayTeam, tipTime, markets, homeTrends, awayTrends, homeInjuries, awayInjuries, prediction, tornadoChart, headToHead }: GameCardProps) {
+export function GameCard({ gameId: _gameId, homeTeam, awayTeam, tipTime, markets, homeTrends, awayTrends, homeInjuries, awayInjuries, prediction, tornadoChart, headToHead, sharpMoney }: GameCardProps) {
   const { date, time } = formatGameTime(tipTime);
 
   // Get spread values for each team
@@ -197,6 +199,18 @@ export function GameCard({ homeTeam, awayTeam, tipTime, markets, homeTrends, awa
               <div className="mt-2 text-sm">
                 <span className="text-gray-500">o/u</span>{' '}
                 <span className="font-semibold text-gray-900">{totalLine}</span>
+              </div>
+            )}
+            {/* Sharp Money Indicator */}
+            {sharpMoney && sharpMoney.signal !== 'neutral' && (
+              <div className="mt-2">
+                <SharpMoneyBadge
+                  signal={sharpMoney.signal}
+                  homeTeam={homeTeam}
+                  awayTeam={awayTeam}
+                  spreadMovement={sharpMoney.spread_movement}
+                  size="sm"
+                />
               </div>
             )}
           </div>

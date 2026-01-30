@@ -4,6 +4,7 @@ import { ValueScoreBadge } from '@/components/ui/ValueScoreBadge';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
 import { ScoreHistoryChart, EmptyChart } from '@/components/Charts';
+import { ExplainabilityCard } from '@/components/MarketBoard/ExplainabilityCard';
 
 export function BetDetail() {
   const { marketId } = useParams<{ marketId: string }>();
@@ -60,6 +61,19 @@ export function BetDetail() {
           </div>
         </div>
       </div>
+
+      {/* Why We Like This Bet */}
+      <ExplainabilityCard
+        valueScore={bet.recommended_score}
+        edge={bet.raw_edge * 100}
+        confidence={bet.active_algorithm === 'a' ? bet.algo_a.confidence.final_multiplier : bet.algo_b.confidence.final_multiplier}
+        marketQuality={bet.active_algorithm === 'a' ? bet.algo_a.market_quality.final_multiplier : bet.algo_b.market_quality.final_multiplier}
+        modelProb={bet.p_true * 100}
+        marketProb={bet.p_market * 100}
+        marketType={bet.market_type}
+        team={bet.outcome_label.includes('home') ? bet.home_team : (bet.outcome_label.includes('over') ? 'Over' : bet.outcome_label.includes('under') ? 'Under' : bet.away_team)}
+        line={bet.line}
+      />
 
       {/* Probability Comparison */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

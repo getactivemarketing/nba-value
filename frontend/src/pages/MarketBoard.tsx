@@ -6,7 +6,7 @@ import { HistoricalGameCard } from '@/components/MarketBoard/HistoricalGameCard'
 import { TopPicks } from '@/components/MarketBoard/TopPicks';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
 import type { MarketFilters as Filters, Market } from '@/types/market';
-import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries, HeadToHead } from '@/lib/api';
+import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries, HeadToHead, SharpMoney } from '@/lib/api';
 
 interface GameGroup {
   gameId: string;
@@ -21,6 +21,7 @@ interface GameGroup {
   prediction?: GamePrediction | null;
   tornadoChart?: TornadoFactor[];
   headToHead?: HeadToHead | null;
+  sharpMoney?: SharpMoney | null;
 }
 
 // Generate dates for the date picker
@@ -116,6 +117,7 @@ export function MarketBoard() {
       prediction: GamePrediction | null;
       tornadoChart: TornadoFactor[];
       headToHead: HeadToHead | null;
+      sharpMoney: SharpMoney | null;
     }>();
     if (gamesWithTrends) {
       for (const game of gamesWithTrends) {
@@ -127,6 +129,7 @@ export function MarketBoard() {
           prediction: game.prediction,
           tornadoChart: game.tornado_chart || [],
           headToHead: game.head_to_head || null,
+          sharpMoney: game.sharp_money || null,
         });
       }
     }
@@ -163,6 +166,7 @@ export function MarketBoard() {
           prediction: trends?.prediction,
           tornadoChart: trends?.tornadoChart,
           headToHead: trends?.headToHead,
+          sharpMoney: trends?.sharpMoney,
         });
       }
     }
@@ -442,6 +446,7 @@ export function MarketBoard() {
                   prediction={game.prediction}
                   tornadoChart={game.tornadoChart}
                   headToHead={game.headToHead}
+                  sharpMoney={game.sharpMoney}
                 />
               ))}
             </div>

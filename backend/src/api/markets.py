@@ -10,7 +10,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 
 from src.database import async_session
-from src.models import Game, Market, ValueScore, ModelPrediction, Team, TeamStats, GameResult
+from src.models import Game, Market, ValueScore, ModelPrediction, Team, TeamStats, GameResult, OddsSnapshot
 from src.services.injuries import get_all_team_injury_reports, TeamInjuryReport
 from src.config import settings
 
@@ -897,6 +897,63 @@ async def get_upcoming_games(
                 "severity": severity,
             }
 
+        # Get odds snapshots for sharp money calculation
+        game_ids = [g.game_id for g in games]
+        snapshots_by_game = {}
+        if game_ids:
+            snap_query = (
+                select(OddsSnapshot)
+                .where(OddsSnapshot.game_id.in_(game_ids))
+                .order_by(OddsSnapshot.snapshot_time.asc())
+            )
+            snap_result = await session.execute(snap_query)
+            all_snapshots = snap_result.scalars().all()
+
+            # Group by game_id
+            for snap in all_snapshots:
+                if snap.game_id not in snapshots_by_game:
+                    snapshots_by_game[snap.game_id] = []
+                snapshots_by_game[snap.game_id].append(snap)
+
+        def get_sharp_money_for_game(game_id: str) -> dict | None:
+            """Calculate sharp money signal for a game."""
+            snaps = snapshots_by_game.get(game_id, [])
+            if len(snaps) < 2:
+                return None
+
+            opening = snaps[0]
+            current = snaps[-1]
+
+            opening_spread = float(opening.home_spread) if opening.home_spread else None
+            current_spread = float(current.home_spread) if current.home_spread else None
+            opening_total = float(opening.total_line) if opening.total_line else None
+            current_total = float(current.total_line) if current.total_line else None
+
+            spread_move = 0
+            if opening_spread is not None and current_spread is not None:
+                spread_move = current_spread - opening_spread
+
+            total_move = 0
+            if opening_total is not None and current_total is not None:
+                total_move = current_total - opening_total
+
+            # Determine signal
+            signal = "neutral"
+            if spread_move < -0.5:
+                signal = "sharp_home"
+            elif spread_move > 0.5:
+                signal = "sharp_away"
+
+            return {
+                "signal": signal,
+                "spread_movement": round(spread_move, 1),
+                "total_movement": round(total_move, 1),
+                "opening_spread": opening_spread,
+                "current_spread": current_spread,
+                "opening_total": opening_total,
+                "current_total": current_total,
+            }
+
         response = []
         for game in games:
             home = teams.get(game.home_team_id)
@@ -935,6 +992,7 @@ async def get_upcoming_games(
                 "prediction": build_prediction(game, home_abbr, away_abbr, home_trends, away_trends),
                 "tornado_chart": build_tornado_chart(game.home_team_id, game.away_team_id),
                 "head_to_head": h2h,
+                "sharp_money": get_sharp_money_for_game(game.game_id),
             })
 
         return response
@@ -1586,3 +1644,128 @@ async def get_game_history(
         })
 
     return games
+
+
+# --- Line Movement & Sharp Money ---
+
+class LineMovementPoint(BaseModel):
+    """Single point in line movement history."""
+    snapshot_time: datetime
+    minutes_to_tip: int
+    home_spread: float | None
+    away_spread: float | None
+    total_line: float | None
+    home_spread_odds: float | None
+    over_odds: float | None
+
+
+class SharpMoneySignal(BaseModel):
+    """Sharp money indicator based on line movement."""
+    signal: str  # 'sharp_home', 'sharp_away', 'neutral'
+    spread_movement: float
+    total_movement: float
+    opening_spread: float | None
+    current_spread: float | None
+    opening_total: float | None
+    current_total: float | None
+    interpretation: str
+
+
+class LineMovementResponse(BaseModel):
+    """Response for line movement endpoint."""
+    game_id: str
+    snapshots: list[LineMovementPoint]
+    sharp_money: SharpMoneySignal
+
+
+def calculate_sharp_signal(snapshots: list) -> SharpMoneySignal:
+    """Analyze line movement for sharp money indicators."""
+    if len(snapshots) < 2:
+        return SharpMoneySignal(
+            signal="neutral",
+            spread_movement=0,
+            total_movement=0,
+            opening_spread=None,
+            current_spread=None,
+            opening_total=None,
+            current_total=None,
+            interpretation="Insufficient data for sharp money analysis"
+        )
+
+    opening = snapshots[0]
+    current = snapshots[-1]
+
+    opening_spread = float(opening.home_spread) if opening.home_spread else None
+    current_spread = float(current.home_spread) if current.home_spread else None
+    opening_total = float(opening.total_line) if opening.total_line else None
+    current_total = float(current.total_line) if current.total_line else None
+
+    spread_move = 0
+    if opening_spread is not None and current_spread is not None:
+        spread_move = current_spread - opening_spread
+
+    total_move = 0
+    if opening_total is not None and current_total is not None:
+        total_move = current_total - opening_total
+
+    # Sharp money typically moves lines against public
+    # If spread moves toward home team (more negative), sharp on home
+    signal = "neutral"
+    interpretation = "No significant line movement"
+
+    if spread_move < -0.5:
+        signal = "sharp_home"
+        interpretation = f"Line moved {abs(spread_move):.1f} pts toward home team, suggesting sharp money on home"
+    elif spread_move > 0.5:
+        signal = "sharp_away"
+        interpretation = f"Line moved {abs(spread_move):.1f} pts toward away team, suggesting sharp money on away"
+
+    return SharpMoneySignal(
+        signal=signal,
+        spread_movement=round(spread_move, 1),
+        total_movement=round(total_move, 1),
+        opening_spread=opening_spread,
+        current_spread=current_spread,
+        opening_total=opening_total,
+        current_total=current_total,
+        interpretation=interpretation
+    )
+
+
+@router.get("/games/{game_id}/line-movement", response_model=LineMovementResponse)
+async def get_line_movement(game_id: str) -> LineMovementResponse:
+    """
+    Get historical line movement for a game.
+
+    Returns all odds snapshots for the game ordered by time,
+    plus a sharp money signal based on movement analysis.
+    """
+    async with async_session() as session:
+        query = (
+            select(OddsSnapshot)
+            .where(OddsSnapshot.game_id == game_id)
+            .order_by(OddsSnapshot.snapshot_time.asc())
+        )
+        result = await session.execute(query)
+        snapshots = result.scalars().all()
+
+        points = [
+            LineMovementPoint(
+                snapshot_time=s.snapshot_time,
+                minutes_to_tip=s.minutes_to_tip or 0,
+                home_spread=float(s.home_spread) if s.home_spread else None,
+                away_spread=float(s.away_spread) if s.away_spread else None,
+                total_line=float(s.total_line) if s.total_line else None,
+                home_spread_odds=float(s.home_spread_odds) if s.home_spread_odds else None,
+                over_odds=float(s.over_odds) if s.over_odds else None,
+            )
+            for s in snapshots
+        ]
+
+        sharp_money = calculate_sharp_signal(snapshots)
+
+        return LineMovementResponse(
+            game_id=game_id,
+            snapshots=points,
+            sharp_money=sharp_money
+        )
