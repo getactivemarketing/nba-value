@@ -147,6 +147,14 @@ export const api = {
     const response = await client.get<PlayerPropsResponse>(`/games/${gameId}/props`);
     return response.data;
   },
+
+  // Top Props (Value Analysis)
+  async getTopProps(limit: number = 10, minScore: number = 50): Promise<TopPropsResponse> {
+    const response = await client.get<TopPropsResponse>(
+      `/props/top?limit=${limit}&min_score=${minScore}`
+    );
+    return response.data;
+  },
 };
 
 export interface TeamTrends {
@@ -526,4 +534,26 @@ export interface PlayerPropsResponse {
   game_id: string;
   props: PlayerProp[];
   snapshot_time: string | null;
+}
+
+// Scored Props (Value Analysis)
+export interface ScoredProp {
+  player_name: string;
+  prop_type: string;
+  line: number;
+  over_odds: number | null;
+  under_odds: number | null;
+  book: string;
+  game_id: string;
+  season_avg: number | null;
+  edge: number | null;
+  edge_pct: number | null;
+  recommendation: string;  // "OVER", "UNDER", "PASS"
+  value_score: number;
+  reasoning: string;
+}
+
+export interface TopPropsResponse {
+  props: ScoredProp[];
+  generated_at: string;
 }

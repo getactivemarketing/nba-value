@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useUpcomingGames } from '@/hooks/useMarkets';
 import { usePlayerProps } from '@/hooks/usePlayerProps';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
 import { clsx } from 'clsx';
-import type { PlayerProp } from '@/lib/api';
+import { api } from '@/lib/api';
+import type { PlayerProp, ScoredProp, TopPropsResponse } from '@/lib/api';
 
 // Format prop type for display
 function formatPropType(propType: string): string {
@@ -46,6 +48,68 @@ function formatTimeToTip(tipTime: string): string {
   if (diffHours === 0) return `${diffMins}m`;
   if (diffHours < 24) return `${diffHours}h ${diffMins}m`;
   return tip.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+// Hook for top props
+function useTopProps(limit: number = 10, minScore: number = 50) {
+  return useQuery<TopPropsResponse>({
+    queryKey: ['topProps', limit, minScore],
+    queryFn: () => api.getTopProps(limit, minScore),
+    staleTime: 300000, // 5 minutes
+    refetchInterval: 600000, // 10 minutes
+  });
+}
+
+// Top Picks Card Component
+function TopPickCard({ prop }: { prop: ScoredProp }) {
+  const isOver = prop.recommendation === 'OVER';
+  const relevantOdds = isOver ? prop.over_odds : prop.under_odds;
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between mb-2">
+        <div>
+          <div className="font-semibold text-gray-900">{prop.player_name}</div>
+          <div className="text-sm text-gray-500">{formatPropType(prop.prop_type)}</div>
+        </div>
+        <div className={clsx(
+          'px-2 py-1 rounded-full text-sm font-bold',
+          prop.value_score >= 70 ? 'bg-amber-100 text-amber-700' :
+          prop.value_score >= 60 ? 'bg-green-100 text-green-700' :
+          'bg-blue-100 text-blue-700'
+        )}>
+          {prop.value_score.toFixed(0)}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 mb-3">
+        <div className={clsx(
+          'px-3 py-1.5 rounded-lg font-bold text-lg',
+          isOver ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+        )}>
+          {prop.recommendation} {prop.line}
+        </div>
+        {relevantOdds && (
+          <div className={clsx(
+            'text-sm font-medium',
+            relevantOdds >= 2 ? 'text-green-600' : 'text-gray-600'
+          )}>
+            {formatOdds(relevantOdds)}
+          </div>
+        )}
+      </div>
+
+      <div className="text-sm text-gray-600 mb-2">
+        {prop.reasoning}
+      </div>
+
+      <div className="flex items-center gap-4 text-xs text-gray-500">
+        <span>Season Avg: {prop.season_avg?.toFixed(1) ?? '-'}</span>
+        <span>Edge: {prop.edge_pct ? `${prop.edge_pct > 0 ? '+' : ''}${prop.edge_pct.toFixed(1)}%` : '-'}</span>
+        <span className="capitalize">{prop.book}</span>
+      </div>
+    </div>
+  );
 }
 
 // Game card with expandable props
@@ -184,7 +248,8 @@ function GamePropsCard({
 
 export function PlayerPropsPage() {
   const [propTypeFilter, setPropTypeFilter] = useState('all');
-  const { data: games, isLoading, error } = useUpcomingGames(48); // Next 48 hours
+  const { data: games, isLoading: gamesLoading, error: gamesError } = useUpcomingGames(48);
+  const { data: topProps, isLoading: topLoading } = useTopProps(10, 50);
 
   const propTypes = [
     { value: 'all', label: 'All Props' },
@@ -194,7 +259,7 @@ export function PlayerPropsPage() {
     { value: 'threes', label: '3-Pointers' },
   ];
 
-  if (isLoading) {
+  if (gamesLoading) {
     return (
       <div className="flex justify-center py-12">
         <LoadingSpinner size="lg" />
@@ -202,22 +267,100 @@ export function PlayerPropsPage() {
     );
   }
 
-  if (error) {
-    return <ErrorMessage error={error as Error} />;
+  if (gamesError) {
+    return <ErrorMessage error={gamesError as Error} />;
   }
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Player Props</h1>
-          <p className="text-gray-500 mt-1">
-            View player prop lines for upcoming games
-          </p>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Player Props</h1>
+        <p className="text-gray-500 mt-1">
+          Top value props based on season averages
+        </p>
+      </div>
+
+      {/* Top Picks Section */}
+      <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <svg className="w-6 h-6 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+          </svg>
+          <h2 className="text-xl font-bold text-white">Top Picks</h2>
         </div>
 
-        {/* Filter */}
+        {topLoading ? (
+          <div className="flex justify-center py-8">
+            <LoadingSpinner size="md" />
+          </div>
+        ) : topProps?.props && topProps.props.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {topProps.props.slice(0, 6).map((prop, idx) => (
+              <TopPickCard key={`${prop.player_name}-${prop.prop_type}-${idx}`} prop={prop} />
+            ))}
+          </div>
+        ) : (
+          <div className="bg-slate-700/50 rounded-lg p-6 text-center">
+            <p className="text-slate-300">No value props found yet.</p>
+            <p className="text-slate-400 text-sm mt-1">
+              Props are analyzed once player data is loaded.
+            </p>
+          </div>
+        )}
+
+        {topProps?.props && topProps.props.length > 6 && (
+          <div className="mt-4 text-center">
+            <span className="text-slate-400 text-sm">
+              +{topProps.props.length - 6} more value props below
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* All Top Props Table (if more than 6) */}
+      {topProps?.props && topProps.props.length > 6 && (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200">
+            <h3 className="font-semibold text-gray-900">All Value Props</h3>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {topProps.props.slice(6).map((prop, idx) => (
+              <div key={`${prop.player_name}-${prop.prop_type}-${idx}`} className="px-4 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className={clsx(
+                    'w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold',
+                    prop.value_score >= 70 ? 'bg-amber-100 text-amber-700' :
+                    prop.value_score >= 60 ? 'bg-green-100 text-green-700' :
+                    'bg-blue-100 text-blue-700'
+                  )}>
+                    {prop.value_score.toFixed(0)}
+                  </div>
+                  <div>
+                    <div className="font-medium text-gray-900">{prop.player_name}</div>
+                    <div className="text-sm text-gray-500">{formatPropType(prop.prop_type)}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className={clsx(
+                    'px-2 py-1 rounded text-sm font-semibold',
+                    prop.recommendation === 'OVER' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                  )}>
+                    {prop.recommendation} {prop.line}
+                  </div>
+                  <div className="text-sm text-gray-500 w-24 text-right">
+                    Avg: {prop.season_avg?.toFixed(1) ?? '-'}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Filter & Browse Section */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <h3 className="text-lg font-semibold text-gray-900">Browse All Props by Game</h3>
         <div className="flex gap-2">
           {propTypes.map((type) => (
             <button
@@ -233,21 +376,6 @@ export function PlayerPropsPage() {
               {type.label}
             </button>
           ))}
-        </div>
-      </div>
-
-      {/* Info Banner */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <div className="flex items-start gap-3">
-          <svg className="w-5 h-5 text-blue-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <div className="text-sm text-blue-800">
-            <p className="font-medium">Player Props Data</p>
-            <p className="mt-1">
-              Click on a game to view available player props. Props are typically available 24-48 hours before tip-off and update periodically.
-            </p>
-          </div>
         </div>
       </div>
 

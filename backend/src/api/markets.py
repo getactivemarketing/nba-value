@@ -1846,3 +1846,69 @@ async def get_player_props(game_id: str) -> PlayerPropsResponse:
             props=props,
             snapshot_time=snapshot_time
         )
+
+
+# --- Top Props (Value Analysis) ---
+
+class ScoredPropResponse(BaseModel):
+    """A scored player prop with value analysis."""
+    player_name: str
+    prop_type: str
+    line: float
+    over_odds: float | None
+    under_odds: float | None
+    book: str
+    game_id: str
+    season_avg: float | None
+    edge: float | None
+    edge_pct: float | None
+    recommendation: str
+    value_score: float
+    reasoning: str
+
+
+class TopPropsResponse(BaseModel):
+    """Response for top props endpoint."""
+    props: list[ScoredPropResponse]
+    generated_at: datetime
+
+
+@router.get("/props/top", response_model=TopPropsResponse)
+async def get_top_props(limit: int = 10, min_score: int = 50) -> TopPropsResponse:
+    """
+    Get top value player props based on comparison to season averages.
+
+    Returns props where the line differs significantly from the player's
+    season average, indicating potential value.
+
+    Args:
+        limit: Maximum number of props to return (default 10)
+        min_score: Minimum value score threshold (default 50)
+    """
+    from src.services.scoring.prop_scorer import get_top_props as fetch_top_props
+
+    scored = await fetch_top_props(limit=limit, min_score=min_score)
+
+    props = [
+        ScoredPropResponse(
+            player_name=p.player_name,
+            prop_type=p.prop_type,
+            line=p.line,
+            over_odds=p.over_odds,
+            under_odds=p.under_odds,
+            book=p.book,
+            game_id=p.game_id,
+            season_avg=p.season_avg,
+            edge=p.edge,
+            edge_pct=p.edge_pct,
+            recommendation=p.recommendation,
+            value_score=p.value_score,
+            reasoning=p.reasoning,
+        )
+        for p in scored
+    ]
+
+    return TopPropsResponse(
+        props=props,
+        generated_at=datetime.now(timezone.utc),
+    )

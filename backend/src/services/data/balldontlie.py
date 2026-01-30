@@ -325,6 +325,46 @@ class BallDontLieClient:
         except httpx.HTTPStatusError:
             return None
 
+    async def search_players(self, search: str) -> list[dict]:
+        """
+        Search for players by name.
+
+        Args:
+            search: Player name or partial name
+
+        Returns:
+            List of matching player dicts
+        """
+        try:
+            data = await self._get("players", {"search": search, "per_page": 25})
+            return data.get("data", [])
+        except httpx.HTTPStatusError:
+            return []
+
+    async def find_player_by_name(self, full_name: str) -> dict | None:
+        """
+        Find a player by their full name.
+
+        Args:
+            full_name: Player's full name (e.g., "LeBron James")
+
+        Returns:
+            Player dict or None if not found
+        """
+        players = await self.search_players(full_name)
+        if not players:
+            return None
+
+        # Try to find exact match first
+        name_lower = full_name.lower()
+        for p in players:
+            player_full = f"{p['first_name']} {p['last_name']}".lower()
+            if player_full == name_lower:
+                return p
+
+        # Return first result if no exact match
+        return players[0] if players else None
+
     async def get_player_season_averages_batch(
         self, player_ids: list[int], season: int = 2024
     ) -> dict[int, dict]:
