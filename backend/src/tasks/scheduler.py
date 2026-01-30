@@ -569,6 +569,38 @@ def run_props():
         return {"status": "failed", "error": str(e)}
 
 
+def run_prop_snapshot():
+    """Score props and save predictions to prop_snapshots table."""
+    from src.services.scoring.prop_scorer import snapshot_top_props
+
+    log_task("Running prop snapshot...")
+    try:
+        saved = asyncio.run(snapshot_top_props(min_score=50))
+        log_task(f"Prop snapshot complete: {saved} props saved")
+        _last_run_times['prop_snapshot'] = datetime.now(timezone.utc)
+        return {"status": "success", "saved": saved}
+    except Exception as e:
+        log_task(f"Prop snapshot FAILED: {e}")
+        _last_run_times['prop_snapshot'] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
+
+
+def run_prop_grade():
+    """Grade prop predictions from completed games."""
+    from src.services.scoring.prop_scorer import grade_prop_snapshots
+
+    log_task("Running prop grading...")
+    try:
+        result = asyncio.run(grade_prop_snapshots(days_back=3))
+        log_task(f"Prop grading complete", **result)
+        _last_run_times['prop_grade'] = datetime.now(timezone.utc)
+        return {"status": "success", **result}
+    except Exception as e:
+        log_task(f"Prop grading FAILED: {e}")
+        _last_run_times['prop_grade'] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
+
+
 def run_scoring_sync() -> dict:
     """
     Synchronous scoring using psycopg2 directly.
@@ -1310,6 +1342,10 @@ if __name__ == '__main__':
             run_ingest()
         elif command == 'props':
             run_props()
+        elif command == 'prop_snapshot':
+            run_prop_snapshot()
+        elif command == 'prop_grade':
+            run_prop_grade()
         elif command == 'snapshot':
             run_snapshot()
         elif command == 'grade':
@@ -1322,7 +1358,7 @@ if __name__ == '__main__':
             start_scheduler()
         else:
             print(f"Unknown command: {command}")
-            print("Usage: python scheduler.py [stats|ingest|props|snapshot|grade|results|all|daemon]")
+            print("Usage: python scheduler.py [stats|ingest|props|prop_snapshot|prop_grade|snapshot|grade|results|all|daemon]")
     else:
         # Default: run all tasks once
         run_all()

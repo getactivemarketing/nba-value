@@ -1912,3 +1912,65 @@ async def get_top_props(limit: int = 10, min_score: int = 50) -> TopPropsRespons
         props=props,
         generated_at=datetime.now(timezone.utc),
     )
+
+
+class PropBucketStats(BaseModel):
+    """Stats for a value score bucket."""
+    bucket: str
+    total: int
+    wins: int
+    losses: int
+    win_rate: float | None
+
+
+class RecentPropResult(BaseModel):
+    """A recent prop result."""
+    player_name: str
+    prop_type: str
+    line: float
+    recommendation: str
+    value_score: float
+    actual_value: float | None
+    result: str
+    game_date: str | None
+
+
+class PropPerformanceResponse(BaseModel):
+    """Response for prop performance endpoint."""
+    days: int
+    min_score: int
+    total: int
+    wins: int
+    losses: int
+    pushes: int
+    win_rate: float | None
+    by_bucket: list[PropBucketStats]
+    recent: list[RecentPropResult]
+
+
+@router.get("/props/performance", response_model=PropPerformanceResponse)
+async def get_prop_performance(days: int = 7, min_score: int = 50) -> PropPerformanceResponse:
+    """
+    Get prop betting performance summary.
+
+    Shows win rate by value score bucket and recent results.
+
+    Args:
+        days: Number of days to analyze (default 7)
+        min_score: Minimum value score to include (default 50)
+    """
+    from src.services.scoring.prop_scorer import get_prop_performance
+
+    perf = get_prop_performance(days=days, min_score=min_score)
+
+    return PropPerformanceResponse(
+        days=perf["days"],
+        min_score=perf["min_score"],
+        total=perf["total"],
+        wins=perf["wins"],
+        losses=perf["losses"],
+        pushes=perf["pushes"],
+        win_rate=perf["win_rate"],
+        by_bucket=[PropBucketStats(**b) for b in perf["by_bucket"]],
+        recent=[RecentPropResult(**r) for r in perf["recent"]],
+    )

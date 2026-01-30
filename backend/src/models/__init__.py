@@ -12,6 +12,7 @@ from src.models.user import User
 from src.models.game_result import GameResult
 from src.models.prediction_snapshot import PredictionSnapshot
 from src.models.player_prop import PlayerProp
+from src.models.prop_snapshot import PropSnapshot
 
 __all__ = [
     "Game",
@@ -26,4 +27,5 @@ __all__ = [
     "GameResult",
     "PredictionSnapshot",
     "PlayerProp",
+    "PropSnapshot",
 ]
