@@ -461,6 +461,114 @@ def run_ingest():
         return {"status": "failed", "error": str(e)}
 
 
+async def ingest_player_props_async(hours_ahead: int = 6, max_games: int = 3):
+    """
+    Fetch and store player props for upcoming games.
+
+    Only fetches props for games starting within `hours_ahead` hours to conserve API quota.
+    Each game requires a separate API call.
+
+    Args:
+        hours_ahead: Only fetch props for games starting within this many hours
+        max_games: Maximum number of games to fetch props for (to limit API calls)
+    """
+    client = OddsAPIClient()
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(hours=hours_ahead)
+
+    conn = psycopg2.connect(DB_URL)
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    # Get upcoming games within the window
+    cur.execute('''
+        SELECT game_id, tip_time_utc, home_team_id, away_team_id
+        FROM games
+        WHERE status = 'scheduled'
+        AND tip_time_utc > %s
+        AND tip_time_utc < %s
+        ORDER BY tip_time_utc ASC
+        LIMIT %s
+    ''', (now, cutoff, max_games))
+
+    games = cur.fetchall()
+    logger.info(f"Found {len(games)} games for player props ingestion")
+
+    if not games:
+        cur.close()
+        conn.close()
+        return {"games_checked": 0, "props_created": 0}
+
+    props_created = 0
+    games_processed = 0
+
+    for game_id, tip_time, home_team, away_team in games:
+        try:
+            # Fetch player props for this game
+            props_data = await client.get_player_props(
+                event_id=game_id,
+                markets=["player_points", "player_rebounds", "player_assists"],
+            )
+
+            # Parse the props
+            props = client.parse_player_props(props_data)
+            logger.info(f"Fetched {len(props)} props for {away_team} @ {home_team}")
+
+            # Insert props into database
+            for prop in props:
+                # Try to determine player's team from context
+                player_team = None  # Could be enhanced with player roster lookup
+
+                cur.execute('''
+                    INSERT INTO player_props (
+                        game_id, player_name, player_team, prop_type,
+                        line, over_odds, under_odds, book, snapshot_time, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (
+                    prop['game_id'],
+                    prop['player_name'],
+                    player_team,
+                    prop['prop_type'],
+                    prop['line'],
+                    prop.get('over_odds'),
+                    prop.get('under_odds'),
+                    prop['book'],
+                    prop['snapshot_time'],
+                    now
+                ))
+                props_created += 1
+
+            games_processed += 1
+
+        except Exception as e:
+            logger.error(f"Failed to fetch props for game {game_id}: {e}")
+            continue
+
+    cur.close()
+    conn.close()
+
+    return {
+        "games_checked": len(games),
+        "games_processed": games_processed,
+        "props_created": props_created,
+        "requests_remaining": client.requests_remaining,
+    }
+
+
+def run_props():
+    """Sync wrapper for player props ingestion."""
+    log_task("Running player props ingestion...")
+    try:
+        result = asyncio.run(ingest_player_props_async())
+        log_task("Props ingestion complete", **result)
+        _last_run_times['props'] = datetime.now(timezone.utc)
+        return result
+    except Exception as e:
+        log_task(f"Props ingestion FAILED: {e}")
+        _last_run_times['props'] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
+
+
 def run_scoring_sync() -> dict:
     """
     Synchronous scoring using psycopg2 directly.
@@ -1200,6 +1308,8 @@ if __name__ == '__main__':
             run_team_stats()
         elif command == 'ingest':
             run_ingest()
+        elif command == 'props':
+            run_props()
         elif command == 'snapshot':
             run_snapshot()
         elif command == 'grade':
@@ -1212,7 +1322,7 @@ if __name__ == '__main__':
             start_scheduler()
         else:
             print(f"Unknown command: {command}")
-            print("Usage: python scheduler.py [stats|ingest|snapshot|grade|results|all|daemon]")
+            print("Usage: python scheduler.py [stats|ingest|props|snapshot|grade|results|all|daemon]")
     else:
         # Default: run all tasks once
         run_all()

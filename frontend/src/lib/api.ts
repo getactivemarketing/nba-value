@@ -141,6 +141,12 @@ export const api = {
     const response = await client.get<LineMovementResponse>(`/games/${gameId}/line-movement`);
     return response.data;
   },
+
+  // Player Props
+  async getPlayerProps(gameId: string): Promise<PlayerPropsResponse> {
+    const response = await client.get<PlayerPropsResponse>(`/games/${gameId}/props`);
+    return response.data;
+  },
 };
 
 export interface TeamTrends {
@@ -504,4 +510,20 @@ export interface LineMovementResponse {
   game_id: string;
   snapshots: LineMovementPoint[];
   sharp_money: SharpMoneySignal;
+}
+
+// Player Props Types
+export interface PlayerProp {
+  player_name: string;
+  prop_type: string;  // points, rebounds, assists, etc.
+  line: number;
+  over_odds: number | null;
+  under_odds: number | null;
+  book: string;
+}
+
+export interface PlayerPropsResponse {
+  game_id: string;
+  props: PlayerProp[];
+  snapshot_time: string | null;
 }

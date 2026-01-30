@@ -10,7 +10,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 
 from src.database import async_session
-from src.models import Game, Market, ValueScore, ModelPrediction, Team, TeamStats, GameResult, OddsSnapshot
+from src.models import Game, Market, ValueScore, ModelPrediction, Team, TeamStats, GameResult, OddsSnapshot, PlayerProp
 from src.services.injuries import get_all_team_injury_reports, TeamInjuryReport
 from src.config import settings
 
@@ -1768,4 +1768,81 @@ async def get_line_movement(game_id: str) -> LineMovementResponse:
             game_id=game_id,
             snapshots=points,
             sharp_money=sharp_money
+        )
+
+
+# --- Player Props ---
+
+class PlayerPropResponse(BaseModel):
+    """Player prop line from a sportsbook."""
+    player_name: str
+    prop_type: str  # points, rebounds, assists, etc.
+    line: float
+    over_odds: float | None
+    under_odds: float | None
+    book: str
+
+
+class PlayerPropsResponse(BaseModel):
+    """Response for player props endpoint."""
+    game_id: str
+    props: list[PlayerPropResponse]
+    snapshot_time: datetime | None
+
+
+@router.get("/games/{game_id}/props", response_model=PlayerPropsResponse)
+async def get_player_props(game_id: str) -> PlayerPropsResponse:
+    """
+    Get player props for a game.
+
+    Returns the most recent player prop lines for all players in the game,
+    grouped by player and prop type.
+    """
+    async with async_session() as session:
+        # Get the most recent props for this game
+        # Group by player_name, prop_type, book to get latest for each
+        query = (
+            select(PlayerProp)
+            .where(PlayerProp.game_id == game_id)
+            .order_by(PlayerProp.snapshot_time.desc())
+        )
+        result = await session.execute(query)
+        all_props = result.scalars().all()
+
+        if not all_props:
+            return PlayerPropsResponse(
+                game_id=game_id,
+                props=[],
+                snapshot_time=None
+            )
+
+        # Deduplicate - keep only most recent for each player/prop/book combo
+        seen = set()
+        unique_props = []
+        for p in all_props:
+            key = (p.player_name, p.prop_type, p.book)
+            if key not in seen:
+                seen.add(key)
+                unique_props.append(p)
+
+        # Convert to response format
+        props = [
+            PlayerPropResponse(
+                player_name=p.player_name,
+                prop_type=p.prop_type,
+                line=float(p.line),
+                over_odds=float(p.over_odds) if p.over_odds else None,
+                under_odds=float(p.under_odds) if p.under_odds else None,
+                book=p.book,
+            )
+            for p in unique_props
+        ]
+
+        # Get the most recent snapshot time
+        snapshot_time = all_props[0].snapshot_time if all_props else None
+
+        return PlayerPropsResponse(
+            game_id=game_id,
+            props=props,
+            snapshot_time=snapshot_time
         )

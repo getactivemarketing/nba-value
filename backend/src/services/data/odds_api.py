@@ -188,6 +188,113 @@ class OddsAPIClient:
 
         return best_odds
 
+    async def get_player_props(
+        self,
+        event_id: str,
+        markets: list[str] = ["player_points", "player_rebounds", "player_assists"],
+        bookmakers: list[str] | None = None,
+    ) -> dict:
+        """
+        Fetch player props for a specific game/event.
+
+        Args:
+            event_id: The game ID from the odds API
+            markets: List of prop markets - player_points, player_rebounds, player_assists, player_threes, etc.
+            bookmakers: Optional list of specific bookmakers
+
+        Returns:
+            Dict with bookmakers and their player prop markets
+        """
+        params = {
+            "apiKey": self.api_key,
+            "regions": "us",
+            "markets": ",".join(markets),
+            "oddsFormat": "decimal",
+        }
+
+        if bookmakers:
+            params["bookmakers"] = ",".join(bookmakers)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.BASE_URL}/sports/{self.SPORT}/events/{event_id}/odds",
+                params=params,
+                timeout=30.0,
+            )
+            response.raise_for_status()
+
+            # Track usage from headers
+            self.requests_remaining = int(
+                response.headers.get("x-requests-remaining", 0)
+            )
+            self.requests_used = int(response.headers.get("x-requests-used", 0))
+
+            logger.info(
+                "Fetched player props from API",
+                event_id=event_id,
+                requests_remaining=self.requests_remaining,
+            )
+
+            return response.json()
+
+    def parse_player_props(self, props_data: dict) -> list[dict]:
+        """
+        Parse raw player props API response into structured data.
+
+        Args:
+            props_data: Raw response from get_player_props()
+
+        Returns:
+            List of player prop dicts
+        """
+        props = []
+        snapshot_time = datetime.now(timezone.utc)
+        game_id = props_data.get("id", "")
+
+        for bookmaker in props_data.get("bookmakers", []):
+            book = bookmaker["key"]
+
+            for market in bookmaker.get("markets", []):
+                market_key = market["key"]  # e.g., "player_points"
+                # Convert market key to prop type: player_points -> points
+                prop_type = market_key.replace("player_", "")
+
+                for outcome in market.get("outcomes", []):
+                    player_name = outcome.get("description", "")
+                    # Outcome name is "Over" or "Under"
+                    is_over = outcome["name"].lower() == "over"
+                    line = outcome.get("point", 0)
+                    odds = outcome.get("price", 2.0)
+
+                    # Find or create entry for this player/prop/line
+                    existing = next(
+                        (p for p in props
+                         if p["player_name"] == player_name
+                         and p["prop_type"] == prop_type
+                         and p["line"] == line
+                         and p["book"] == book),
+                        None
+                    )
+
+                    if existing:
+                        if is_over:
+                            existing["over_odds"] = odds
+                        else:
+                            existing["under_odds"] = odds
+                    else:
+                        props.append({
+                            "game_id": game_id,
+                            "player_name": player_name,
+                            "prop_type": prop_type,
+                            "line": line,
+                            "over_odds": odds if is_over else None,
+                            "under_odds": odds if not is_over else None,
+                            "book": book,
+                            "snapshot_time": snapshot_time,
+                        })
+
+        return props
+
     async def get_historical_odds(
         self,
         date: datetime,
