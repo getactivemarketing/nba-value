@@ -405,10 +405,8 @@ async def grade_prop_snapshots(days_back: int = 2) -> dict:
     # Get ungraded prop snapshots from recent days
     cur.execute('''
         SELECT ps.snapshot_id, ps.game_id, ps.player_name, ps.prop_type,
-               ps.line, ps.recommendation, ps.value_score, ps.game_date,
-               g.bdl_game_id
+               ps.line, ps.recommendation, ps.value_score, ps.game_date
         FROM prop_snapshots ps
-        LEFT JOIN games g ON ps.game_id = g.game_id
         WHERE ps.result IS NULL
         AND ps.game_date >= CURRENT_DATE - INTERVAL '%s days'
         AND ps.game_date < CURRENT_DATE  -- Only grade past games
@@ -423,9 +421,27 @@ async def grade_prop_snapshots(days_back: int = 2) -> dict:
         conn.close()
         return {"graded": 0, "wins": 0, "losses": 0, "pushes": 0}
 
-    # Cache for player stats by game
-    # Key: (bdl_game_id, player_name) -> stats dict
+    # Get unique dates we need to fetch games for
+    game_dates = set(row[7] for row in ungraded if row[7])
+    logger.info(f"Fetching games for dates: {game_dates}")
+
+    # Fetch all games for these dates from BallDontLie
+    bdl_games_by_date: dict[date, list] = {}
+    for game_date in game_dates:
+        try:
+            games = await client.get_games(start_date=game_date, end_date=game_date)
+            bdl_games_by_date[game_date] = games
+            logger.info(f"Found {len(games)} BDL games for {game_date}")
+        except Exception as e:
+            logger.error(f"Failed to fetch games for {game_date}: {e}")
+            bdl_games_by_date[game_date] = []
+
+    # Cache for player stats
+    # Key: (player_name, game_date) -> stats dict or None
     stats_cache: dict[tuple, dict | None] = {}
+
+    # Cache for player IDs
+    player_id_cache: dict[str, int | None] = {}
 
     graded = 0
     wins = 0
@@ -434,10 +450,9 @@ async def grade_prop_snapshots(days_back: int = 2) -> dict:
     now = datetime.now(timezone.utc)
 
     for row in ungraded:
-        snapshot_id, game_id, player_name, prop_type, line, recommendation, value_score, game_date, bdl_game_id = row
+        snapshot_id, game_id, player_name, prop_type, line, recommendation, value_score, game_date = row
 
-        if not bdl_game_id:
-            logger.warning(f"No BDL game ID for game {game_id}")
+        if not game_date:
             continue
 
         # Get stat key for this prop type
@@ -446,38 +461,56 @@ async def grade_prop_snapshots(days_back: int = 2) -> dict:
             logger.warning(f"Unknown prop type: {prop_type}")
             continue
 
-        cache_key = (bdl_game_id, player_name)
+        cache_key = (player_name, game_date)
 
         # Fetch player stats for this game if not cached
         if cache_key not in stats_cache:
             try:
-                # Find player ID
-                player = await client.find_player_by_name(player_name)
-                if not player:
+                # Find player ID (with caching)
+                if player_name not in player_id_cache:
+                    player = await client.find_player_by_name(player_name)
+                    player_id_cache[player_name] = player["id"] if player else None
+
+                player_id = player_id_cache[player_name]
+                if not player_id:
                     logger.warning(f"Could not find player: {player_name}")
                     stats_cache[cache_key] = None
+                    continue
+
+                # Get games for this date
+                bdl_games = bdl_games_by_date.get(game_date, [])
+                if not bdl_games:
+                    logger.warning(f"No BDL games found for {game_date}")
+                    stats_cache[cache_key] = None
+                    continue
+
+                # Get all game IDs for this date
+                bdl_game_ids = [g.id for g in bdl_games]
+
+                # Fetch stats for this player in these games
+                stats_list = await client.get_player_stats(
+                    game_ids=bdl_game_ids,
+                    player_ids=[player_id]
+                )
+
+                if stats_list:
+                    # Take the first (should only be one game per day for a player)
+                    s = stats_list[0]
+                    stats_cache[cache_key] = {
+                        "pts": s.points,
+                        "reb": s.rebounds,
+                        "ast": s.assists,
+                        "fg3m": s.fg3_made,
+                        "stl": s.steals,
+                        "blk": s.blocks,
+                        "turnover": s.turnovers,
+                    }
                 else:
-                    # Get box score stats for this game
-                    stats = await client.get_player_stats(
-                        game_ids=[int(bdl_game_id)],
-                        player_ids=[player["id"]]
-                    )
-                    if stats:
-                        # Convert PlayerStats to dict for easier access
-                        s = stats[0]
-                        stats_cache[cache_key] = {
-                            "pts": s.points,
-                            "reb": s.rebounds,
-                            "ast": s.assists,
-                            "fg3m": s.fg3_made,
-                            "stl": s.steals,
-                            "blk": s.blocks,
-                            "turnover": s.turnovers,
-                        }
-                    else:
-                        stats_cache[cache_key] = None
+                    # Player didn't play (DNP, injury, etc.)
+                    stats_cache[cache_key] = None
+
             except Exception as e:
-                logger.error(f"Error fetching stats for {player_name}: {e}")
+                logger.error(f"Error fetching stats for {player_name} on {game_date}: {e}")
                 stats_cache[cache_key] = None
 
         player_stats = stats_cache.get(cache_key)
