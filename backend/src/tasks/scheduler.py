@@ -1243,6 +1243,16 @@ def run_all():
     time.sleep(2)
 
     run_results_sync()
+    time.sleep(2)
+
+    # Player props pipeline
+    run_props()
+    time.sleep(2)
+
+    run_prop_snapshot()
+    time.sleep(2)
+
+    run_prop_grade()
 
     log_task("All tasks complete")
     log_task("=" * 50)
@@ -1266,6 +1276,9 @@ def get_scheduler_status() -> dict:
         "snapshot": 15,
         "grading": 60,
         "results_sync": 120,
+        "props": 240,  # 4 hours
+        "prop_snapshot": 120,  # 2 hours
+        "prop_grade": 120,  # 2 hours
     }
 
     for task, last_run in _last_run_times.items():
@@ -1319,6 +1332,11 @@ def start_scheduler():
     schedule.every(2).hours.do(run_results_sync)
     schedule.every(1).hour.do(run_health_check)  # Monitor task health
 
+    # Player props pipeline
+    schedule.every(4).hours.do(run_props)  # Ingest player props (conserve API quota)
+    schedule.every(2).hours.do(run_prop_snapshot)  # Score and save prop predictions
+    schedule.every(2).hours.do(run_prop_grade)  # Grade completed prop predictions
+
     log_task("Scheduler configured:")
     log_task("  - Team stats update: every 2 hours")
     log_task("  - Odds ingestion: every 30 minutes")
@@ -1327,6 +1345,9 @@ def start_scheduler():
     log_task("  - Grading: every 1 hour")
     log_task("  - Results sync: every 2 hours")
     log_task("  - Health monitoring: every 1 hour")
+    log_task("  - Player props ingestion: every 4 hours")
+    log_task("  - Prop snapshot: every 2 hours")
+    log_task("  - Prop grading: every 2 hours")
 
     while True:
         schedule.run_pending()

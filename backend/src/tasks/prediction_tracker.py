@@ -26,6 +26,9 @@ DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rl
 # Set to 65 after analysis showed low-value bets (40-60) had poor win rates
 MIN_VALUE_THRESHOLD = 65
 
+# Higher threshold for weak teams on the road (require more edge)
+MIN_VALUE_THRESHOLD_WEAK_ROAD = 72
+
 # Import suppress_totals flag from config (centralized setting)
 # Totals model has 41% win rate, suppressed until proper model is trained
 try:
@@ -33,6 +36,226 @@ try:
     SUPPRESS_TOTALS = settings.suppress_totals
 except ImportError:
     SUPPRESS_TOTALS = True  # Default to suppressed if config unavailable
+
+
+# ============================================================================
+# TEAM QUALITY & RISK ASSESSMENT
+# Added to fix: 98.9% away bias, blowout losses, picking bad road teams
+# ============================================================================
+
+def get_team_quality(cur, team_id: str) -> dict:
+    """
+    Assess team quality based on record, net rating, and recent form.
+
+    Returns:
+        dict with quality metrics and tier classification
+    """
+    cur.execute('''
+        SELECT
+            wins, losses, net_rtg_10, wins_l10, losses_l10,
+            home_wins, home_losses, away_wins, away_losses
+        FROM team_stats
+        WHERE team_id = %s
+        ORDER BY stat_date DESC
+        LIMIT 1
+    ''', (team_id,))
+
+    row = cur.fetchone()
+    if not row:
+        return {"tier": "unknown", "win_pct": 0.5, "net_rtg": 0, "is_weak": False, "is_elite": False}
+
+    wins, losses, net_rtg, wins_l10, losses_l10, home_w, home_l, away_w, away_l = row
+
+    total_games = (wins or 0) + (losses or 0)
+    win_pct = wins / total_games if total_games > 0 else 0.5
+
+    l10_win_pct = wins_l10 / 10 if wins_l10 is not None else win_pct
+
+    away_games = (away_w or 0) + (away_l or 0)
+    away_win_pct = away_w / away_games if away_games > 0 else 0.5
+
+    net_rtg = float(net_rtg) if net_rtg else 0
+
+    # Classify team tier
+    # Elite: Top teams (>60% win rate AND positive net rating)
+    # Good: Above average (>50% win rate)
+    # Average: Around .500
+    # Weak: Below average (<45% win rate OR very negative net rating)
+    # Bottom: Worst teams (<35% win rate)
+
+    if win_pct >= 0.60 and net_rtg >= 3:
+        tier = "elite"
+    elif win_pct >= 0.55 or net_rtg >= 2:
+        tier = "good"
+    elif win_pct >= 0.45:
+        tier = "average"
+    elif win_pct >= 0.35:
+        tier = "weak"
+    else:
+        tier = "bottom"
+
+    return {
+        "tier": tier,
+        "win_pct": round(win_pct, 3),
+        "away_win_pct": round(away_win_pct, 3),
+        "net_rtg": net_rtg,
+        "l10_win_pct": round(l10_win_pct, 3),
+        "is_weak": tier in ("weak", "bottom"),
+        "is_elite": tier == "elite",
+        "is_bottom": tier == "bottom",
+    }
+
+
+def assess_blowout_risk(bet_team_quality: dict, opponent_quality: dict,
+                        is_home_bet: bool, spread_line: float) -> dict:
+    """
+    Assess risk of a blowout loss.
+
+    High blowout risk scenarios:
+    - Bottom team on road vs elite team
+    - Weak team on road getting <10 points vs good+ team
+    - Team on cold streak (<30% L10) on road
+
+    Returns:
+        dict with risk level and recommendation
+    """
+    risk_score = 0
+    risk_factors = []
+
+    # Factor 1: Team quality mismatch
+    tier_scores = {"elite": 5, "good": 4, "average": 3, "weak": 2, "bottom": 1, "unknown": 3}
+    bet_tier = tier_scores.get(bet_team_quality.get("tier", "unknown"), 3)
+    opp_tier = tier_scores.get(opponent_quality.get("tier", "unknown"), 3)
+
+    tier_diff = opp_tier - bet_tier
+
+    if tier_diff >= 3:  # e.g., bottom team vs elite
+        risk_score += 40
+        risk_factors.append(f"Large tier mismatch ({bet_team_quality['tier']} vs {opponent_quality['tier']})")
+    elif tier_diff >= 2:  # e.g., weak team vs good
+        risk_score += 25
+        risk_factors.append(f"Tier mismatch ({bet_team_quality['tier']} vs {opponent_quality['tier']})")
+
+    # Factor 2: Road underdog with small spread
+    if not is_home_bet and spread_line and spread_line > 0:
+        # Betting on road underdog
+        if bet_team_quality.get("is_weak") and spread_line < 10:
+            risk_score += 30
+            risk_factors.append(f"Weak road dog getting only +{spread_line}")
+        if bet_team_quality.get("is_bottom"):
+            risk_score += 20
+            risk_factors.append("Bottom-tier team on road")
+
+    # Factor 3: Poor road record
+    away_win_pct = bet_team_quality.get("away_win_pct", 0.5)
+    if not is_home_bet and away_win_pct < 0.30:
+        risk_score += 25
+        risk_factors.append(f"Poor road record ({away_win_pct:.0%})")
+
+    # Factor 4: Cold streak (L10)
+    l10_win_pct = bet_team_quality.get("l10_win_pct", 0.5)
+    if l10_win_pct < 0.30:
+        risk_score += 20
+        risk_factors.append(f"Cold streak ({l10_win_pct:.0%} L10)")
+
+    # Factor 5: Opponent is elite at home
+    if opponent_quality.get("is_elite") and is_home_bet == False:
+        risk_score += 15
+        risk_factors.append("Facing elite team at their home")
+
+    # Determine risk level
+    if risk_score >= 60:
+        risk_level = "high"
+    elif risk_score >= 35:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+
+    return {
+        "risk_level": risk_level,
+        "risk_score": risk_score,
+        "risk_factors": risk_factors,
+        "should_skip": risk_score >= 60,  # Skip high-risk bets
+        "require_higher_threshold": risk_score >= 35,  # Require higher value score
+    }
+
+
+def should_consider_home_bet(home_quality: dict, away_quality: dict,
+                              home_value_score: float, away_value_score: float) -> bool:
+    """
+    Check if we should favor the home bet to balance away bias.
+
+    Returns True if home bet should be considered even if slightly lower score.
+    """
+    # If home team is clearly better quality and scores are close, prefer home
+    if home_quality.get("tier") in ("elite", "good") and away_quality.get("is_weak"):
+        # Home is much better - give home bet a boost consideration
+        if home_value_score and away_value_score:
+            # If home score is within 5 points of away, prefer home
+            if home_value_score >= away_value_score - 5:
+                return True
+
+    # If away team is bottom tier on road, strongly prefer home
+    if away_quality.get("is_bottom") and home_value_score and home_value_score >= MIN_VALUE_THRESHOLD:
+        return True
+
+    return False
+
+
+def adjust_value_score_for_quality(base_score: float, bet_team_quality: dict,
+                                    opponent_quality: dict, is_home_bet: bool) -> float:
+    """
+    Adjust value score based on team quality factors.
+
+    Penalizes:
+    - Weak teams on the road
+    - Bottom teams against elite opponents
+
+    Bonuses:
+    - Elite teams at home
+    - Good teams against weak opponents
+    """
+    adjustment = 0
+
+    # Penalty for weak/bottom road teams
+    if not is_home_bet:
+        if bet_team_quality.get("is_bottom"):
+            adjustment -= 15  # Big penalty for bottom road teams
+        elif bet_team_quality.get("is_weak"):
+            adjustment -= 8   # Moderate penalty for weak road teams
+
+    # Penalty for facing elite teams on road
+    if not is_home_bet and opponent_quality.get("is_elite"):
+        adjustment -= 10
+
+    # Bonus for elite/good home teams
+    if is_home_bet:
+        if bet_team_quality.get("is_elite"):
+            adjustment += 5
+        elif bet_team_quality.get("tier") == "good":
+            adjustment += 3
+
+    # Bonus for playing against weak/bottom teams
+    if opponent_quality.get("is_bottom"):
+        adjustment += 5
+    elif opponent_quality.get("is_weak"):
+        adjustment += 3
+
+    adjusted_score = base_score + adjustment
+
+    # Log significant adjustments
+    if abs(adjustment) >= 5:
+        logger.debug(
+            "Value score adjusted for quality",
+            base_score=base_score,
+            adjustment=adjustment,
+            adjusted_score=adjusted_score,
+            bet_team_tier=bet_team_quality.get("tier"),
+            opponent_tier=opponent_quality.get("tier"),
+            is_home=is_home_bet,
+        )
+
+    return max(0, min(100, adjusted_score))  # Keep in 0-100 range
 
 
 def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
@@ -123,6 +346,17 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
             logger.info(f"No value scores for game {game_id}, skipping")
             continue
 
+        # ================================================================
+        # TEAM QUALITY ASSESSMENT (Fix for away bias and blowout losses)
+        # ================================================================
+        home_quality = get_team_quality(cur, home_team)
+        away_quality = get_team_quality(cur, away_team)
+
+        logger.info(
+            f"Team quality: {home_team} ({home_quality['tier']}, {home_quality['win_pct']:.0%}) vs "
+            f"{away_team} ({away_quality['tier']}, {away_quality['win_pct']:.0%})"
+        )
+
         # Determine predicted winner from moneyline markets
         home_prob = 0.5
         away_prob = 0.5
@@ -134,6 +368,10 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
         best_total_score = 0
         active_algo = 'b'  # Default
 
+        # Track all spread bets for comparison (to fix home/away balance)
+        home_spread_bet = None
+        away_spread_bet = None
+
         for row in scores:
             (mtype, outcome, line, odds,
              algo_a_score, algo_a_edge, algo_a_conf,
@@ -143,43 +381,119 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
             is_home = 'home' in outcome.lower()
             active_algo = (active_algorithm or 'b').lower()
 
-            # Track best value bet for Algorithm A (only if meets threshold)
-            if algo_a_score and float(algo_a_score) > best_score_a and float(algo_a_score) >= MIN_VALUE_THRESHOLD:
-                best_score_a = float(algo_a_score)
-                best_bet_a = {
+            # Get the bet team and opponent for quality assessment
+            bet_team = home_team if is_home else away_team
+            opponent = away_team if is_home else home_team
+            bet_quality = home_quality if is_home else away_quality
+            opp_quality = away_quality if is_home else home_quality
+
+            # ================================================================
+            # QUALITY-ADJUSTED VALUE SCORE
+            # ================================================================
+            raw_algo_a_score = float(algo_a_score) if algo_a_score else 0
+            raw_algo_b_score = float(algo_b_score) if algo_b_score else 0
+
+            # Adjust scores based on team quality
+            adj_algo_a_score = adjust_value_score_for_quality(
+                raw_algo_a_score, bet_quality, opp_quality, is_home
+            ) if raw_algo_a_score > 0 else 0
+
+            adj_algo_b_score = adjust_value_score_for_quality(
+                raw_algo_b_score, bet_quality, opp_quality, is_home
+            ) if raw_algo_b_score > 0 else 0
+
+            # ================================================================
+            # BLOWOUT RISK CHECK (for spread bets only)
+            # ================================================================
+            skip_bet = False
+            required_threshold = MIN_VALUE_THRESHOLD
+
+            if mtype == 'spread':
+                blowout_risk = assess_blowout_risk(
+                    bet_quality, opp_quality, is_home, float(line) if line else 0
+                )
+
+                if blowout_risk["should_skip"]:
+                    logger.warning(
+                        f"Skipping high blowout risk bet: {bet_team} {line}",
+                        risk_score=blowout_risk["risk_score"],
+                        factors=blowout_risk["risk_factors"],
+                    )
+                    skip_bet = True
+                elif blowout_risk["require_higher_threshold"]:
+                    required_threshold = MIN_VALUE_THRESHOLD_WEAK_ROAD
+                    logger.info(
+                        f"Elevated threshold for {bet_team}: {required_threshold}",
+                        risk_factors=blowout_risk["risk_factors"],
+                    )
+
+                # Track home/away spread bets separately
+                bet_data = {
                     "type": mtype,
-                    "team": home_team if is_home else away_team,
+                    "team": bet_team,
                     "line": float(line) if line else None,
-                    "value_score": int(algo_a_score),
+                    "value_score": int(adj_algo_a_score),
+                    "raw_score": int(raw_algo_a_score),
                     "edge_score": float(algo_a_edge) if algo_a_edge else 0,
                     "confidence": float(algo_a_conf) if algo_a_conf else 1.0,
                     "odds": float(odds) if odds else None,
                     "p_true": float(p_true) if p_true else 0,
                     "p_market": float(p_market) if p_market else 0,
+                    "is_home": is_home,
+                    "blowout_risk": blowout_risk["risk_level"],
+                    "skip": skip_bet,
+                    "threshold": required_threshold,
+                }
+
+                if is_home:
+                    home_spread_bet = bet_data
+                else:
+                    away_spread_bet = bet_data
+
+            if skip_bet:
+                continue
+
+            # Track best value bet for Algorithm A (only if meets threshold)
+            if adj_algo_a_score > best_score_a and adj_algo_a_score >= required_threshold:
+                best_score_a = adj_algo_a_score
+                best_bet_a = {
+                    "type": mtype,
+                    "team": bet_team,
+                    "line": float(line) if line else None,
+                    "value_score": int(adj_algo_a_score),
+                    "raw_score": int(raw_algo_a_score),
+                    "edge_score": float(algo_a_edge) if algo_a_edge else 0,
+                    "confidence": float(algo_a_conf) if algo_a_conf else 1.0,
+                    "odds": float(odds) if odds else None,
+                    "p_true": float(p_true) if p_true else 0,
+                    "p_market": float(p_market) if p_market else 0,
+                    "is_home": is_home,
                 }
 
             # Track best value bet for Algorithm B (only if meets threshold)
-            if algo_b_score and float(algo_b_score) > best_score_b and float(algo_b_score) >= MIN_VALUE_THRESHOLD:
-                best_score_b = float(algo_b_score)
+            if adj_algo_b_score > best_score_b and adj_algo_b_score >= required_threshold:
+                best_score_b = adj_algo_b_score
                 best_bet_b = {
                     "type": mtype,
-                    "team": home_team if is_home else away_team,
+                    "team": bet_team,
                     "line": float(line) if line else None,
-                    "value_score": int(algo_b_score),
+                    "value_score": int(adj_algo_b_score),
+                    "raw_score": int(raw_algo_b_score),
                     "combined_edge": float(algo_b_edge) if algo_b_edge else 0,
                     "confidence": float(algo_b_conf) if algo_b_conf else 1.0,
                     "odds": float(odds) if odds else None,
                     "p_true": float(p_true) if p_true else 0,
                     "p_market": float(p_market) if p_market else 0,
+                    "is_home": is_home,
                 }
 
             # Track best total bet separately (only if meets threshold and not suppressed)
-            if not SUPPRESS_TOTALS and mtype == 'total' and algo_a_score and float(algo_a_score) > best_total_score and float(algo_a_score) >= MIN_VALUE_THRESHOLD:
-                best_total_score = float(algo_a_score)
+            if not SUPPRESS_TOTALS and mtype == 'total' and adj_algo_a_score > best_total_score and adj_algo_a_score >= MIN_VALUE_THRESHOLD:
+                best_total_score = adj_algo_a_score
                 best_total = {
                     "direction": outcome.replace('_', ''),  # "over" or "under"
                     "line": float(line) if line else None,
-                    "value_score": int(algo_a_score),
+                    "value_score": int(adj_algo_a_score),
                     "edge": float(algo_a_edge) if algo_a_edge else 0,
                     "odds": float(odds) if odds else None,
                 }
@@ -191,8 +505,48 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
                 else:
                     away_prob = float(p_true) if p_true else 0.5
 
-        # Use active algorithm's best bet as the "primary" best bet
+        # ================================================================
+        # HOME/AWAY BALANCE CHECK (Fix for 98.9% away bias)
+        # ================================================================
+        # If we're about to pick an away bet, check if home should be considered
         best_bet = best_bet_a if active_algo == 'a' else best_bet_b
+
+        if best_bet and not best_bet.get("is_home") and home_spread_bet and away_spread_bet:
+            # We picked away - should we reconsider home?
+            if should_consider_home_bet(
+                home_quality, away_quality,
+                home_spread_bet.get("value_score", 0),
+                away_spread_bet.get("value_score", 0)
+            ):
+                # Check if home bet meets threshold and isn't high risk
+                if (home_spread_bet.get("value_score", 0) >= MIN_VALUE_THRESHOLD
+                    and not home_spread_bet.get("skip")
+                    and home_spread_bet.get("blowout_risk") != "high"):
+
+                    logger.info(
+                        f"Switching to home bet due to quality mismatch: "
+                        f"{home_team} ({home_spread_bet['value_score']}) over "
+                        f"{away_team} ({away_spread_bet['value_score']})"
+                    )
+                    best_bet = {
+                        "type": home_spread_bet["type"],
+                        "team": home_spread_bet["team"],
+                        "line": home_spread_bet["line"],
+                        "value_score": home_spread_bet["value_score"],
+                        "edge_score": home_spread_bet.get("edge_score", 0),
+                        "confidence": home_spread_bet.get("confidence", 1.0),
+                        "odds": home_spread_bet.get("odds"),
+                        "p_true": home_spread_bet.get("p_true", 0),
+                        "p_market": home_spread_bet.get("p_market", 0),
+                        "is_home": True,
+                    }
+
+        # Log final bet selection
+        if best_bet:
+            logger.info(
+                f"Selected bet: {best_bet['team']} {best_bet.get('line', '')} "
+                f"(score: {best_bet['value_score']}, home: {best_bet.get('is_home', 'N/A')})"
+            )
 
         # Determine predicted winner
         if home_prob >= away_prob:
