@@ -1514,10 +1514,14 @@ async def get_top_picks(
             teams = {t.team_id: t for t in teams_result.scalars().all()}
 
         # Build picks by category
-        spreads = []
         moneylines = []
         totals = []
         all_picks = []
+
+        # ================================================================
+        # SPREAD PICKS: Group by game and select best option (home vs away)
+        # ================================================================
+        spread_options_by_game = {}  # game_id -> {"home": {...}, "away": {...}}
 
         for vs in value_scores:
             market = vs.market
@@ -1537,13 +1541,43 @@ async def get_top_picks(
 
             # Determine pick label
             is_home = "home" in market.outcome_label.lower()
-            if market.market_type == "total":
-                pick_team = "Over" if "over" in market.outcome_label.lower() else "Under"
-                pick_label = f"{pick_team} {market.line}"
-            elif market.market_type == "spread":
+
+            if market.market_type == "spread":
+                # Group spread bets by game for later comparison
+                if game.game_id not in spread_options_by_game:
+                    spread_options_by_game[game.game_id] = {
+                        "game": game,
+                        "home_abbr": home_abbr,
+                        "away_abbr": away_abbr,
+                        "home": None,
+                        "away": None,
+                    }
+
                 pick_team = home_abbr if is_home else away_abbr
                 line_str = f"+{market.line}" if market.line and market.line > 0 else str(market.line)
                 pick_label = f"{pick_team} {line_str}"
+
+                option = {
+                    "pick_label": pick_label,
+                    "line": float(market.line) if market.line else None,
+                    "value_score": value_score,
+                    "edge": float(prediction.raw_edge) * 100 if prediction.raw_edge else 0,
+                    "model_prob": float(prediction.p_true) * 100 if prediction.p_true else 0,
+                    "market_prob": float(prediction.p_market) * 100 if prediction.p_market else 0,
+                    "tip_time": game.tip_time_utc,
+                    "is_home": is_home,
+                }
+
+                if is_home:
+                    spread_options_by_game[game.game_id]["home"] = option
+                else:
+                    spread_options_by_game[game.game_id]["away"] = option
+                continue  # Process spreads separately below
+
+            # Handle non-spread markets normally
+            if market.market_type == "total":
+                pick_team = "Over" if "over" in market.outcome_label.lower() else "Under"
+                pick_label = f"{pick_team} {market.line}"
             else:  # moneyline
                 pick_team = home_abbr if is_home else away_abbr
                 pick_label = f"{pick_team} ML"
@@ -1560,58 +1594,124 @@ async def get_top_picks(
                 tip_time=game.tip_time_utc,
             )
 
-            # ================================================================
-            # QUALITY FILTER FOR SPREADS (avoid weak road teams)
-            # ================================================================
-            skip_pick = False
-            adjusted_score = value_score
+            all_picks.append(pick)
 
-            if market.market_type == "spread":
-                bet_team_id = game.home_team_id if is_home else game.away_team_id
-                opp_team_id = game.away_team_id if is_home else game.home_team_id
+            if market.market_type == "moneyline" and len(moneylines) < limit:
+                moneylines.append(pick)
+            elif market.market_type == "total" and len(totals) < limit and not settings.suppress_totals:
+                totals.append(pick)
 
-                bet_quality = get_team_quality(quality_cur, bet_team_id)
-                opp_quality = get_team_quality(quality_cur, opp_team_id)
+        # ================================================================
+        # SPREAD SELECTION: Choose best option per game based on quality
+        # ================================================================
+        spreads = []
 
-                # Adjust value score based on team quality
-                adjusted_score = adjust_value_score_for_quality(
-                    value_score, bet_quality, opp_quality, is_home_bet=is_home
+        for game_id, options in spread_options_by_game.items():
+            game = options["game"]
+            home_abbr = options["home_abbr"]
+            away_abbr = options["away_abbr"]
+            home_opt = options["home"]
+            away_opt = options["away"]
+
+            # Get team quality
+            home_quality = get_team_quality(quality_cur, game.home_team_id)
+            away_quality = get_team_quality(quality_cur, game.away_team_id)
+
+            selected_option = None
+            selection_reason = ""
+
+            # Evaluate away option
+            away_adjusted = None
+            away_skip = False
+            if away_opt:
+                away_adjusted = adjust_value_score_for_quality(
+                    away_opt["value_score"], away_quality, home_quality, is_home_bet=False
                 )
-
-                # Check blowout risk
-                spread_line = float(market.line) if market.line else 0
                 blowout_risk = assess_blowout_risk(
-                    bet_quality, opp_quality, is_home, spread_line
+                    away_quality, home_quality, False, away_opt["line"] or 0
                 )
-
                 if blowout_risk["should_skip"]:
-                    skip_pick = True
-                elif blowout_risk["require_higher_threshold"] and adjusted_score < 72:
-                    skip_pick = True
+                    away_skip = True
+                elif blowout_risk["require_higher_threshold"] and away_adjusted < 72:
+                    away_skip = True
 
-                # Update pick with adjusted score
+            # Evaluate home option
+            home_adjusted = None
+            home_skip = False
+            if home_opt:
+                home_adjusted = adjust_value_score_for_quality(
+                    home_opt["value_score"], home_quality, away_quality, is_home_bet=True
+                )
+                blowout_risk = assess_blowout_risk(
+                    home_quality, away_quality, True, home_opt["line"] or 0
+                )
+                if blowout_risk["should_skip"]:
+                    home_skip = True
+                elif blowout_risk["require_higher_threshold"] and home_adjusted < 72:
+                    home_skip = True
+
+            # ================================================================
+            # SELECTION LOGIC: Balance home/away based on quality
+            # ================================================================
+
+            # Rule 1: If away team is bottom-tier, prefer home bet
+            if away_quality.get("is_bottom") and home_opt and not home_skip:
+                if home_adjusted and home_adjusted >= 60:  # Lower threshold for home vs bottom
+                    selected_option = home_opt
+                    selected_option["value_score"] = home_adjusted
+                    selection_reason = f"Home vs bottom-tier {away_abbr}"
+
+            # Rule 2: If home team is elite/good vs weak/bottom away, prefer home
+            if not selected_option and home_quality.get("tier") in ("elite", "good"):
+                if away_quality.get("is_weak") or away_quality.get("is_bottom"):
+                    if home_opt and not home_skip and home_adjusted and home_adjusted >= 60:
+                        selected_option = home_opt
+                        selected_option["value_score"] = home_adjusted
+                        selection_reason = f"{home_quality['tier'].title()} home vs weak road"
+
+            # Rule 3: If away is skipped but home is valid, use home
+            if not selected_option and away_skip and home_opt and not home_skip:
+                if home_adjusted and home_adjusted >= 60:
+                    selected_option = home_opt
+                    selected_option["value_score"] = home_adjusted
+                    selection_reason = "Home (away filtered)"
+
+            # Rule 4: If away passes filter and is quality team, use away
+            if not selected_option and away_opt and not away_skip:
+                if not away_quality.get("is_weak") and not away_quality.get("is_bottom"):
+                    selected_option = away_opt
+                    selected_option["value_score"] = away_adjusted
+                    selection_reason = f"Quality road team {away_abbr}"
+
+            # Rule 5: Use best adjusted score between valid options
+            if not selected_option:
+                valid_options = []
+                if away_opt and not away_skip and away_adjusted:
+                    valid_options.append(("away", away_opt, away_adjusted))
+                if home_opt and not home_skip and home_adjusted:
+                    valid_options.append(("home", home_opt, home_adjusted))
+
+                if valid_options:
+                    best = max(valid_options, key=lambda x: x[2])
+                    selected_option = best[1]
+                    selected_option["value_score"] = best[2]
+                    selection_reason = f"Best adjusted score ({best[0]})"
+
+            # Create pick if we have a selection
+            if selected_option and selected_option["value_score"] >= min_value_score:
                 pick = TopPick(
                     game=f"{away_abbr} @ {home_abbr}",
-                    pick=pick_label,
-                    line=float(market.line) if market.line else None,
-                    value_score=round(adjusted_score, 1),
-                    edge=round(float(prediction.raw_edge) * 100, 1) if prediction.raw_edge else 0,
-                    model_prob=round(float(prediction.p_true) * 100, 1) if prediction.p_true else 0,
-                    market_prob=round(float(prediction.p_market) * 100, 1) if prediction.p_market else 0,
-                    market_type=market.market_type,
-                    tip_time=game.tip_time_utc,
+                    pick=selected_option["pick_label"],
+                    line=selected_option["line"],
+                    value_score=round(selected_option["value_score"], 1),
+                    edge=round(selected_option["edge"], 1),
+                    model_prob=round(selected_option["model_prob"], 1),
+                    market_prob=round(selected_option["market_prob"], 1),
+                    market_type="spread",
+                    tip_time=selected_option["tip_time"],
                 )
-
-            if not skip_pick:
+                spreads.append(pick)
                 all_picks.append(pick)
-
-                if market.market_type == "spread" and len(spreads) < limit:
-                    spreads.append(pick)
-                elif market.market_type == "moneyline" and len(moneylines) < limit:
-                    moneylines.append(pick)
-                elif market.market_type == "total" and len(totals) < limit and not settings.suppress_totals:
-                    # Only include totals if not suppressed (totals model has 41% win rate)
-                    totals.append(pick)
 
         # Close quality connection
         quality_cur.close()
