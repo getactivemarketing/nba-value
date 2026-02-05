@@ -5,7 +5,7 @@ from decimal import Decimal
 from sqlalchemy import String, Numeric, DateTime, Date, Text, BigInteger, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.models.base import Base
+from src.database import Base
 
 
 class PropSnapshot(Base):

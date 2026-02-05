@@ -1447,7 +1447,19 @@ async def get_top_picks(
     Get aggregated top picks across all upcoming games.
 
     Returns the best value plays organized by market type and edge.
+    Applies team quality filter to avoid high-risk bets on weak road teams.
     """
+    # Import quality filter functions
+    from src.tasks.prediction_tracker import (
+        get_team_quality, assess_blowout_risk, adjust_value_score_for_quality,
+        DB_URL
+    )
+    import psycopg2
+
+    # Get team quality data for filtering
+    quality_conn = psycopg2.connect(DB_URL)
+    quality_cur = quality_conn.cursor()
+
     now = datetime.now(timezone.utc)
     cutoff = now + timedelta(hours=24)
 
@@ -1548,18 +1560,68 @@ async def get_top_picks(
                 tip_time=game.tip_time_utc,
             )
 
-            all_picks.append(pick)
+            # ================================================================
+            # QUALITY FILTER FOR SPREADS (avoid weak road teams)
+            # ================================================================
+            skip_pick = False
+            adjusted_score = value_score
 
-            if market.market_type == "spread" and len(spreads) < limit:
-                spreads.append(pick)
-            elif market.market_type == "moneyline" and len(moneylines) < limit:
-                moneylines.append(pick)
-            elif market.market_type == "total" and len(totals) < limit and not settings.suppress_totals:
-                # Only include totals if not suppressed (totals model has 41% win rate)
-                totals.append(pick)
+            if market.market_type == "spread":
+                bet_team_id = game.home_team_id if is_home else game.away_team_id
+                opp_team_id = game.away_team_id if is_home else game.home_team_id
+
+                bet_quality = get_team_quality(quality_cur, bet_team_id)
+                opp_quality = get_team_quality(quality_cur, opp_team_id)
+
+                # Adjust value score based on team quality
+                adjusted_score = adjust_value_score_for_quality(
+                    value_score, bet_quality, opp_quality, is_home_bet=is_home
+                )
+
+                # Check blowout risk
+                spread_line = float(market.line) if market.line else 0
+                blowout_risk = assess_blowout_risk(
+                    bet_quality, opp_quality, is_home, spread_line
+                )
+
+                if blowout_risk["should_skip"]:
+                    skip_pick = True
+                elif blowout_risk["require_higher_threshold"] and adjusted_score < 72:
+                    skip_pick = True
+
+                # Update pick with adjusted score
+                pick = TopPick(
+                    game=f"{away_abbr} @ {home_abbr}",
+                    pick=pick_label,
+                    line=float(market.line) if market.line else None,
+                    value_score=round(adjusted_score, 1),
+                    edge=round(float(prediction.raw_edge) * 100, 1) if prediction.raw_edge else 0,
+                    model_prob=round(float(prediction.p_true) * 100, 1) if prediction.p_true else 0,
+                    market_prob=round(float(prediction.p_market) * 100, 1) if prediction.p_market else 0,
+                    market_type=market.market_type,
+                    tip_time=game.tip_time_utc,
+                )
+
+            if not skip_pick:
+                all_picks.append(pick)
+
+                if market.market_type == "spread" and len(spreads) < limit:
+                    spreads.append(pick)
+                elif market.market_type == "moneyline" and len(moneylines) < limit:
+                    moneylines.append(pick)
+                elif market.market_type == "total" and len(totals) < limit and not settings.suppress_totals:
+                    # Only include totals if not suppressed (totals model has 41% win rate)
+                    totals.append(pick)
+
+        # Close quality connection
+        quality_cur.close()
+        quality_conn.close()
 
         # Sort by edge for best_edges
         best_edges = sorted(all_picks, key=lambda x: x.edge, reverse=True)[:limit]
+
+        # Sort spreads by adjusted value score
+        spreads = sorted(spreads, key=lambda x: x.value_score, reverse=True)[:limit]
 
         return TopPicksResponse(
             spreads=spreads,
