@@ -1654,48 +1654,28 @@ async def get_top_picks(
             # SELECTION LOGIC: Balance home/away based on quality
             # ================================================================
 
-            # Rule 1: If away team is bottom-tier, prefer home bet
-            if away_quality.get("is_bottom") and home_opt and not home_skip:
-                if home_adjusted and home_adjusted >= 60:  # Lower threshold for home vs bottom
-                    selected_option = home_opt
-                    selected_option["value_score"] = home_adjusted
-                    selection_reason = f"Home vs bottom-tier {away_abbr}"
+            # Rule 1: If away team is bottom-tier, SKIP entirely (don't bet on bad road teams)
+            # Even if home option exists, we don't want to bet on games with bottom-tier road teams
+            if away_quality.get("is_bottom"):
+                # Skip this game - bottom tier road teams are too risky
+                continue
 
-            # Rule 2: If home team is elite/good vs weak/bottom away, prefer home
-            if not selected_option and home_quality.get("tier") in ("elite", "good"):
-                if away_quality.get("is_weak") or away_quality.get("is_bottom"):
-                    if home_opt and not home_skip and home_adjusted and home_adjusted >= 60:
-                        selected_option = home_opt
-                        selected_option["value_score"] = home_adjusted
-                        selection_reason = f"{home_quality['tier'].title()} home vs weak road"
+            # Rule 2: If away team is weak, require higher threshold (72+)
+            if away_quality.get("is_weak"):
+                if not away_adjusted or away_adjusted < 72:
+                    # Skip - weak road team needs higher edge to be worth betting
+                    continue
 
-            # Rule 3: If away is skipped but home is valid, use home
-            if not selected_option and away_skip and home_opt and not home_skip:
-                if home_adjusted and home_adjusted >= 60:
-                    selected_option = home_opt
-                    selected_option["value_score"] = home_adjusted
-                    selection_reason = "Home (away filtered)"
+            # Rule 3: If away is high blowout risk, skip
+            if away_skip:
+                # Skip - away bet was flagged as too risky
+                continue
 
-            # Rule 4: If away passes filter and is quality team, use away
-            if not selected_option and away_opt and not away_skip:
-                if not away_quality.get("is_weak") and not away_quality.get("is_bottom"):
-                    selected_option = away_opt
-                    selected_option["value_score"] = away_adjusted
-                    selection_reason = f"Quality road team {away_abbr}"
-
-            # Rule 5: Use best adjusted score between valid options
-            if not selected_option:
-                valid_options = []
-                if away_opt and not away_skip and away_adjusted:
-                    valid_options.append(("away", away_opt, away_adjusted))
-                if home_opt and not home_skip and home_adjusted:
-                    valid_options.append(("home", home_opt, home_adjusted))
-
-                if valid_options:
-                    best = max(valid_options, key=lambda x: x[2])
-                    selected_option = best[1]
-                    selected_option["value_score"] = best[2]
-                    selection_reason = f"Best adjusted score ({best[0]})"
+            # Rule 4: If we get here, away team passed all filters - it's a quality road team
+            if away_opt and away_adjusted:
+                selected_option = away_opt
+                selected_option["value_score"] = away_adjusted
+                selection_reason = f"Quality road team {away_abbr}"
 
             # Create pick if we have a selection
             if selected_option and selected_option["value_score"] >= min_value_score:
