@@ -413,7 +413,7 @@ async def grade_prop_snapshots(days_back: int = 2) -> dict:
         AND ps.game_date >= CURRENT_DATE - INTERVAL '%s days'
         AND ps.game_date < CURRENT_DATE  -- Only grade past games
         AND (ps.game_date < CURRENT_DATE - INTERVAL '1 day'
-             OR CURRENT_TIME > TIME '12:00:00')  -- Wait until noon to grade yesterday's games
+             OR CURRENT_TIME > TIME '08:00:00')  -- Wait until 8am to grade yesterday's games
         ORDER BY ps.game_date DESC
     ''', (days_back,))
 
