@@ -403,15 +403,17 @@ async def grade_prop_snapshots(days_back: int = 2) -> dict:
     cur = conn.cursor()
 
     # Get ungraded prop snapshots from recent days
-    # Wait at least 1 full day after game date to ensure BallDontLie API has final stats
-    # (Games ending late + API update delay means same-day grading gets incomplete data)
+    # Wait at least 12 hours after midnight of game date to ensure BallDontLie API has final stats
+    # (Games end ~11pm ET, API updates overnight, so grading after noon next day is safe)
     cur.execute('''
         SELECT ps.snapshot_id, ps.game_id, ps.player_name, ps.prop_type,
                ps.line, ps.recommendation, ps.value_score, ps.game_date
         FROM prop_snapshots ps
         WHERE ps.result IS NULL
         AND ps.game_date >= CURRENT_DATE - INTERVAL '%s days'
-        AND ps.game_date < CURRENT_DATE - INTERVAL '1 day'  -- Wait 1 full day for accurate stats
+        AND ps.game_date < CURRENT_DATE  -- Only grade past games
+        AND (ps.game_date < CURRENT_DATE - INTERVAL '1 day'
+             OR CURRENT_TIME > TIME '12:00:00')  -- Wait until noon to grade yesterday's games
         ORDER BY ps.game_date DESC
     ''', (days_back,))
 
