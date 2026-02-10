@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { mlbApi, type MLBGame, type MLBTopPick } from '@/lib/mlbApi';
+import { mlbApi, type MLBTopPick } from '@/lib/mlbApi';
 import { MLBGameCard } from '@/components/mlb/MLBGameCard';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
@@ -202,7 +202,7 @@ export function MLBPicks() {
       </div>
 
       {gamesError && (
-        <ErrorMessage message="Failed to load games. Please try again." />
+        <ErrorMessage error={gamesError as Error} message="Failed to load games. Please try again." />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
