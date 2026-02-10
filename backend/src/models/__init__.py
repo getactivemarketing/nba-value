@@ -14,7 +14,19 @@ from src.models.prediction_snapshot import PredictionSnapshot
 from src.models.player_prop import PlayerProp
 from src.models.prop_snapshot import PropSnapshot
 
+# MLB Models
+from src.models.mlb_team import MLBTeam
+from src.models.mlb_pitcher import MLBPitcher
+from src.models.mlb_pitcher_stats import MLBPitcherStats
+from src.models.mlb_team_stats import MLBTeamStats
+from src.models.mlb_game import MLBGame
+from src.models.mlb_game_context import MLBGameContext
+from src.models.mlb_market import MLBMarket
+from src.models.mlb_prediction import MLBPrediction
+from src.models.mlb_prediction_snapshot import MLBPredictionSnapshot
+
 __all__ = [
+    # NBA Models
     "Game",
     "Team",
     "TeamStats",
@@ -28,4 +40,14 @@ __all__ = [
     "PredictionSnapshot",
     "PlayerProp",
     "PropSnapshot",
+    # MLB Models
+    "MLBTeam",
+    "MLBPitcher",
+    "MLBPitcherStats",
+    "MLBTeamStats",
+    "MLBGame",
+    "MLBGameContext",
+    "MLBMarket",
+    "MLBPrediction",
+    "MLBPredictionSnapshot",
 ]

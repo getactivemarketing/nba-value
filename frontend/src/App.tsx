@@ -5,12 +5,14 @@ import { BetDetail } from '@/pages/BetDetail';
 import { Trends } from '@/pages/Trends';
 import { Evaluation } from '@/pages/Evaluation';
 import { PlayerPropsPage } from '@/pages/PlayerPropsPage';
+import { MLBPicks } from '@/pages/MLBPicks';
 
 function App() {
   return (
     <Layout>
       <Routes>
         <Route path="/" element={<MarketBoard />} />
+        <Route path="/mlb" element={<MLBPicks />} />
         <Route path="/bet/:marketId" element={<BetDetail />} />
         <Route path="/trends" element={<Trends />} />
         <Route path="/evaluation" element={<Evaluation />} />

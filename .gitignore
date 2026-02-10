@@ -47,12 +47,15 @@ Thumbs.db
 *.sqlite3
 
 # ML artifacts
-*.joblib
-*.pkl
 *.onnx
 /models/
 ml_models/
 !**/src/models/
+
+# Allow trained model files in backend/models/
+!backend/models/*.pkl
+!backend/models/*.joblib
+!backend/models/*.parquet
 
 # Secrets
 *.pem

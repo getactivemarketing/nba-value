@@ -6,7 +6,8 @@ interface LayoutProps {
 }
 
 const navItems = [
-  { path: '/', label: 'Markets' },
+  { path: '/', label: 'NBA' },
+  { path: '/mlb', label: 'MLB' },
   { path: '/props', label: 'Props' },
   { path: '/trends', label: 'Trends' },
   { path: '/evaluation', label: 'Evaluation' },
@@ -23,7 +24,7 @@ export function Layout({ children }: LayoutProps) {
           <div className="flex justify-between items-center h-16">
             {/* Logo */}
             <Link to="/" className="flex items-center space-x-2">
-              <span className="text-xl font-bold text-gray-900">NBA Value</span>
+              <span className="text-xl font-bold text-gray-900">TruLine</span>
               <span className="text-sm text-gray-500">Beta</span>
             </Link>
 
@@ -60,7 +61,7 @@ export function Layout({ children }: LayoutProps) {
       <footer className="bg-white border-t border-gray-200 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <p className="text-sm text-gray-500 text-center">
-            NBA Value Betting Platform - For entertainment purposes only
+            TruLine Sports Betting Platform - For entertainment purposes only
           </p>
         </div>
       </footer>
