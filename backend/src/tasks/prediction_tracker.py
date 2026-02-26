@@ -163,6 +163,25 @@ def assess_blowout_risk(bet_team_quality: dict, opponent_quality: dict,
         risk_score += 15
         risk_factors.append("Facing elite team at their home")
 
+    # Factor 6: Road favorite risk
+    # Road favorites losing outright or failing to cover is a persistent pattern.
+    # The market prices in team quality — being favored on the road already
+    # implies the team is significantly better, so covering is harder.
+    if not is_home_bet and spread_line and spread_line < 0:
+        abs_line = abs(spread_line)
+        # Large road favorites (-5+) are especially vulnerable
+        if abs_line >= 5:
+            risk_score += 25
+            risk_factors.append(f"Large road favorite ({spread_line})")
+        else:
+            risk_score += 15
+            risk_factors.append(f"Road favorite ({spread_line})")
+
+        # Road favorite against a quality opponent is dangerous
+        if opponent_quality.get("tier") in ("elite", "good"):
+            risk_score += 10
+            risk_factors.append(f"Road fav vs {opponent_quality['tier']} home team")
+
     # Determine risk level
     if risk_score >= 60:
         risk_level = "high"
@@ -203,13 +222,15 @@ def should_consider_home_bet(home_quality: dict, away_quality: dict,
 
 
 def adjust_value_score_for_quality(base_score: float, bet_team_quality: dict,
-                                    opponent_quality: dict, is_home_bet: bool) -> float:
+                                    opponent_quality: dict, is_home_bet: bool,
+                                    spread_line: float = 0.0) -> float:
     """
     Adjust value score based on team quality factors.
 
     Penalizes:
     - Weak teams on the road
     - Bottom teams against elite opponents
+    - Road favorites (market already prices team quality into the line)
 
     Bonuses:
     - Elite teams at home
@@ -227,6 +248,14 @@ def adjust_value_score_for_quality(base_score: float, bet_team_quality: dict,
     # Penalty for facing elite teams on road
     if not is_home_bet and opponent_quality.get("is_elite"):
         adjustment -= 10
+
+    # Penalty for road favorites — the spread already reflects team quality,
+    # so quality bonuses double-count the edge. Road favorites that lose
+    # outright or fail to cover are a persistent blind spot.
+    if not is_home_bet and spread_line and spread_line < 0:
+        adjustment -= 5  # Base penalty for any road favorite
+        if spread_line <= -5:
+            adjustment -= 3  # Extra penalty for large road favorites
 
     # Bonus for elite/good home teams
     if is_home_bet:
@@ -394,12 +423,14 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
             raw_algo_b_score = float(algo_b_score) if algo_b_score else 0
 
             # Adjust scores based on team quality
+            # For spread bets, pass the line so road favorites can be penalized
+            bet_line = float(line) if line and mtype == 'spread' else 0.0
             adj_algo_a_score = adjust_value_score_for_quality(
-                raw_algo_a_score, bet_quality, opp_quality, is_home
+                raw_algo_a_score, bet_quality, opp_quality, is_home, bet_line
             ) if raw_algo_a_score > 0 else 0
 
             adj_algo_b_score = adjust_value_score_for_quality(
-                raw_algo_b_score, bet_quality, opp_quality, is_home
+                raw_algo_b_score, bet_quality, opp_quality, is_home, bet_line
             ) if raw_algo_b_score > 0 else 0
 
             # ================================================================

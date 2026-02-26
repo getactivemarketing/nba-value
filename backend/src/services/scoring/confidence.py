@@ -54,7 +54,7 @@ def compute_confidence_multiplier(
     # TODO: Load from calibration_metrics table based on market_type
     # For now, use reasonable defaults
     calibration_reliability = {
-        "spread": 1.1,
+        "spread": 1.0,   # Most efficient market — no confidence boost warranted
         "moneyline": 1.0,
         "total": 0.95,
         "prop": 0.85,
