@@ -2,6 +2,7 @@
 
 import os
 import threading
+import time
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
@@ -29,6 +30,7 @@ logger = structlog.get_logger()
 
 # Global scheduler thread reference
 _scheduler_thread = None
+_scheduler_should_run = False  # Flag to control watchdog lifecycle
 
 
 def _run_scheduler():
@@ -43,10 +45,50 @@ def _run_scheduler():
         logger.error(f"Scheduler thread crashed: {e}")
 
 
+def _start_scheduler_thread():
+    """Create and start a new scheduler thread. Returns the thread."""
+    thread = threading.Thread(target=_run_scheduler, daemon=True, name="scheduler")
+    thread.start()
+    return thread
+
+
+def _scheduler_watchdog():
+    """Monitor the scheduler thread and restart it if it dies."""
+    global _scheduler_thread
+    restart_count = 0
+    max_restarts = 10  # Prevent infinite restart loops
+
+    while _scheduler_should_run:
+        time.sleep(60)  # Check every 60 seconds
+
+        if not _scheduler_should_run:
+            break
+
+        if _scheduler_thread is None or not _scheduler_thread.is_alive():
+            restart_count += 1
+            if restart_count > max_restarts:
+                print(f"[SCHEDULER-WATCHDOG] Max restarts ({max_restarts}) reached. Giving up.", flush=True)
+                logger.error(f"Scheduler watchdog: exceeded {max_restarts} restarts, stopping")
+                break
+
+            print(f"[SCHEDULER-WATCHDOG] Scheduler thread died! Restarting (attempt {restart_count}/{max_restarts})...", flush=True)
+            logger.warning(f"Scheduler watchdog restarting thread (attempt {restart_count})")
+
+            # Back off before restarting: 5s, 10s, 20s, 40s... capped at 5 min
+            backoff = min(5 * (2 ** (restart_count - 1)), 300)
+            time.sleep(backoff)
+
+            _scheduler_thread = _start_scheduler_thread()
+            print(f"[SCHEDULER-WATCHDOG] Scheduler thread restarted successfully", flush=True)
+        else:
+            # Reset restart count when thread is healthy for a full check cycle
+            restart_count = 0
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager."""
-    global _scheduler_thread
+    global _scheduler_thread, _scheduler_should_run
 
     # Startup
     logger.info("Starting NBA Value Betting API", environment=settings.environment)
@@ -58,13 +100,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     should_start_scheduler = bool(db_url) and ("postgresql://" in db_url or "postgres://" in db_url)
     print(f"[SCHEDULER] DATABASE_URL present: {bool(db_url)}, will_start: {should_start_scheduler}", flush=True)
     if should_start_scheduler:
-        _scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True)
-        _scheduler_thread.start()
+        _scheduler_should_run = True
+        _scheduler_thread = _start_scheduler_thread()
         print("[SCHEDULER] Background thread started", flush=True)
+
+        # Start watchdog to auto-restart scheduler if it crashes
+        watchdog_thread = threading.Thread(target=_scheduler_watchdog, daemon=True, name="scheduler-watchdog")
+        watchdog_thread.start()
+        print("[SCHEDULER-WATCHDOG] Watchdog thread started", flush=True)
 
     yield
 
     # Shutdown
+    _scheduler_should_run = False
     logger.info("Shutting down NBA Value Betting API")
 
 

@@ -863,12 +863,13 @@ def run_results_sync():
         log_task("Results sync complete", **result)
         _last_run_times['results_sync'] = datetime.now(timezone.utc)
 
-        # Automatically grade predictions after syncing results
-        if result.get('results_created', 0) > 0 or result.get('games_synced', 0) > 0:
-            log_task("New results found, running prediction grading...")
-            grade_result = grade_predictions()
-            log_task("Grading complete", **grade_result)
-            result['grading'] = grade_result
+        # Always run grading after results sync — even if no new results were
+        # created this cycle, there may be previously-synced results with
+        # ungraded predictions (e.g. after a scheduler restart or catch-up).
+        log_task("Running prediction grading after results sync...")
+        grade_result = grade_predictions()
+        log_task("Grading complete", **grade_result)
+        result['grading'] = grade_result
 
         return result
     except Exception as e:
@@ -881,6 +882,8 @@ def sync_game_results() -> dict:
     """
     Sync final scores and populate game_results table.
     Uses BallDontLie (free) for scores.
+    Includes catch-up logic: finds ungraded predictions outside the normal
+    2-day window and fetches their results too.
     """
     from datetime import date
 
@@ -901,9 +904,35 @@ def sync_game_results() -> dict:
         from src.services.data.balldontlie import BallDontLieClient
         client = BallDontLieClient()
 
-        # Fetch games from last 2 days
+        # --- Catch-up: find dates with ungraded predictions missing game_results ---
+        catchup_dates = set()
+        try:
+            cur.execute('''
+                SELECT DISTINCT ps.game_date::date
+                FROM prediction_snapshots ps
+                WHERE ps.winner_correct IS NULL
+                  AND ps.tip_time < NOW() - INTERVAL '3 hours'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM game_results gr WHERE gr.game_id = ps.game_id
+                  )
+                ORDER BY ps.game_date::date
+            ''')
+            catchup_dates = {row[0] for row in cur.fetchall()}
+            if catchup_dates:
+                log_task(f"Catch-up: found {len(catchup_dates)} dates with ungraded predictions missing results: {sorted(catchup_dates)}")
+        except Exception as e:
+            log_task(f"Catch-up query failed (non-fatal): {e}")
+
+        # Build the full set of dates to fetch: normal 2-day window + catch-up dates
+        fetch_start = two_days_ago
+        if catchup_dates:
+            earliest_catchup = min(catchup_dates)
+            if earliest_catchup < fetch_start:
+                fetch_start = earliest_catchup
+
+        # Fetch games covering both normal window and catch-up dates
         all_games = asyncio.run(client.get_games(
-            start_date=two_days_ago,
+            start_date=fetch_start,
             end_date=today,
             seasons=[2025]
         ))
