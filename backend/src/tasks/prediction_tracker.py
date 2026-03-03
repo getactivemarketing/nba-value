@@ -165,21 +165,21 @@ def assess_blowout_risk(bet_team_quality: dict, opponent_quality: dict,
 
     # Factor 6: Road favorite risk
     # Road favorites losing outright or failing to cover is a persistent pattern.
-    # The market prices in team quality — being favored on the road already
-    # implies the team is significantly better, so covering is harder.
+    # Keep penalties moderate — this factor adds to other risk factors, so
+    # don't let road favorite status alone push past the skip threshold.
     if not is_home_bet and spread_line and spread_line < 0:
         abs_line = abs(spread_line)
-        # Large road favorites (-5+) are especially vulnerable
+        # Large road favorites (-5+) are more vulnerable
         if abs_line >= 5:
-            risk_score += 25
+            risk_score += 15
             risk_factors.append(f"Large road favorite ({spread_line})")
         else:
-            risk_score += 15
+            risk_score += 10
             risk_factors.append(f"Road favorite ({spread_line})")
 
-        # Road favorite against a quality opponent is dangerous
+        # Road favorite against a quality opponent is tougher
         if opponent_quality.get("tier") in ("elite", "good"):
-            risk_score += 10
+            risk_score += 5
             risk_factors.append(f"Road fav vs {opponent_quality['tier']} home team")
 
     # Determine risk level
@@ -249,13 +249,13 @@ def adjust_value_score_for_quality(base_score: float, bet_team_quality: dict,
     if not is_home_bet and opponent_quality.get("is_elite"):
         adjustment -= 10
 
-    # Penalty for road favorites — the spread already reflects team quality,
-    # so quality bonuses double-count the edge. Road favorites that lose
-    # outright or fail to cover are a persistent blind spot.
+    # Small penalty for road favorites — the blowout risk check already
+    # handles this via elevated thresholds/skipping, so keep the score
+    # adjustment light to avoid double-penalizing.
     if not is_home_bet and spread_line and spread_line < 0:
-        adjustment -= 5  # Base penalty for any road favorite
+        adjustment -= 2  # Light penalty (blowout risk handles the rest)
         if spread_line <= -5:
-            adjustment -= 3  # Extra penalty for large road favorites
+            adjustment -= 1  # Slight extra for large road favorites
 
     # Bonus for elite/good home teams
     if is_home_bet:
