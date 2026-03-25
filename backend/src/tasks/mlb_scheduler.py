@@ -607,23 +607,31 @@ def run_health_check():
 
 
 def start_scheduler():
-    """Start the MLB scheduler loop."""
+    """Start the MLB scheduler loop.
+
+    Uses its own schedule.Scheduler instance to avoid conflicts
+    when running alongside the NBA scheduler in the same process.
+    """
     log_task("Starting MLB prediction tracker scheduler...")
 
     # Run all tasks immediately on startup
     run_all()
 
+    # Use a dedicated scheduler instance (not the global default)
+    # to avoid conflicts with the NBA scheduler running in another thread
+    mlb_scheduler = schedule.Scheduler()
+
     # Schedule recurring tasks
-    schedule.every().day.at("06:00").do(run_sync_teams)  # Daily team sync
-    schedule.every(2).hours.do(run_ingest_games)
-    schedule.every(2).hours.do(run_update_stats)
-    schedule.every(2).hours.do(run_ingest_weather)
-    schedule.every(30).minutes.do(run_ingest_odds)
-    schedule.every(30).minutes.do(run_scoring)
-    schedule.every(15).minutes.do(run_snapshot)
-    schedule.every(1).hour.do(run_grading)
-    schedule.every(2).hours.do(run_sync_results)
-    schedule.every(1).hour.do(run_health_check)
+    mlb_scheduler.every().day.at("06:00").do(run_sync_teams)  # Daily team sync
+    mlb_scheduler.every(2).hours.do(run_ingest_games)
+    mlb_scheduler.every(2).hours.do(run_update_stats)
+    mlb_scheduler.every(2).hours.do(run_ingest_weather)
+    mlb_scheduler.every(30).minutes.do(run_ingest_odds)
+    mlb_scheduler.every(30).minutes.do(run_scoring)
+    mlb_scheduler.every(15).minutes.do(run_snapshot)
+    mlb_scheduler.every(1).hour.do(run_grading)
+    mlb_scheduler.every(2).hours.do(run_sync_results)
+    mlb_scheduler.every(1).hour.do(run_health_check)
 
     log_task("MLB Scheduler configured:")
     log_task("  - Team sync: daily at 6:00 AM")
@@ -638,7 +646,7 @@ def start_scheduler():
     log_task("  - Health monitoring: every 1 hour")
 
     while True:
-        schedule.run_pending()
+        mlb_scheduler.run_pending()
         time.sleep(60)
 
 

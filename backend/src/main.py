@@ -28,13 +28,14 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
-# Global scheduler thread reference
+# Global scheduler thread references
 _scheduler_thread = None
+_mlb_scheduler_thread = None
 _scheduler_should_run = False  # Flag to control watchdog lifecycle
 
 
 def _run_scheduler():
-    """Run the scheduler in a background thread."""
+    """Run the NBA scheduler in a background thread."""
     try:
         print("[SCHEDULER] Importing scheduler module...", flush=True)
         from src.tasks.scheduler import start_scheduler
@@ -45,17 +46,37 @@ def _run_scheduler():
         logger.error(f"Scheduler thread crashed: {e}")
 
 
+def _run_mlb_scheduler():
+    """Run the MLB scheduler in a background thread."""
+    try:
+        print("[MLB-SCHEDULER] Importing MLB scheduler module...", flush=True)
+        from src.tasks.mlb_scheduler import start_scheduler as start_mlb_scheduler
+        print("[MLB-SCHEDULER] Starting MLB scheduler daemon...", flush=True)
+        start_mlb_scheduler()
+    except Exception as e:
+        print(f"[MLB-SCHEDULER] CRASHED: {e}", flush=True)
+        logger.error(f"MLB scheduler thread crashed: {e}")
+
+
 def _start_scheduler_thread():
-    """Create and start a new scheduler thread. Returns the thread."""
+    """Create and start a new NBA scheduler thread. Returns the thread."""
     thread = threading.Thread(target=_run_scheduler, daemon=True, name="scheduler")
     thread.start()
     return thread
 
 
+def _start_mlb_scheduler_thread():
+    """Create and start a new MLB scheduler thread. Returns the thread."""
+    thread = threading.Thread(target=_run_mlb_scheduler, daemon=True, name="mlb-scheduler")
+    thread.start()
+    return thread
+
+
 def _scheduler_watchdog():
-    """Monitor the scheduler thread and restart it if it dies."""
-    global _scheduler_thread
+    """Monitor scheduler threads and restart them if they die."""
+    global _scheduler_thread, _mlb_scheduler_thread
     restart_count = 0
+    mlb_restart_count = 0
     max_restarts = 10  # Prevent infinite restart loops
 
     while _scheduler_should_run:
@@ -64,47 +85,63 @@ def _scheduler_watchdog():
         if not _scheduler_should_run:
             break
 
+        # Watch NBA scheduler
         if _scheduler_thread is None or not _scheduler_thread.is_alive():
             restart_count += 1
             if restart_count > max_restarts:
-                print(f"[SCHEDULER-WATCHDOG] Max restarts ({max_restarts}) reached. Giving up.", flush=True)
-                logger.error(f"Scheduler watchdog: exceeded {max_restarts} restarts, stopping")
-                break
-
-            print(f"[SCHEDULER-WATCHDOG] Scheduler thread died! Restarting (attempt {restart_count}/{max_restarts})...", flush=True)
-            logger.warning(f"Scheduler watchdog restarting thread (attempt {restart_count})")
-
-            # Back off before restarting: 5s, 10s, 20s, 40s... capped at 5 min
-            backoff = min(5 * (2 ** (restart_count - 1)), 300)
-            time.sleep(backoff)
-
-            _scheduler_thread = _start_scheduler_thread()
-            print(f"[SCHEDULER-WATCHDOG] Scheduler thread restarted successfully", flush=True)
+                print(f"[SCHEDULER-WATCHDOG] Max restarts ({max_restarts}) reached for NBA scheduler. Giving up.", flush=True)
+                logger.error(f"Scheduler watchdog: exceeded {max_restarts} restarts for NBA, stopping")
+            else:
+                print(f"[SCHEDULER-WATCHDOG] NBA scheduler thread died! Restarting (attempt {restart_count}/{max_restarts})...", flush=True)
+                logger.warning(f"Scheduler watchdog restarting NBA thread (attempt {restart_count})")
+                backoff = min(5 * (2 ** (restart_count - 1)), 300)
+                time.sleep(backoff)
+                _scheduler_thread = _start_scheduler_thread()
+                print(f"[SCHEDULER-WATCHDOG] NBA scheduler thread restarted successfully", flush=True)
         else:
-            # Reset restart count when thread is healthy for a full check cycle
             restart_count = 0
+
+        # Watch MLB scheduler
+        if _mlb_scheduler_thread is None or not _mlb_scheduler_thread.is_alive():
+            mlb_restart_count += 1
+            if mlb_restart_count > max_restarts:
+                print(f"[SCHEDULER-WATCHDOG] Max restarts ({max_restarts}) reached for MLB scheduler. Giving up.", flush=True)
+                logger.error(f"Scheduler watchdog: exceeded {max_restarts} restarts for MLB, stopping")
+            else:
+                print(f"[SCHEDULER-WATCHDOG] MLB scheduler thread died! Restarting (attempt {mlb_restart_count}/{max_restarts})...", flush=True)
+                logger.warning(f"Scheduler watchdog restarting MLB thread (attempt {mlb_restart_count})")
+                backoff = min(5 * (2 ** (mlb_restart_count - 1)), 300)
+                time.sleep(backoff)
+                _mlb_scheduler_thread = _start_mlb_scheduler_thread()
+                print(f"[SCHEDULER-WATCHDOG] MLB scheduler thread restarted successfully", flush=True)
+        else:
+            mlb_restart_count = 0
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager."""
-    global _scheduler_thread, _scheduler_should_run
+    global _scheduler_thread, _mlb_scheduler_thread, _scheduler_should_run
 
     # Startup
     logger.info("Starting NBA Value Betting API", environment=settings.environment)
     await init_db()
 
-    # Start scheduler in background thread if DATABASE_URL is set (Railway deployment)
+    # Start schedulers in background threads if DATABASE_URL is set (Railway deployment)
     # Note: Railway uses postgres:// format, SQLAlchemy accepts postgresql://
     db_url = os.environ.get("DATABASE_URL", "")
     should_start_scheduler = bool(db_url) and ("postgresql://" in db_url or "postgres://" in db_url)
     print(f"[SCHEDULER] DATABASE_URL present: {bool(db_url)}, will_start: {should_start_scheduler}", flush=True)
     if should_start_scheduler:
         _scheduler_should_run = True
-        _scheduler_thread = _start_scheduler_thread()
-        print("[SCHEDULER] Background thread started", flush=True)
 
-        # Start watchdog to auto-restart scheduler if it crashes
+        _scheduler_thread = _start_scheduler_thread()
+        print("[SCHEDULER] NBA background thread started", flush=True)
+
+        _mlb_scheduler_thread = _start_mlb_scheduler_thread()
+        print("[MLB-SCHEDULER] MLB background thread started", flush=True)
+
+        # Start watchdog to auto-restart schedulers if they crash
         watchdog_thread = threading.Thread(target=_scheduler_watchdog, daemon=True, name="scheduler-watchdog")
         watchdog_thread.start()
         print("[SCHEDULER-WATCHDOG] Watchdog thread started", flush=True)
