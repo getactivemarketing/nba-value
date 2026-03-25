@@ -31,6 +31,8 @@ class MLBGameData:
     inning: int | None
     inning_state: str | None
     game_type: str  # R=regular, P=playoff, S=spring
+    home_first_inning_runs: int | None
+    away_first_inning_runs: int | None
 
 
 @dataclass
@@ -227,6 +229,15 @@ class MLBStatsAPIClient:
             inning = linescore.get("currentInning")
             inning_state = linescore.get("inningState")
 
+            # First inning runs
+            home_first_inning_runs = None
+            away_first_inning_runs = None
+            innings = linescore.get("innings", [])
+            if innings and len(innings) >= 1:
+                first = innings[0]
+                home_first_inning_runs = first.get("home", {}).get("runs")
+                away_first_inning_runs = first.get("away", {}).get("runs")
+
             # Venue
             venue = game.get("venue", {})
 
@@ -250,6 +261,8 @@ class MLBStatsAPIClient:
                 inning=inning,
                 inning_state=inning_state,
                 game_type=game.get("gameType", "R"),
+                home_first_inning_runs=home_first_inning_runs,
+                away_first_inning_runs=away_first_inning_runs,
             )
         except Exception as e:
             logger.warning("Failed to parse game", error=str(e), game_pk=game.get("gamePk"))

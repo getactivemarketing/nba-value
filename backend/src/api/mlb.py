@@ -106,8 +106,22 @@ class MLBGameResponse(BaseModel):
     home_score: int | None
     away_score: int | None
 
+    # First inning data (if completed)
+    home_first_inning_runs: int | None = None
+    away_first_inning_runs: int | None = None
+
     class Config:
         from_attributes = True
+
+
+class FirstInningTeamStats(BaseModel):
+    """First inning scoring stats for a team."""
+    team: str
+    games: int
+    scored: int
+    scoreless: int
+    score_pct: float
+    avg_runs: float
 
 
 class MLBGamesResponse(BaseModel):
@@ -447,6 +461,67 @@ async def get_evaluation_summary() -> EvaluationSummary:
         )
 
 
+@router.get("/stats/first-inning")
+async def get_first_inning_stats() -> list[FirstInningTeamStats]:
+    """
+    Get first inning scoring stats for all teams.
+
+    Returns teams sorted by first inning scoring percentage (descending).
+    """
+    from sqlalchemy import text
+
+    async with async_session() as session:
+        # Query completed regular season games with first inning data
+        result = await session.execute(
+            select(MLBGame).where(
+                and_(
+                    MLBGame.status == "final",
+                    MLBGame.game_type == "R",
+                    MLBGame.home_first_inning_runs.isnot(None),
+                )
+            )
+        )
+        games = result.scalars().all()
+
+        if not games:
+            return []
+
+        # Compute per-team stats
+        team_stats: dict[str, dict] = {}
+
+        for game in games:
+            for team_abbr, runs in [
+                (game.home_team, game.home_first_inning_runs),
+                (game.away_team, game.away_first_inning_runs),
+            ]:
+                if team_abbr not in team_stats:
+                    team_stats[team_abbr] = {
+                        "scored": 0, "scoreless": 0, "total_runs": 0
+                    }
+                stats = team_stats[team_abbr]
+                if runs and runs > 0:
+                    stats["scored"] += 1
+                else:
+                    stats["scoreless"] += 1
+                stats["total_runs"] += (runs or 0)
+
+        # Build response sorted by score_pct descending
+        response = []
+        for team, stats in team_stats.items():
+            total = stats["scored"] + stats["scoreless"]
+            response.append(FirstInningTeamStats(
+                team=team,
+                games=total,
+                scored=stats["scored"],
+                scoreless=stats["scoreless"],
+                score_pct=round(stats["scored"] / total, 3) if total > 0 else 0,
+                avg_runs=round(stats["total_runs"] / total, 2) if total > 0 else 0,
+            ))
+
+        response.sort(key=lambda x: x.score_pct, reverse=True)
+        return response
+
+
 # Helper functions
 
 async def _build_game_response(session, game: MLBGame) -> MLBGameResponse:
@@ -609,6 +684,8 @@ async def _build_game_response(session, game: MLBGame) -> MLBGameResponse:
         best_bet=best_bet,
         home_score=game.home_score,
         away_score=game.away_score,
+        home_first_inning_runs=game.home_first_inning_runs,
+        away_first_inning_runs=game.away_first_inning_runs,
     )
 
 

@@ -203,6 +203,8 @@ class MLBDataIngestor:
             status=game.status,
             home_score=game.home_score,
             away_score=game.away_score,
+            home_first_inning_runs=game.home_first_inning_runs,
+            away_first_inning_runs=game.away_first_inning_runs,
             inning=game.inning,
             inning_state=game.inning_state,
             external_id=game.game_id,
@@ -216,6 +218,8 @@ class MLBDataIngestor:
                 "status": game.status,
                 "home_score": game.home_score,
                 "away_score": game.away_score,
+                "home_first_inning_runs": game.home_first_inning_runs,
+                "away_first_inning_runs": game.away_first_inning_runs,
                 "inning": game.inning,
                 "inning_state": game.inning_state,
                 "updated_at": datetime.now(timezone.utc),
@@ -692,8 +696,74 @@ class MLBDataIngestor:
             count += 1
 
         await self.session.commit()
+
+        # Compute first inning stats from completed games
+        await self._update_first_inning_stats(today)
+
         logger.info("Updated team stats", count=count)
         return count
+
+    async def _update_first_inning_stats(self, today: date) -> None:
+        """Compute first inning scoring stats from completed games."""
+        from sqlalchemy import case, cast, Float
+
+        # Get all completed regular season games with first inning data
+        completed_games = await self.session.execute(
+            select(MLBGame).where(
+                and_(
+                    MLBGame.status == "final",
+                    MLBGame.game_type == "R",
+                    MLBGame.home_first_inning_runs.isnot(None),
+                )
+            )
+        )
+        games = completed_games.scalars().all()
+
+        if not games:
+            return
+
+        # Compute per-team stats
+        team_first_inning: dict[str, dict] = {}
+
+        for game in games:
+            for team_abbr, runs in [
+                (game.home_team, game.home_first_inning_runs),
+                (game.away_team, game.away_first_inning_runs),
+            ]:
+                if team_abbr not in team_first_inning:
+                    team_first_inning[team_abbr] = {
+                        "scored": 0, "scoreless": 0, "total_runs": 0
+                    }
+                stats = team_first_inning[team_abbr]
+                if runs and runs > 0:
+                    stats["scored"] += 1
+                else:
+                    stats["scoreless"] += 1
+                stats["total_runs"] += (runs or 0)
+
+        # Update team stats rows
+        for team_abbr, fi_stats in team_first_inning.items():
+            total_games = fi_stats["scored"] + fi_stats["scoreless"]
+            score_pct = round(fi_stats["scored"] / total_games, 3) if total_games > 0 else None
+            avg_runs = round(fi_stats["total_runs"] / total_games, 2) if total_games > 0 else None
+
+            # Update existing team stats row for today
+            stmt = select(MLBTeamStats).where(
+                and_(
+                    MLBTeamStats.team_abbr == team_abbr,
+                    MLBTeamStats.stat_date == today,
+                )
+            )
+            result = await self.session.execute(stmt)
+            row = result.scalar_one_or_none()
+            if row:
+                row.first_inning_scored = fi_stats["scored"]
+                row.first_inning_scoreless = fi_stats["scoreless"]
+                row.first_inning_score_pct = score_pct
+                row.first_inning_runs_avg = avg_runs
+
+        await self.session.commit()
+        logger.info("Updated first inning stats", teams=len(team_first_inning))
 
     async def sync_results(self, game_date: date | None = None) -> int:
         """
@@ -726,6 +796,8 @@ class MLBDataIngestor:
                 db_game.status = "final"
                 db_game.home_score = game.home_score
                 db_game.away_score = game.away_score
+                db_game.home_first_inning_runs = game.home_first_inning_runs
+                db_game.away_first_inning_runs = game.away_first_inning_runs
                 db_game.updated_at = datetime.now(timezone.utc)
                 count += 1
 

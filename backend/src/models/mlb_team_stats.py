@@ -63,6 +63,12 @@ class MLBTeamStats(Base):
     days_rest: Mapped[int | None] = mapped_column(Integer, nullable=True)
     games_last_7_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # First inning scoring
+    first_inning_scored: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Games scored in 1st
+    first_inning_scoreless: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Games scoreless in 1st
+    first_inning_score_pct: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)  # % of games scoring in 1st
+    first_inning_runs_avg: Mapped[Decimal | None] = mapped_column(Numeric(4, 2), nullable=True)  # Avg runs in 1st
+
     # Betting records
     ats_wins: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Against the spread (runline)
     ats_losses: Mapped[int | None] = mapped_column(Integer, nullable=True)
