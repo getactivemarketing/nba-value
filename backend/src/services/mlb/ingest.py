@@ -2,7 +2,7 @@
 
 import structlog
 from datetime import datetime, date, timezone, timedelta
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
 
@@ -362,7 +362,8 @@ class MLBDataIngestor:
 
             # Find matching game
             # commence_time is UTC — a 7pm ET game is next day in UTC
-            # so match on team + date range instead of exact date
+            # Match by game_time proximity since teams can play each other
+            # on consecutive days
             game_time = datetime.fromisoformat(
                 game["commence_time"].replace("Z", "+00:00")
             )
@@ -375,7 +376,9 @@ class MLBDataIngestor:
                     MLBGame.away_team == away_team,
                     MLBGame.game_date.in_([game_date, game_date_prev]),
                 )
-            )
+            ).order_by(
+                func.abs(func.extract('epoch', MLBGame.game_time - game_time))
+            ).limit(1)
             result = await self.session.execute(stmt)
             mlb_game = result.scalar_one_or_none()
 
