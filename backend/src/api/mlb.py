@@ -635,19 +635,42 @@ async def _get_pitcher_info(session, pitcher: MLBPitcher) -> PitcherInfo:
 
 @router.get("/debug/odds")
 async def debug_odds() -> dict:
-    """Debug endpoint: try odds ingestion and report results."""
+    """Debug endpoint: check odds ingestion status without calling external APIs."""
     from sqlalchemy import text
-    from src.services.mlb.ingest import MLBDataIngestor, MLBOddsClient
+    from src.config import settings
 
     results = {}
 
-    # Check existing markets
+    # Check API key
+    results["odds_api_key_set"] = bool(settings.odds_api_key)
+    results["odds_api_key_prefix"] = settings.odds_api_key[:8] + "..." if settings.odds_api_key else None
+
+    # Check existing data
     async with async_session() as session:
         row = await session.execute(text("SELECT COUNT(*) FROM mlb_markets"))
         results["existing_markets"] = row.scalar()
 
         row = await session.execute(text("SELECT COUNT(*) FROM mlb_games"))
         results["existing_games"] = row.scalar()
+
+        # Check game dates
+        row = await session.execute(text(
+            "SELECT game_date, home_team, away_team, status FROM mlb_games ORDER BY game_date DESC LIMIT 5"
+        ))
+        results["recent_games"] = [
+            {"date": str(r[0]), "home": r[1], "away": r[2], "status": r[3]}
+            for r in row.fetchall()
+        ]
+
+    return results
+
+
+@router.get("/debug/odds/ingest")
+async def debug_odds_ingest() -> dict:
+    """Debug endpoint: actually try odds ingestion and report results."""
+    from src.services.mlb.ingest import MLBDataIngestor, MLBOddsClient
+
+    results = {}
 
     # Try fetching odds
     try:
