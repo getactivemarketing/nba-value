@@ -361,16 +361,19 @@ class MLBDataIngestor:
                 continue
 
             # Find matching game
+            # commence_time is UTC — a 7pm ET game is next day in UTC
+            # so match on team + date range instead of exact date
             game_time = datetime.fromisoformat(
                 game["commence_time"].replace("Z", "+00:00")
             )
             game_date = game_time.date()
+            game_date_prev = game_date - timedelta(days=1)
 
             stmt = select(MLBGame).where(
                 and_(
                     MLBGame.home_team == home_team,
                     MLBGame.away_team == away_team,
-                    MLBGame.game_date == game_date,
+                    MLBGame.game_date.in_([game_date, game_date_prev]),
                 )
             )
             result = await self.session.execute(stmt)
@@ -395,7 +398,7 @@ class MLBDataIngestor:
                     if market_key == "h2h":
                         # Moneyline
                         await self._upsert_market_moneyline(
-                            mlb_game.game_id, market, book
+                            mlb_game.game_id, market, book, home_team
                         )
                         count += 1
 
@@ -422,13 +425,15 @@ class MLBDataIngestor:
         game_id: str,
         market: dict,
         book: str,
+        home_team: str,
     ) -> None:
         """Insert/update moneyline market."""
         home_odds = None
         away_odds = None
 
         for outcome in market.get("outcomes", []):
-            if outcome.get("name") == "Home":
+            team_abbr = MLB_TEAM_NAME_TO_ABBR.get(outcome.get("name"), "")
+            if team_abbr == home_team:
                 home_odds = outcome["price"]
             else:
                 away_odds = outcome["price"]
