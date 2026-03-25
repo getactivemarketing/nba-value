@@ -633,6 +633,51 @@ async def _get_pitcher_info(session, pitcher: MLBPitcher) -> PitcherInfo:
     )
 
 
+@router.get("/debug/odds")
+async def debug_odds() -> dict:
+    """Debug endpoint: try odds ingestion and report results."""
+    from sqlalchemy import text
+    from src.services.mlb.ingest import MLBDataIngestor, MLBOddsClient
+
+    results = {}
+
+    # Check existing markets
+    async with async_session() as session:
+        row = await session.execute(text("SELECT COUNT(*) FROM mlb_markets"))
+        results["existing_markets"] = row.scalar()
+
+        row = await session.execute(text("SELECT COUNT(*) FROM mlb_games"))
+        results["existing_games"] = row.scalar()
+
+    # Try fetching odds
+    try:
+        client = MLBOddsClient()
+        odds_data = await client.get_mlb_odds()
+        results["odds_api_games"] = len(odds_data)
+        if odds_data:
+            results["odds_sample"] = {
+                "home": odds_data[0].get("home_team"),
+                "away": odds_data[0].get("away_team"),
+                "commence_time": odds_data[0].get("commence_time"),
+                "bookmakers_count": len(odds_data[0].get("bookmakers", [])),
+            }
+    except Exception as e:
+        results["odds_api_error"] = str(e)
+
+    # Try full ingestion
+    try:
+        async with async_session() as session:
+            ingestor = MLBDataIngestor(session)
+            count = await ingestor.ingest_odds()
+            results["markets_ingested"] = count
+    except Exception as e:
+        results["ingestion_error"] = str(e)
+        import traceback
+        results["ingestion_traceback"] = traceback.format_exc()
+
+    return results
+
+
 def _decimal_to_american(decimal_odds: float) -> int:
     """Convert decimal odds to American format."""
     if decimal_odds >= 2.0:
