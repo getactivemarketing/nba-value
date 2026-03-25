@@ -190,3 +190,15 @@ async def root() -> dict:
         "version": "0.1.0",
         "docs": "/docs",
     }
+
+
+@app.get("/debug/threads")
+async def debug_threads() -> dict:
+    """Debug endpoint to check scheduler thread status."""
+    import threading
+    threads = {t.name: t.is_alive() for t in threading.enumerate()}
+    return {
+        "nba_scheduler": _scheduler_thread.is_alive() if _scheduler_thread else None,
+        "mlb_scheduler": _mlb_scheduler_thread.is_alive() if _mlb_scheduler_thread else None,
+        "all_threads": threads,
+    }
