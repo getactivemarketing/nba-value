@@ -47,6 +47,27 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database tables."""
+    """Initialize database tables and run pending column migrations."""
+    from sqlalchemy import text
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Add columns that create_all won't add to existing tables
+    column_migrations = [
+        ("mlb_games", "home_first_inning_runs", "INTEGER"),
+        ("mlb_games", "away_first_inning_runs", "INTEGER"),
+        ("mlb_team_stats", "first_inning_scored", "INTEGER"),
+        ("mlb_team_stats", "first_inning_scoreless", "INTEGER"),
+        ("mlb_team_stats", "first_inning_score_pct", "NUMERIC(4,3)"),
+        ("mlb_team_stats", "first_inning_runs_avg", "NUMERIC(4,2)"),
+    ]
+
+    async with engine.begin() as conn:
+        for table, column, col_type in column_migrations:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}"
+                ))
+            except Exception:
+                pass  # Column already exists or table doesn't exist yet
