@@ -209,9 +209,68 @@ async def get_games(
         result = await session.execute(stmt)
         games = result.scalars().all()
 
+        if not games:
+            return MLBGamesResponse(games=[], total=0, date=target_date.isoformat())
+
+        # Batch-fetch all related data to avoid N+1 queries
+        game_ids = [g.game_id for g in games]
+        pitcher_ids = set()
+        for g in games:
+            if g.home_starter_id:
+                pitcher_ids.add(g.home_starter_id)
+            if g.away_starter_id:
+                pitcher_ids.add(g.away_starter_id)
+
+        # Fetch all pitchers, contexts, markets, and snapshots in bulk
+        pitchers_map = {}
+        if pitcher_ids:
+            p_result = await session.execute(
+                select(MLBPitcher).where(MLBPitcher.pitcher_id.in_(pitcher_ids))
+            )
+            pitchers_map = {p.pitcher_id: p for p in p_result.scalars().all()}
+
+        ctx_result = await session.execute(
+            select(MLBGameContext).where(MLBGameContext.game_id.in_(game_ids))
+        )
+        contexts_map = {c.game_id: c for c in ctx_result.scalars().all()}
+
+        mkt_result = await session.execute(
+            select(MLBMarket).where(MLBMarket.game_id.in_(game_ids))
+        )
+        markets_map: dict[str, list] = {gid: [] for gid in game_ids}
+        for m in mkt_result.scalars().all():
+            markets_map[m.game_id].append(m)
+
+        snap_result = await session.execute(
+            select(MLBPredictionSnapshot).where(
+                MLBPredictionSnapshot.game_id.in_(game_ids)
+            ).order_by(desc(MLBPredictionSnapshot.snapshot_time))
+        )
+        snapshots_map: dict[str, MLBPredictionSnapshot] = {}
+        for s in snap_result.scalars().all():
+            if s.game_id not in snapshots_map:  # Keep latest per game
+                snapshots_map[s.game_id] = s
+
+        # Fetch pitcher stats in bulk
+        pitcher_stats_map = {}
+        if pitcher_ids:
+            from sqlalchemy import tuple_
+            ps_result = await session.execute(
+                select(MLBPitcherStats).where(
+                    MLBPitcherStats.pitcher_id.in_(pitcher_ids)
+                ).order_by(desc(MLBPitcherStats.stat_date))
+            )
+            for ps in ps_result.scalars().all():
+                if ps.pitcher_id not in pitcher_stats_map:
+                    pitcher_stats_map[ps.pitcher_id] = ps
+
+        # Build responses using pre-fetched data
         response_games = []
         for game in games:
-            game_response = await _build_game_response(session, game)
+            game_response = _build_game_response_fast(
+                game, pitchers_map, pitcher_stats_map,
+                contexts_map, markets_map, snapshots_map,
+            )
             response_games.append(game_response)
 
         return MLBGamesResponse(
@@ -522,7 +581,151 @@ async def get_first_inning_stats() -> list[FirstInningTeamStats]:
         return response
 
 
-# Helper functions
+def _build_game_response_fast(
+    game: MLBGame,
+    pitchers_map: dict,
+    pitcher_stats_map: dict,
+    contexts_map: dict,
+    markets_map: dict,
+    snapshots_map: dict,
+) -> MLBGameResponse:
+    """Build game response using pre-fetched data (no DB queries)."""
+    # Starters
+    home_starter = None
+    away_starter = None
+
+    if game.home_starter_id and game.home_starter_id in pitchers_map:
+        p = pitchers_map[game.home_starter_id]
+        stats = pitcher_stats_map.get(p.pitcher_id)
+        home_starter = PitcherInfo(
+            pitcher_id=p.pitcher_id, name=p.player_name, team=p.team_abbr,
+            throws=p.throws,
+            era=float(stats.era) if stats and stats.era else None,
+            whip=float(stats.whip) if stats and stats.whip else None,
+            k_per_9=float(stats.k_per_9) if stats and stats.k_per_9 else None,
+            quality_score=float(stats.quality_score) if stats and stats.quality_score else None,
+        )
+
+    if game.away_starter_id and game.away_starter_id in pitchers_map:
+        p = pitchers_map[game.away_starter_id]
+        stats = pitcher_stats_map.get(p.pitcher_id)
+        away_starter = PitcherInfo(
+            pitcher_id=p.pitcher_id, name=p.player_name, team=p.team_abbr,
+            throws=p.throws,
+            era=float(stats.era) if stats and stats.era else None,
+            whip=float(stats.whip) if stats and stats.whip else None,
+            k_per_9=float(stats.k_per_9) if stats and stats.k_per_9 else None,
+            quality_score=float(stats.quality_score) if stats and stats.quality_score else None,
+        )
+
+    # Context
+    context = None
+    ctx = contexts_map.get(game.game_id)
+    if ctx:
+        context = GameContextInfo(
+            venue_name=ctx.venue_name,
+            park_factor=float(ctx.park_factor) if ctx.park_factor else None,
+            temperature=ctx.temperature, wind_speed=ctx.wind_speed,
+            is_dome=ctx.is_dome,
+            weather_factor=float(ctx.weather_factor) if ctx.weather_factor else None,
+        )
+
+    # Markets
+    markets = [
+        MarketInfo(
+            market_type=m.market_type,
+            line=float(m.line) if m.line else None,
+            home_odds=float(m.home_odds) if m.home_odds else None,
+            away_odds=float(m.away_odds) if m.away_odds else None,
+            over_odds=float(m.over_odds) if m.over_odds else None,
+            under_odds=float(m.under_odds) if m.under_odds else None,
+            book=m.book,
+        )
+        for m in markets_map.get(game.game_id, [])
+    ]
+
+    # Snapshot / predictions
+    snapshot = snapshots_map.get(game.game_id)
+    best_ml = best_rl = best_total = best_bet = None
+    predicted_run_diff = predicted_total = p_home_win = p_away_win = None
+
+    if snapshot:
+        predicted_run_diff = float(snapshot.predicted_run_diff) if snapshot.predicted_run_diff else None
+        predicted_total = float(snapshot.predicted_total) if snapshot.predicted_total else None
+        p_home_win = float(snapshot.winner_probability) if snapshot.predicted_winner == game.home_team else None
+        p_away_win = float(snapshot.winner_probability) if snapshot.predicted_winner == game.away_team else None
+
+        if snapshot.best_ml_team and snapshot.best_ml_value_score:
+            best_ml = ValueBetInfo(
+                market_type="moneyline",
+                bet_type="home_ml" if snapshot.best_ml_team == game.home_team else "away_ml",
+                team=snapshot.best_ml_team, line=None,
+                odds_decimal=float(snapshot.best_ml_odds) if snapshot.best_ml_odds else 2.0,
+                odds_american=_decimal_to_american(float(snapshot.best_ml_odds) if snapshot.best_ml_odds else 2.0),
+                model_prob=0.5, market_prob=0.5,
+                edge=float(snapshot.best_ml_edge) if snapshot.best_ml_edge else 0,
+                value_score=float(snapshot.best_ml_value_score),
+                confidence="high" if snapshot.best_ml_value_score >= 70 else "medium",
+            )
+
+        if snapshot.best_rl_team and snapshot.best_rl_value_score:
+            best_rl = ValueBetInfo(
+                market_type="runline",
+                bet_type="home_rl" if snapshot.best_rl_team == game.home_team else "away_rl",
+                team=snapshot.best_rl_team,
+                line=float(snapshot.best_rl_line) if snapshot.best_rl_line else None,
+                odds_decimal=float(snapshot.best_rl_odds) if snapshot.best_rl_odds else 2.0,
+                odds_american=_decimal_to_american(float(snapshot.best_rl_odds) if snapshot.best_rl_odds else 2.0),
+                model_prob=0.5, market_prob=0.5,
+                edge=float(snapshot.best_rl_edge) if snapshot.best_rl_edge else 0,
+                value_score=float(snapshot.best_rl_value_score),
+                confidence="high" if snapshot.best_rl_value_score >= 70 else "medium",
+            )
+
+        if snapshot.best_total_direction and snapshot.best_total_value_score:
+            best_total = ValueBetInfo(
+                market_type="total", bet_type=snapshot.best_total_direction, team=None,
+                line=float(snapshot.best_total_line) if snapshot.best_total_line else None,
+                odds_decimal=float(snapshot.best_total_odds) if snapshot.best_total_odds else 2.0,
+                odds_american=_decimal_to_american(float(snapshot.best_total_odds) if snapshot.best_total_odds else 2.0),
+                model_prob=0.5, market_prob=0.5,
+                edge=float(snapshot.best_total_edge) if snapshot.best_total_edge else 0,
+                value_score=float(snapshot.best_total_value_score),
+                confidence="high" if snapshot.best_total_value_score >= 70 else "medium",
+            )
+
+        if snapshot.best_bet_type and snapshot.best_bet_value_score:
+            best_bet = ValueBetInfo(
+                market_type=snapshot.best_bet_type,
+                bet_type=snapshot.best_bet_type,
+                team=snapshot.best_bet_team,
+                line=float(snapshot.best_bet_line) if snapshot.best_bet_line else None,
+                odds_decimal=float(snapshot.best_bet_odds) if snapshot.best_bet_odds else 2.0,
+                odds_american=_decimal_to_american(float(snapshot.best_bet_odds) if snapshot.best_bet_odds else 2.0),
+                model_prob=0.5, market_prob=0.5,
+                edge=float(snapshot.best_bet_edge) if snapshot.best_bet_edge else 0,
+                value_score=float(snapshot.best_bet_value_score),
+                confidence="high" if snapshot.best_bet_value_score >= 70 else "medium",
+            )
+
+    return MLBGameResponse(
+        game_id=game.game_id,
+        game_date=game.game_date.isoformat(),
+        game_time=game.game_time,
+        home_team=game.home_team, away_team=game.away_team,
+        status=game.status,
+        home_starter=home_starter, away_starter=away_starter,
+        context=context, markets=markets,
+        predicted_run_diff=predicted_run_diff, predicted_total=predicted_total,
+        p_home_win=p_home_win, p_away_win=p_away_win,
+        best_ml=best_ml, best_rl=best_rl, best_total=best_total, best_bet=best_bet,
+        home_score=game.home_score, away_score=game.away_score,
+        home_first_inning_runs=game.home_first_inning_runs,
+        away_first_inning_runs=game.away_first_inning_runs,
+    )
+
+
+# Helper functions (kept for single-game endpoint)
 
 async def _build_game_response(session, game: MLBGame) -> MLBGameResponse:
     """Build complete game response with all related data."""
