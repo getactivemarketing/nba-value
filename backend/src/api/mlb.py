@@ -251,6 +251,17 @@ async def get_games(
             if s.game_id not in snapshots_map:  # Keep latest per game
                 snapshots_map[s.game_id] = s
 
+        # Fetch predictions (fallback when no snapshot exists yet)
+        pred_result = await session.execute(
+            select(MLBPrediction).where(
+                and_(
+                    MLBPrediction.game_id.in_(game_ids),
+                    MLBPrediction.market_type == "moneyline",
+                )
+            )
+        )
+        predictions_map = {p.game_id: p for p in pred_result.scalars().all()}
+
         # Fetch pitcher stats in bulk
         pitcher_stats_map = {}
         if pitcher_ids:
@@ -270,6 +281,7 @@ async def get_games(
             game_response = _build_game_response_fast(
                 game, pitchers_map, pitcher_stats_map,
                 contexts_map, markets_map, snapshots_map,
+                predictions_map,
             )
             response_games.append(game_response)
 
@@ -588,6 +600,7 @@ def _build_game_response_fast(
     contexts_map: dict,
     markets_map: dict,
     snapshots_map: dict,
+    predictions_map: dict | None = None,
 ) -> MLBGameResponse:
     """Build game response using pre-fetched data (no DB queries)."""
     # Starters
@@ -648,6 +661,16 @@ def _build_game_response_fast(
     snapshot = snapshots_map.get(game.game_id)
     best_ml = best_rl = best_total = best_bet = None
     predicted_run_diff = predicted_total = p_home_win = p_away_win = None
+
+    # Fallback to MLBPrediction if no snapshot exists yet
+    if not snapshot and predictions_map:
+        pred = predictions_map.get(game.game_id)
+        if pred:
+            predicted_run_diff = float(pred.predicted_run_diff) if pred.predicted_run_diff else None
+            predicted_total = float(pred.predicted_total) if pred.predicted_total else None
+            if pred.p_home_win is not None:
+                p_home_win = float(pred.p_home_win)
+                p_away_win = float(pred.p_away_win) if pred.p_away_win else None
 
     if snapshot:
         predicted_run_diff = float(snapshot.predicted_run_diff) if snapshot.predicted_run_diff else None
