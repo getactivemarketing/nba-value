@@ -58,7 +58,7 @@ def run_sync_teams():
     """Sync wrapper for team sync."""
     log_task("Syncing MLB teams...")
     try:
-        result = asyncio.run(sync_teams_async())
+        result = _run_async(sync_teams_async())
         log_task("Teams sync complete", **result)
         _last_run_times['sync_teams'] = datetime.now(timezone.utc)
         return result
@@ -86,7 +86,7 @@ def run_ingest_games():
     """Sync wrapper for game ingestion."""
     log_task("Ingesting MLB games...")
     try:
-        result = asyncio.run(ingest_games_async())
+        result = _run_async(ingest_games_async())
         log_task("Games ingestion complete", **result)
         _last_run_times['ingest_games'] = datetime.now(timezone.utc)
         return result
@@ -117,7 +117,7 @@ def run_update_stats():
     """Sync wrapper for stats update."""
     log_task("Updating MLB stats...")
     try:
-        result = asyncio.run(update_stats_async())
+        result = _run_async(update_stats_async())
         log_task("Stats update complete", **result)
         _last_run_times['update_stats'] = datetime.now(timezone.utc)
         return result
@@ -142,7 +142,7 @@ def run_ingest_weather():
     """Sync wrapper for weather ingestion."""
     log_task("Ingesting weather data...")
     try:
-        result = asyncio.run(ingest_weather_async())
+        result = _run_async(ingest_weather_async())
         log_task("Weather ingestion complete", **result)
         _last_run_times['ingest_weather'] = datetime.now(timezone.utc)
         return result
@@ -167,7 +167,7 @@ def run_ingest_odds():
     """Sync wrapper for odds ingestion."""
     log_task("Ingesting MLB odds...")
     try:
-        result = asyncio.run(ingest_odds_async())
+        result = _run_async(ingest_odds_async())
         log_task("Odds ingestion complete", **result)
         _last_run_times['ingest_odds'] = datetime.now(timezone.utc)
         return result
@@ -195,7 +195,7 @@ def run_scoring():
     """Sync wrapper for scoring."""
     log_task("Running MLB scoring...")
     try:
-        result = asyncio.run(run_scoring_async())
+        result = _run_async(run_scoring_async())
         log_task("Scoring complete", **result)
         _last_run_times['scoring'] = datetime.now(timezone.utc)
         return result
@@ -347,7 +347,7 @@ def run_snapshot():
     """Sync wrapper for prediction snapshot."""
     log_task("Running prediction snapshot...")
     try:
-        result = asyncio.run(snapshot_predictions_async())
+        result = _run_async(snapshot_predictions_async())
         log_task("Snapshot complete", **result)
         _last_run_times['snapshot'] = datetime.now(timezone.utc)
         return result
@@ -478,7 +478,7 @@ def run_grading():
     """Sync wrapper for grading."""
     log_task("Running prediction grading...")
     try:
-        result = asyncio.run(grade_predictions_async())
+        result = _run_async(grade_predictions_async())
         log_task("Grading complete", **result)
         _last_run_times['grading'] = datetime.now(timezone.utc)
         return result
@@ -503,7 +503,7 @@ def run_sync_results():
     """Sync wrapper for results sync."""
     log_task("Syncing game results...")
     try:
-        result = asyncio.run(sync_results_async())
+        result = _run_async(sync_results_async())
         log_task("Results sync complete", **result)
         _last_run_times['sync_results'] = datetime.now(timezone.utc)
 
@@ -606,12 +606,29 @@ def run_health_check():
         log_task("Health check: All MLB tasks running normally")
 
 
+# Persistent event loop for the MLB scheduler thread.
+# Reusing one loop avoids creating/destroying connections per task.
+_mlb_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _run_async(coro):
+    """Run an async coroutine on the MLB scheduler's persistent event loop."""
+    global _mlb_loop
+    if _mlb_loop is None:
+        _mlb_loop = asyncio.new_event_loop()
+    return _mlb_loop.run_until_complete(coro)
+
+
 def start_scheduler():
     """Start the MLB scheduler loop.
 
     Uses its own schedule.Scheduler instance to avoid conflicts
     when running alongside the NBA scheduler in the same process.
+    Uses a persistent event loop to avoid connection pool exhaustion.
     """
+    global _mlb_loop
+    _mlb_loop = asyncio.new_event_loop()
+
     log_task("Starting MLB prediction tracker scheduler...")
 
     # Run all tasks immediately on startup
