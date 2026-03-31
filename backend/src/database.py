@@ -12,9 +12,9 @@ engine = create_async_engine(
     settings.async_database_url,
     echo=settings.debug,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=5,
-    pool_recycle=300,
+    pool_size=3,
+    max_overflow=2,
+    pool_recycle=180,
     pool_timeout=30,
 )
 

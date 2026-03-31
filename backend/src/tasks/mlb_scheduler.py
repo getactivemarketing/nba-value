@@ -631,7 +631,11 @@ def start_scheduler():
 
     log_task("Starting MLB prediction tracker scheduler...")
 
-    # Run all tasks immediately on startup
+    # Delay initial run to let the app finish startup and healthcheck
+    log_task("Waiting 120s before initial run to avoid connection pressure during startup...")
+    time.sleep(120)
+
+    # Run all tasks on startup
     run_all()
 
     # Use a dedicated scheduler instance (not the global default)
