@@ -567,11 +567,12 @@ async def get_first_inning_stats() -> list[FirstInningTeamStats]:
         response = []
         for row in rows:
             team, games, scored, scoreless, total_runs = row
-            score_pct = round(scored / games, 3) if games > 0 else 0
-            avg_runs = round(total_runs / games, 2) if games > 0 else 0
+            games, scored, scoreless, total_runs = int(games), int(scored), int(scoreless), int(total_runs)
+            score_pct = round(scored / games, 3) if games > 0 else 0.0
+            avg_runs = round(total_runs / games, 2) if games > 0 else 0.0
             response.append(FirstInningTeamStats(
                 team=team, games=games, scored=scored, scoreless=scoreless,
-                score_pct=score_pct, avg_runs=avg_runs,
+                score_pct=float(score_pct), avg_runs=float(avg_runs),
             ))
 
         return response
