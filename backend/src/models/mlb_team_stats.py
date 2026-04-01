@@ -36,6 +36,7 @@ class MLBTeamStats(Base):
     # Pitching staff
     era: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)  # Team ERA
     bullpen_era: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    team_whip: Mapped[Decimal | None] = mapped_column(Numeric(5, 3), nullable=True)
 
     # Win/Loss context
     wins: Mapped[int | None] = mapped_column(Integer, nullable=True)

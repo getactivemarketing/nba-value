@@ -679,6 +679,7 @@ class MLBDataIngestor:
                 last_10_wins=record.get("last_10_wins"),
                 last_10_losses=record.get("last_10_losses"),
                 last_10_record=f"{record.get('last_10_wins', 0)}-{record.get('last_10_losses', 0)}",
+                team_whip=None,
             ).on_conflict_do_update(
                 constraint="idx_mlb_team_stats_unique",
                 set_={
@@ -690,6 +691,7 @@ class MLBDataIngestor:
                     "run_diff_per_game": round((runs_scored - runs_allowed) / games, 2) if games > 0 else None,
                     "last_10_wins": record.get("last_10_wins"),
                     "last_10_losses": record.get("last_10_losses"),
+                    "team_whip": None,
                 },
             )
             await self.session.execute(stmt)
