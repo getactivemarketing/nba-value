@@ -47,6 +47,30 @@ class MLBGameFeatures:
     home_ops: float | None = None
     away_ops: float | None = None
 
+    # Batting splits (BA, OBP, SLG)
+    home_batting_avg: float | None = None
+    away_batting_avg: float | None = None
+    home_obp: float | None = None
+    away_obp: float | None = None
+    home_slg: float | None = None
+    away_slg: float | None = None
+
+    # Team pitching (full staff)
+    home_team_era: float | None = None
+    away_team_era: float | None = None
+    home_team_whip: float | None = None
+    away_team_whip: float | None = None
+
+    # Starter workload
+    home_starter_ip: float | None = None
+    away_starter_ip: float | None = None
+
+    # First inning scoring tendencies
+    home_first_inning_score_pct: float | None = None
+    away_first_inning_score_pct: float | None = None
+    home_first_inning_runs_avg: float | None = None
+    away_first_inning_runs_avg: float | None = None
+
     # Team defensive features
     home_runs_allowed: float | None = None
     away_runs_allowed: float | None = None
@@ -134,6 +158,23 @@ class MLBGameFeatures:
             self.pitcher_matchup_edge or 0.0,
             self.offense_matchup_edge or 0.0,
             self.total_run_environment or 1.0,
+            # New v2 features
+            self.home_batting_avg or 0.250,
+            self.away_batting_avg or 0.250,
+            self.home_obp or 0.320,
+            self.away_obp or 0.320,
+            self.home_slg or 0.400,
+            self.away_slg or 0.400,
+            self.home_team_era or 4.00,
+            self.away_team_era or 4.00,
+            self.home_team_whip or 1.30,
+            self.away_team_whip or 1.30,
+            self.home_starter_ip or 100.0,
+            self.away_starter_ip or 100.0,
+            self.home_first_inning_score_pct or 0.30,
+            self.away_first_inning_score_pct or 0.30,
+            self.home_first_inning_runs_avg or 0.50,
+            self.away_first_inning_runs_avg or 0.50,
         ]
         return features
 
@@ -174,6 +215,23 @@ class MLBGameFeatures:
             "pitcher_matchup_edge",
             "offense_matchup_edge",
             "total_run_environment",
+            # New v2 features
+            "home_batting_avg",
+            "away_batting_avg",
+            "home_obp",
+            "away_obp",
+            "home_slg",
+            "away_slg",
+            "home_team_era",
+            "away_team_era",
+            "home_team_whip",
+            "away_team_whip",
+            "home_starter_ip",
+            "away_starter_ip",
+            "home_first_inning_score_pct",
+            "away_first_inning_score_pct",
+            "home_first_inning_runs_avg",
+            "away_first_inning_runs_avg",
         ]
 
 
