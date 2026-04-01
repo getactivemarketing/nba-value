@@ -134,36 +134,35 @@ class MLBScorer:
         The model was trained on specific features in a specific order.
         This method maps MLBGameFeatures to that expected format.
         """
-        # Map features to training format with defaults
         vector = [
             features.home_runs_per_game or self.AVG_RUNS_PER_TEAM,
             features.away_runs_per_game or self.AVG_RUNS_PER_TEAM,
-            features.home_ops or 0.720,  # League average OPS
+            features.home_ops or 0.720,
             features.away_ops or 0.720,
-            0.250,  # home_avg - default batting average (not in MLBGameFeatures)
-            0.250,  # away_avg
-            0.320,  # home_obp - default OBP
-            0.320,  # away_obp
-            0.400,  # home_slg - default SLG
-            0.400,  # away_slg
-            features.home_bullpen_era or 4.00,  # team ERA (using bullpen as proxy)
-            features.away_bullpen_era or 4.00,
-            1.30,  # home_whip - team WHIP default
-            1.30,  # away_whip
+            features.home_batting_avg or 0.250,
+            features.away_batting_avg or 0.250,
+            features.home_obp or 0.320,
+            features.away_obp or 0.320,
+            features.home_slg or 0.400,
+            features.away_slg or 0.400,
+            features.home_team_era or 4.00,
+            features.away_team_era or 4.00,
+            features.home_team_whip or 1.30,
+            features.away_team_whip or 1.30,
             features.home_starter_era or 4.00,
             features.away_starter_era or 4.00,
             features.home_starter_whip or 1.25,
             features.away_starter_whip or 1.25,
-            features.home_starter_k_rate or 8.5,  # K/9
+            features.home_starter_k_rate or 8.5,
             features.away_starter_k_rate or 8.5,
-            features.home_starter_bb_rate or 3.0,  # BB/9
+            features.home_starter_bb_rate or 3.0,
             features.away_starter_bb_rate or 3.0,
-            100.0,  # home_starter_ip - innings pitched (default)
-            100.0,  # away_starter_ip
+            features.home_starter_ip or 100.0,
+            features.away_starter_ip or 100.0,
             features.park_factor,
-            features.offense_matchup_edge or 0.0,  # offense_diff
+            features.offense_matchup_edge or 0.0,
             features.starter_era_diff or 0.0,
-            (features.away_bullpen_era or 4.0) - (features.home_bullpen_era or 4.0),  # team_era_diff
+            (features.away_team_era or 4.0) - (features.home_team_era or 4.0),  # team_era_diff
         ]
         return np.array([vector])
 
@@ -261,6 +260,11 @@ class MLBScorer:
         # Higher park factor slightly favors home team (more runs overall)
         if features.park_factor > 1.0:
             run_diff += (features.park_factor - 1.0) * 2
+
+        # First inning scoring tendency adjustment
+        if features.home_first_inning_score_pct and features.away_first_inning_score_pct:
+            fi_diff = features.home_first_inning_score_pct - features.away_first_inning_score_pct
+            run_diff += fi_diff * 0.3  # Small weight
 
         return run_diff
 
