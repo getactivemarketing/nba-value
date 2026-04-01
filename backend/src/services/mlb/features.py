@@ -270,6 +270,7 @@ class MLBFeatureCalculator:
                 features.home_starter_k_rate = float(home_pitcher_stats.k_per_9) if home_pitcher_stats.k_per_9 else None
                 features.home_starter_bb_rate = float(home_pitcher_stats.bb_per_9) if home_pitcher_stats.bb_per_9 else None
                 features.home_starter_quality = float(home_pitcher_stats.quality_score) if home_pitcher_stats.quality_score else None
+                features.home_starter_ip = float(home_pitcher_stats.innings_pitched) if home_pitcher_stats.innings_pitched else None
                 features.has_home_starter = True
 
         if game.away_starter_id:
@@ -282,6 +283,7 @@ class MLBFeatureCalculator:
                 features.away_starter_k_rate = float(away_pitcher_stats.k_per_9) if away_pitcher_stats.k_per_9 else None
                 features.away_starter_bb_rate = float(away_pitcher_stats.bb_per_9) if away_pitcher_stats.bb_per_9 else None
                 features.away_starter_quality = float(away_pitcher_stats.quality_score) if away_pitcher_stats.quality_score else None
+                features.away_starter_ip = float(away_pitcher_stats.innings_pitched) if away_pitcher_stats.innings_pitched else None
                 features.has_away_starter = True
 
         # Calculate pitcher matchup features
@@ -307,6 +309,12 @@ class MLBFeatureCalculator:
             features.home_home_win_pct = float(home_stats.home_win_pct) if home_stats.home_win_pct else None
             features.home_ops = float(home_stats.ops) if home_stats.ops else None
             features.home_bullpen_era = float(home_stats.bullpen_era) if home_stats.bullpen_era else None
+            features.home_batting_avg = float(home_stats.batting_avg) if home_stats.batting_avg else None
+            features.home_obp = float(home_stats.obp) if home_stats.obp else None
+            features.home_slg = float(home_stats.slg) if home_stats.slg else None
+            features.home_team_era = float(home_stats.era) if home_stats.era else None
+            features.home_first_inning_score_pct = float(home_stats.first_inning_score_pct) if home_stats.first_inning_score_pct else None
+            features.home_first_inning_runs_avg = float(home_stats.first_inning_runs_avg) if home_stats.first_inning_runs_avg else None
             features.home_last_10 = home_stats.last_10_record
             features.home_rest_days = home_stats.days_rest
 
@@ -325,6 +333,12 @@ class MLBFeatureCalculator:
             features.away_away_win_pct = float(away_stats.away_win_pct) if away_stats.away_win_pct else None
             features.away_ops = float(away_stats.ops) if away_stats.ops else None
             features.away_bullpen_era = float(away_stats.bullpen_era) if away_stats.bullpen_era else None
+            features.away_batting_avg = float(away_stats.batting_avg) if away_stats.batting_avg else None
+            features.away_obp = float(away_stats.obp) if away_stats.obp else None
+            features.away_slg = float(away_stats.slg) if away_stats.slg else None
+            features.away_team_era = float(away_stats.era) if away_stats.era else None
+            features.away_first_inning_score_pct = float(away_stats.first_inning_score_pct) if away_stats.first_inning_score_pct else None
+            features.away_first_inning_runs_avg = float(away_stats.first_inning_runs_avg) if away_stats.first_inning_runs_avg else None
             features.away_last_10 = away_stats.last_10_record
             features.away_rest_days = away_stats.days_rest
 
