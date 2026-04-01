@@ -98,6 +98,14 @@ class MLBScorer:
         "offense_diff", "starter_era_diff", "team_era_diff",
     ]
 
+    # V2 features — includes first inning data, used when retraining
+    V2_FEATURE_NAMES = MODEL_FEATURE_NAMES + [
+        "home_first_inning_score_pct",
+        "away_first_inning_score_pct",
+        "home_first_inning_runs_avg",
+        "away_first_inning_runs_avg",
+    ]
+
     def __init__(
         self,
         session: AsyncSession,
