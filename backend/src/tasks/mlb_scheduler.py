@@ -28,12 +28,33 @@ import schedule
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.database import async_session
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from src.config import settings
 
 logger = structlog.get_logger()
 
 # Track last run times for health monitoring
 _last_run_times: dict[str, datetime] = {}
+
+# Dedicated engine for the MLB scheduler thread.
+# Sharing the main engine causes "Future attached to a different loop" errors
+# because asyncpg connections are bound to the event loop that created them.
+_mlb_engine = create_async_engine(
+    settings.async_database_url,
+    pool_pre_ping=True,
+    pool_size=2,
+    max_overflow=1,
+    pool_recycle=180,
+    pool_timeout=30,
+)
+_mlb_session_factory = async_sessionmaker(
+    _mlb_engine, class_=AsyncSession, expire_on_commit=False
+)
+
+
+def mlb_session():
+    """Get an async session from the MLB scheduler's dedicated engine."""
+    return _mlb_session_factory()
 
 
 def log_task(message: str, **kwargs):
@@ -47,7 +68,7 @@ async def sync_teams_async() -> dict:
     """Sync all MLB teams to database."""
     from src.services.mlb.ingest import MLBDataIngestor
 
-    async with async_session() as session:
+    async with mlb_session() as session:
         ingestor = MLBDataIngestor(session)
         count = await ingestor.sync_teams()
 
@@ -72,7 +93,7 @@ async def ingest_games_async(days_ahead: int = 7) -> dict:
     """Ingest games from MLB Stats API."""
     from src.services.mlb.ingest import MLBDataIngestor
 
-    async with async_session() as session:
+    async with mlb_session() as session:
         ingestor = MLBDataIngestor(session)
         count = await ingestor.ingest_games(
             start_date=date.today(),
@@ -100,7 +121,7 @@ async def update_stats_async() -> dict:
     """Update team and pitcher statistics."""
     from src.services.mlb.ingest import MLBDataIngestor
 
-    async with async_session() as session:
+    async with mlb_session() as session:
         ingestor = MLBDataIngestor(session)
 
         team_count = await ingestor.update_team_stats()
@@ -131,7 +152,7 @@ async def ingest_weather_async() -> dict:
     """Ingest weather data for today's games."""
     from src.services.mlb.ingest import MLBDataIngestor
 
-    async with async_session() as session:
+    async with mlb_session() as session:
         ingestor = MLBDataIngestor(session)
         count = await ingestor.ingest_weather()
 
@@ -156,7 +177,7 @@ async def ingest_odds_async() -> dict:
     """Ingest odds from The Odds API."""
     from src.services.mlb.ingest import MLBDataIngestor
 
-    async with async_session() as session:
+    async with mlb_session() as session:
         ingestor = MLBDataIngestor(session)
         count = await ingestor.ingest_odds()
 
@@ -181,7 +202,7 @@ async def run_scoring_async() -> dict:
     """Run scoring pipeline for today's games."""
     from src.services.mlb.scorer import run_scoring
 
-    async with async_session() as session:
+    async with mlb_session() as session:
         predictions = await run_scoring(session)
 
     return {
@@ -220,7 +241,7 @@ async def snapshot_predictions_async(hours_ahead: float = 0.75) -> dict:
 
     snapshots_created = 0
 
-    async with async_session() as session:
+    async with mlb_session() as session:
         # Get games starting within the window
         stmt = select(MLBGame).where(
             and_(
@@ -365,7 +386,7 @@ async def grade_predictions_async() -> dict:
     now = datetime.now(timezone.utc)
     graded = 0
 
-    async with async_session() as session:
+    async with mlb_session() as session:
         # Get ungraded snapshots for completed games
         stmt = select(MLBPredictionSnapshot).where(
             and_(
@@ -492,7 +513,7 @@ async def sync_results_async() -> dict:
     """Sync final scores for completed games."""
     from src.services.mlb.ingest import MLBDataIngestor
 
-    async with async_session() as session:
+    async with mlb_session() as session:
         ingestor = MLBDataIngestor(session)
         count = await ingestor.sync_results()
 
