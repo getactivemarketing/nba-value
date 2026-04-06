@@ -26,18 +26,18 @@ export function SharpMoneyBadge({
   const movement = Math.abs(spreadMovement);
 
   const sizeClasses = {
-    sm: 'text-xs px-1.5 py-0.5 gap-1',
-    md: 'text-xs px-2 py-1 gap-1.5',
+    sm: 'text-[10px] px-2 py-0.5 gap-1',
+    md: 'text-xs px-2.5 py-1 gap-1.5',
   };
 
   return (
     <span
       className={clsx(
-        'inline-flex items-center rounded-full font-medium',
+        'inline-flex items-center rounded-full font-bold font-mono uppercase tracking-widest',
         sizeClasses[size],
         isSharpHome
-          ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200'
-          : 'bg-orange-50 text-orange-700 ring-1 ring-orange-200'
+          ? 'bg-[#a4e6ff]/10 text-[#a4e6ff] border border-[#a4e6ff]/20'
+          : 'bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20'
       )}
       title={`Line moved ${movement.toFixed(1)} pts toward ${team}, suggesting sharp money`}
     >
@@ -49,7 +49,7 @@ export function SharpMoneyBadge({
       </svg>
       <span>Sharp: {team}</span>
       {showDetails && (
-        <span className="text-[10px] opacity-75">
+        <span className="opacity-60">
           ({spreadMovement > 0 ? '+' : ''}{spreadMovement.toFixed(1)})
         </span>
       )}
@@ -77,8 +77,8 @@ export function SharpMoneyIndicator({
   return (
     <span
       className={clsx(
-        'inline-flex items-center gap-0.5 text-[10px] font-medium',
-        isSharpHome ? 'text-blue-600' : 'text-orange-600'
+        'inline-flex items-center gap-0.5 text-[10px] font-bold font-mono',
+        isSharpHome ? 'text-[#a4e6ff]' : 'text-[#f59e0b]'
       )}
       title={`Sharp money on ${team}`}
     >
