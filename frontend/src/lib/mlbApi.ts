@@ -84,6 +84,8 @@ export interface MLBGame {
   best_bet: ValueBetInfo | null;
   home_score: number | null;
   away_score: number | null;
+  home_first_inning_runs: number | null;
+  away_first_inning_runs: number | null;
 }
 
 export interface MLBGamesResponse {
@@ -145,6 +147,15 @@ export interface MLBEvaluationSummary {
   }>;
 }
 
+export interface FirstInningStats {
+  team: string;
+  games: number;
+  scored: number;
+  scoreless: number;
+  score_pct: number;
+  avg_runs: number;
+}
+
 // API functions
 export const mlbApi = {
   async getGames(date?: string): Promise<MLBGamesResponse> {
@@ -177,6 +188,11 @@ export const mlbApi = {
 
   async getEvaluationSummary(): Promise<MLBEvaluationSummary> {
     const response = await client.get<MLBEvaluationSummary>('/mlb/evaluation/summary');
+    return response.data;
+  },
+
+  async getFirstInningStats(): Promise<FirstInningStats[]> {
+    const response = await client.get<FirstInningStats[]>('/mlb/stats/first-inning');
     return response.data;
   },
 };

@@ -62,6 +62,10 @@ export function MLBGameCard({ game }: MLBGameCardProps) {
     ? gameTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
     : 'TBD';
 
+  // Win probability
+  const homeWinPct = game.p_home_win ? Math.round(game.p_home_win * 100) : null;
+  const awayWinPct = game.p_away_win ? Math.round(game.p_away_win * 100) : null;
+
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
       {/* Header with venue/weather */}
@@ -107,9 +111,29 @@ export function MLBGameCard({ game }: MLBGameCardProps) {
           />
 
           <div className="text-center px-4">
-            {game.predicted_run_diff !== null && !isCompleted && (
+            {/* Win probability bar */}
+            {homeWinPct !== null && awayWinPct !== null && !isCompleted && (
               <div className="mb-2">
-                <span className="text-xs text-gray-500 block">Predicted</span>
+                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                  <span>{awayWinPct}%</span>
+                  <span>{homeWinPct}%</span>
+                </div>
+                <div className="w-28 h-2 bg-gray-200 rounded-full overflow-hidden flex">
+                  <div
+                    className="bg-red-400 h-full"
+                    style={{ width: `${awayWinPct}%` }}
+                  />
+                  <div
+                    className="bg-blue-400 h-full"
+                    style={{ width: `${homeWinPct}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {game.predicted_run_diff !== null && !isCompleted && (
+              <div className="mb-1">
+                <span className="text-xs text-gray-500 block">Run Diff</span>
                 <span className={`text-lg font-bold ${
                   game.predicted_run_diff > 0 ? 'text-blue-600' : 'text-red-600'
                 }`}>
@@ -120,14 +144,32 @@ export function MLBGameCard({ game }: MLBGameCardProps) {
             {game.predicted_total !== null && !isCompleted && (
               <div>
                 <span className="text-xs text-gray-500 block">Total</span>
-                <span className="text-lg font-bold text-gray-700">
+                <span className="text-sm font-bold text-gray-700">
                   {game.predicted_total.toFixed(1)}
                 </span>
               </div>
             )}
+
+            {/* Completed game summary */}
             {isCompleted && game.home_score !== null && game.away_score !== null && (
-              <div className="text-sm text-gray-500">
-                Total: {game.home_score + game.away_score}
+              <div>
+                <div className="text-sm text-gray-500">
+                  Total: {game.home_score + game.away_score}
+                </div>
+                {/* First inning result */}
+                {game.home_first_inning_runs !== null && game.away_first_inning_runs !== null && (
+                  <div className="mt-1">
+                    <span className="text-xs text-gray-400">1st Inn</span>
+                    <p className={`text-xs font-semibold ${
+                      game.home_first_inning_runs + game.away_first_inning_runs === 0
+                        ? 'text-green-600' : 'text-orange-600'
+                    }`}>
+                      {game.away_first_inning_runs}-{game.home_first_inning_runs}
+                      {game.home_first_inning_runs + game.away_first_inning_runs === 0
+                        ? ' NRFI' : ''}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>
