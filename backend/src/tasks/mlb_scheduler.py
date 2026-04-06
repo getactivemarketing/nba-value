@@ -64,6 +64,16 @@ def log_task(message: str, **kwargs):
     print(f"[MLB-SCHEDULER] {timestamp} | {message} {extra}", flush=True)
 
 
+def _today_et() -> date:
+    """Get today's date in US Eastern time.
+
+    MLB game_date is stored as the ET date (officialDate from MLB API).
+    Railway runs in UTC, so date.today() returns the wrong date after 7pm ET.
+    """
+    eastern = timedelta(hours=-5)  # EDT approximation (close enough for game dates)
+    return (datetime.now(timezone.utc) + eastern).date()
+
+
 async def sync_teams_async() -> dict:
     """Sync all MLB teams to database."""
     from src.services.mlb.ingest import MLBDataIngestor
@@ -95,9 +105,10 @@ async def ingest_games_async(days_ahead: int = 7) -> dict:
 
     async with mlb_session() as session:
         ingestor = MLBDataIngestor(session)
+        today = _today_et()
         count = await ingestor.ingest_games(
-            start_date=date.today(),
-            end_date=date.today() + timedelta(days=days_ahead),
+            start_date=today,
+            end_date=today + timedelta(days=days_ahead),
         )
 
     return {"games_ingested": count, "status": "success"}
@@ -199,15 +210,22 @@ def run_ingest_odds():
 
 
 async def run_scoring_async() -> dict:
-    """Run scoring pipeline for today's games."""
+    """Run scoring pipeline for today's and tomorrow's games (ET)."""
     from src.services.mlb.scorer import run_scoring
 
-    async with mlb_session() as session:
-        predictions = await run_scoring(session)
+    today = _today_et()
+    tomorrow = today + timedelta(days=1)
+    all_predictions = []
+
+    for game_date in [today, tomorrow]:
+        async with mlb_session() as session:
+            predictions = await run_scoring(session, game_date=game_date)
+            all_predictions.extend(predictions)
 
     return {
-        "games_scored": len(predictions),
-        "value_bets": sum(1 for p in predictions if p.best_bet and p.best_bet.is_value_bet),
+        "games_scored": len(all_predictions),
+        "value_bets": sum(1 for p in all_predictions if p.best_bet and p.best_bet.is_value_bet),
+        "dates_scored": f"{today},{tomorrow}",
         "status": "success",
     }
 
@@ -226,11 +244,11 @@ def run_scoring():
         return {"status": "failed", "error": str(e)}
 
 
-async def snapshot_predictions_async(hours_ahead: float = 0.75) -> dict:
+async def snapshot_predictions_async(hours_ahead: float = 1.0) -> dict:
     """
-    Snapshot predictions for games starting soon.
+    Snapshot predictions for games starting within the next hour.
 
-    Captures predictions ~30-45 minutes before first pitch.
+    Widened from 45min to 60min to ensure we don't miss games.
     """
     from sqlalchemy import select, and_
     from src.models import MLBGame, MLBPrediction, MLBPredictionSnapshot, MLBPitcher, MLBGameContext
@@ -365,7 +383,10 @@ async def snapshot_predictions_async(hours_ahead: float = 0.75) -> dict:
 
 
 def run_snapshot():
-    """Sync wrapper for prediction snapshot."""
+    """Sync wrapper for prediction snapshot. Runs scoring first to ensure predictions exist."""
+    # Score games first so predictions are fresh before snapshotting
+    run_scoring()
+
     log_task("Running prediction snapshot...")
     try:
         result = _run_async(snapshot_predictions_async())
@@ -510,14 +531,20 @@ def run_grading():
 
 
 async def sync_results_async() -> dict:
-    """Sync final scores for completed games."""
+    """Sync final scores for today and yesterday (ET)."""
     from src.services.mlb.ingest import MLBDataIngestor
 
-    async with mlb_session() as session:
-        ingestor = MLBDataIngestor(session)
-        count = await ingestor.sync_results()
+    today = _today_et()
+    yesterday = today - timedelta(days=1)
+    total = 0
 
-    return {"games_synced": count, "status": "success"}
+    for game_date in [today, yesterday]:
+        async with mlb_session() as session:
+            ingestor = MLBDataIngestor(session)
+            count = await ingestor.sync_results(game_date=game_date)
+            total += count
+
+    return {"games_synced": total, "status": "success"}
 
 
 def run_sync_results():
