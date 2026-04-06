@@ -55,15 +55,15 @@ function getResultBadge(result: string | null): { text: string; color: string } 
 
   switch (result) {
     case 'home_cover':
-      return { text: 'HOME COVER', color: 'bg-emerald-100 text-emerald-700' };
+      return { text: 'HOME COVER', color: 'bg-emerald-900/30 text-[#10b981]' };
     case 'away_cover':
-      return { text: 'AWAY COVER', color: 'bg-blue-100 text-blue-700' };
+      return { text: 'AWAY COVER', color: 'bg-blue-900/30 text-[#a4e6ff]' };
     case 'over':
-      return { text: 'OVER', color: 'bg-orange-100 text-orange-700' };
+      return { text: 'OVER', color: 'bg-orange-900/30 text-orange-400' };
     case 'under':
-      return { text: 'UNDER', color: 'bg-purple-100 text-purple-700' };
+      return { text: 'UNDER', color: 'bg-purple-900/30 text-purple-400' };
     case 'push':
-      return { text: 'PUSH', color: 'bg-gray-100 text-gray-600' };
+      return { text: 'PUSH', color: 'bg-[#191c22] text-[#64748b]' };
     default:
       return null;
   }
@@ -75,11 +75,11 @@ export function HistoricalGameCard({ game }: HistoricalGameCardProps) {
   const totalResult = getResultBadge(game.total_result);
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <div className="bg-[#191c22] rounded-xl border border-[#1e293b] overflow-hidden">
       {/* Dark Header */}
-      <div className="bg-slate-700 text-white px-4 py-2 text-sm font-medium tracking-wide flex justify-between items-center">
+      <div className="bg-[#0b0e14] text-[#f1f5f9] px-4 py-2 text-sm font-medium tracking-wide flex justify-between items-center">
         <span>{game.away_team} @ {game.home_team}</span>
-        <span className="text-gray-300 text-xs">FINAL</span>
+        <span className="text-[#475569] text-xs">FINAL</span>
       </div>
 
       {/* Main Content */}
@@ -90,8 +90,8 @@ export function HistoricalGameCard({ game }: HistoricalGameCardProps) {
           <div className="flex items-center gap-3">
             <TeamLogo team={game.away_team} size={56} />
             <div>
-              <div className="text-xl font-bold text-gray-900">{game.away_team}</div>
-              <div className={`text-3xl font-bold ${!homeWon ? 'text-gray-900' : 'text-gray-400'}`}>
+              <div className="text-xl font-bold text-[#f1f5f9]">{game.away_team}</div>
+              <div className={`text-3xl font-bold ${!homeWon ? 'text-[#f1f5f9]' : 'text-[#475569]'}`}>
                 {game.away_score}
               </div>
             </div>
@@ -99,7 +99,7 @@ export function HistoricalGameCard({ game }: HistoricalGameCardProps) {
 
           {/* Center - Date and Results */}
           <div className="text-center px-4">
-            <div className="text-sm font-medium text-gray-900">{formatDate(game.game_date)}</div>
+            <div className="text-sm font-medium text-[#f1f5f9]">{formatDate(game.game_date)}</div>
             <div className="flex flex-col gap-1 mt-2">
               {spreadResult && (
                 <span className={`text-xs px-2 py-0.5 rounded ${spreadResult.color}`}>
@@ -117,8 +117,8 @@ export function HistoricalGameCard({ game }: HistoricalGameCardProps) {
           {/* Home Team */}
           <div className="flex items-center gap-3">
             <div className="text-right">
-              <div className="text-xl font-bold text-gray-900">{game.home_team}</div>
-              <div className={`text-3xl font-bold ${homeWon ? 'text-gray-900' : 'text-gray-400'}`}>
+              <div className="text-xl font-bold text-[#f1f5f9]">{game.home_team}</div>
+              <div className={`text-3xl font-bold ${homeWon ? 'text-[#f1f5f9]' : 'text-[#475569]'}`}>
                 {game.home_score}
               </div>
             </div>
@@ -127,12 +127,12 @@ export function HistoricalGameCard({ game }: HistoricalGameCardProps) {
         </div>
 
         {/* Betting Results */}
-        <div className="mt-4 pt-4 border-t border-gray-100">
+        <div className="mt-4 pt-4 border-t border-[#1e293b]">
           <div className="grid grid-cols-2 gap-4 text-sm">
             {/* Spread Result */}
-            <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-xs text-gray-500 mb-1">SPREAD</div>
-              <div className="font-semibold text-gray-900">
+            <div className="bg-[#0b0e14] rounded-lg p-3">
+              <div className="text-xs text-[#64748b] mb-1">SPREAD</div>
+              <div className="font-semibold text-[#f1f5f9]">
                 {game.closing_spread !== null ? (
                   <>
                     {game.home_team} {formatSpread(game.closing_spread)}
@@ -142,16 +142,16 @@ export function HistoricalGameCard({ game }: HistoricalGameCardProps) {
                 )}
               </div>
               {game.spread_margin !== null && (
-                <div className="text-xs text-gray-500 mt-1">
+                <div className="text-xs text-[#64748b] mt-1">
                   {game.spread_result === 'home_cover' ? game.home_team : game.away_team} covered by {Math.abs(game.spread_margin).toFixed(1)}
                 </div>
               )}
             </div>
 
             {/* Total Result */}
-            <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-xs text-gray-500 mb-1">TOTAL</div>
-              <div className="font-semibold text-gray-900">
+            <div className="bg-[#0b0e14] rounded-lg p-3">
+              <div className="text-xs text-[#64748b] mb-1">TOTAL</div>
+              <div className="font-semibold text-[#f1f5f9]">
                 {game.closing_total !== null ? (
                   <>
                     o/u {game.closing_total}
@@ -161,7 +161,7 @@ export function HistoricalGameCard({ game }: HistoricalGameCardProps) {
                 )}
               </div>
               {game.total_margin !== null && (
-                <div className="text-xs text-gray-500 mt-1">
+                <div className="text-xs text-[#64748b] mt-1">
                   Actual: {game.total_score} ({game.total_result === 'over' ? 'Over' : game.total_result === 'under' ? 'Under' : 'Push'} by {Math.abs(game.total_margin).toFixed(1)})
                 </div>
               )}

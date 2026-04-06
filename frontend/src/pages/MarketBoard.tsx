@@ -66,27 +66,27 @@ function isPastDate(date: Date): boolean {
 
 function GameCardSkeleton() {
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden animate-pulse">
-      <div className="bg-slate-800 h-10" />
+    <div className="bg-[#191c22] rounded-xl border border-[#1e293b] overflow-hidden animate-pulse">
+      <div className="bg-[#272a31] h-10" />
       <div className="p-4">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <div className="w-14 h-14 bg-gray-200 rounded-full" />
+            <div className="w-14 h-14 bg-[#272a31] rounded-full" />
             <div>
-              <div className="h-6 bg-gray-200 rounded w-16 mb-2" />
-              <div className="h-8 bg-gray-200 rounded w-24" />
+              <div className="h-6 bg-[#272a31] rounded w-16 mb-2" />
+              <div className="h-8 bg-[#272a31] rounded w-24" />
             </div>
           </div>
           <div className="text-center">
-            <div className="h-4 bg-gray-200 rounded w-24 mb-2 mx-auto" />
-            <div className="h-4 bg-gray-100 rounded w-16 mx-auto" />
+            <div className="h-4 bg-[#272a31] rounded w-24 mb-2 mx-auto" />
+            <div className="h-4 bg-[#1d2026] rounded w-16 mx-auto" />
           </div>
           <div className="flex items-center gap-3">
             <div className="text-right">
-              <div className="h-6 bg-gray-200 rounded w-16 mb-2 ml-auto" />
-              <div className="h-8 bg-gray-200 rounded w-24" />
+              <div className="h-6 bg-[#272a31] rounded w-16 mb-2 ml-auto" />
+              <div className="h-8 bg-[#272a31] rounded w-24" />
             </div>
-            <div className="w-14 h-14 bg-gray-200 rounded-full" />
+            <div className="w-14 h-14 bg-[#272a31] rounded-full" />
           </div>
         </div>
       </div>
@@ -256,11 +256,11 @@ export function MarketBoard() {
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">NBA Market Board</h1>
+          <h1 className="text-3xl font-bold text-[#f1f5f9] font-display tracking-tight">NBA MARKET <span className="text-[#a4e6ff]">BOARD</span></h1>
         </div>
         <div className="flex items-center gap-4">
           {/* Filter dropdown placeholder */}
-          <button className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+          <button className="flex items-center gap-2 px-3 py-2 border border-[#1e293b] rounded-lg text-sm text-[#94a3b8] hover:bg-[#1d2026]">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
             </svg>
@@ -269,22 +269,22 @@ export function MarketBoard() {
 
           {/* Search placeholder */}
           <div className="relative">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#475569]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
             <input
               type="text"
               placeholder="Search"
-              className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="pl-10 pr-4 py-2 border border-[#1e293b] rounded-lg text-sm w-40 bg-[#191c22] text-[#f1f5f9] focus:outline-none focus:ring-2 focus:ring-[#a4e6ff] focus:border-transparent"
             />
           </div>
         </div>
       </div>
 
       {/* Date Picker */}
-      <div className="flex items-center gap-1 bg-white rounded-lg border border-gray-200 p-1">
-        <button className="p-2 hover:bg-gray-100 rounded">
-          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="flex items-center gap-1 bg-[#191c22] rounded-lg border border-[#1e293b] p-1">
+        <button className="p-2 hover:bg-[#1d2026] rounded">
+          <svg className="w-5 h-5 text-[#94a3b8]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
@@ -303,14 +303,14 @@ export function MarketBoard() {
               onClick={() => setSelectedDate(date)}
               className={`flex-1 py-2 px-3 rounded-lg text-center transition-colors ${
                 isSelected
-                  ? 'bg-slate-800 text-white'
-                  : 'hover:bg-gray-100 text-gray-700'
+                  ? 'bg-[#a4e6ff] text-[#0b0e14]'
+                  : 'hover:bg-[#1d2026] text-[#94a3b8]'
               }`}
             >
               <div className="text-xs font-medium">{day}</div>
               <div className="text-xs">{dateLabel}</div>
               {gameCount > 0 && (
-                <div className={`text-[10px] mt-0.5 ${isSelected ? 'text-gray-300' : 'text-gray-400'}`}>
+                <div className={`text-[10px] mt-0.5 ${isSelected ? 'text-[#0b0e14]/60' : 'text-[#475569]'}`}>
                   {gameCount} games
                 </div>
               )}
@@ -318,15 +318,15 @@ export function MarketBoard() {
           );
         })}
 
-        <button className="p-2 hover:bg-gray-100 rounded">
-          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button className="p-2 hover:bg-[#1d2026] rounded">
+          <svg className="w-5 h-5 text-[#94a3b8]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
         </button>
 
         {/* Calendar button */}
-        <button className="p-2 hover:bg-gray-100 rounded border-l border-gray-200 ml-1">
-          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button className="p-2 hover:bg-[#1d2026] rounded border-l border-[#1e293b] ml-1">
+          <svg className="w-5 h-5 text-[#94a3b8]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
         </button>
@@ -334,15 +334,15 @@ export function MarketBoard() {
 
       {/* Loading Indicator */}
       {isFetching && !isLoading && (
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        <div className="flex items-center gap-2 text-sm text-[#64748b]">
+          <div className="w-4 h-4 border-2 border-[#a4e6ff] border-t-transparent rounded-full animate-spin" />
           Updating...
         </div>
       )}
 
       {/* Legend */}
-      <div className="flex flex-wrap gap-6 text-sm text-gray-500 bg-white rounded-lg border border-gray-200 p-3">
-        <span className="font-medium text-gray-700">Value Score:</span>
+      <div className="flex flex-wrap gap-6 text-sm text-[#64748b] bg-[#191c22] rounded-xl border border-[#1e293b] p-3">
+        <span className="font-medium text-[#94a3b8]">Value Score:</span>
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gradient-to-r from-amber-400 to-yellow-300 text-amber-900 rounded text-xs font-semibold ring-1 ring-amber-400/50">
             <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
@@ -350,7 +350,7 @@ export function MarketBoard() {
             </svg>
             75%+
           </span>
-          <span className="font-medium text-amber-700">Elite Value</span>
+          <span className="font-medium text-amber-400">Elite Value</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gradient-to-r from-amber-500 to-amber-400 text-white rounded text-xs font-semibold">
@@ -392,18 +392,18 @@ export function MarketBoard() {
       {isViewingPast && !isLoadingHistory && (
         <>
           {filteredHistoricalGames.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-              <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="text-center py-12 bg-[#191c22] rounded-xl border border-[#1e293b]">
+              <svg className="w-16 h-16 mx-auto text-[#32353c] mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-              <p className="text-gray-500 text-lg">No game results for this date</p>
-              <p className="text-sm text-gray-400 mt-1">
+              <p className="text-[#64748b] text-lg">No game results for this date</p>
+              <p className="text-sm text-[#475569] mt-1">
                 Historical data is available for the past 7 days
               </p>
             </div>
           ) : (
             <>
-              <div className="bg-slate-100 rounded-lg p-3 text-sm text-slate-700">
+              <div className="bg-[#191c22] rounded-lg p-3 text-sm text-[#94a3b8] border border-[#1e293b]">
                 Viewing completed games with results. Spread and total outcomes are based on closing lines.
               </div>
               <div className="grid gap-6 lg:grid-cols-2">
@@ -420,12 +420,12 @@ export function MarketBoard() {
       {!isViewingPast && !isLoading && (
         <>
           {games.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-              <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="text-center py-12 bg-[#191c22] rounded-xl border border-[#1e293b]">
+              <svg className="w-16 h-16 mx-auto text-[#32353c] mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-              <p className="text-gray-500 text-lg">No games scheduled for this date</p>
-              <p className="text-sm text-gray-400 mt-1">
+              <p className="text-[#64748b] text-lg">No games scheduled for this date</p>
+              <p className="text-sm text-[#475569] mt-1">
                 Select another date or check back later
               </p>
             </div>

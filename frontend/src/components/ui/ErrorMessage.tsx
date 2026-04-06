@@ -5,11 +5,11 @@ interface ErrorMessageProps {
 
 export function ErrorMessage({ error, message }: ErrorMessageProps) {
   return (
-    <div className="rounded-md bg-red-50 p-4">
+    <div className="rounded-xl bg-red-900/20 border border-red-800/30 p-4">
       <div className="flex">
         <div className="flex-shrink-0">
           <svg
-            className="h-5 w-5 text-red-400"
+            className="h-5 w-5 text-[#ef4444]"
             viewBox="0 0 20 20"
             fill="currentColor"
             aria-hidden="true"
@@ -22,11 +22,11 @@ export function ErrorMessage({ error, message }: ErrorMessageProps) {
           </svg>
         </div>
         <div className="ml-3">
-          <h3 className="text-sm font-medium text-red-800">
+          <h3 className="text-sm font-medium text-red-400">
             {message || 'Something went wrong'}
           </h3>
           {error && (
-            <div className="mt-2 text-sm text-red-700">
+            <div className="mt-2 text-sm text-red-400/80">
               <p>{error.message}</p>
             </div>
           )}

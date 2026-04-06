@@ -13,8 +13,8 @@ export function ValueBadge({ score, size = 'md', showLabel = false }: ValueBadge
   const getColorClass = () => {
     if (isElite) return 'bg-gradient-to-r from-amber-400 to-yellow-300 text-amber-900';
     if (isStrong) return 'bg-gradient-to-r from-amber-500 to-amber-400 text-white';
-    if (score >= 50) return 'bg-emerald-500 text-white';
-    return 'bg-slate-400 text-white';
+    if (score >= 50) return 'bg-[#10b981] text-white';
+    return 'bg-[#475569] text-white';
   };
 
   const sizeClasses = {
@@ -27,7 +27,7 @@ export function ValueBadge({ score, size = 'md', showLabel = false }: ValueBadge
     <span className="inline-flex items-center gap-1.5">
       <span
         className={clsx(
-          'inline-flex items-center gap-1 rounded font-semibold shadow-sm',
+          'inline-flex items-center gap-1 rounded font-semibold',
           getColorClass(),
           sizeClasses[size],
           isStrong && 'ring-1 ring-amber-400/50'
@@ -52,10 +52,10 @@ export function ValueBadge({ score, size = 'md', showLabel = false }: ValueBadge
 // Edge badge component for consistency
 export function EdgeBadge({ edge }: { edge: number }) {
   const getColor = (e: number) => {
-    if (e >= 15) return 'text-emerald-600';
-    if (e >= 10) return 'text-emerald-500';
-    if (e >= 5) return 'text-amber-600';
-    return 'text-gray-600';
+    if (e >= 15) return 'text-[#10b981]';
+    if (e >= 10) return 'text-emerald-400';
+    if (e >= 5) return 'text-amber-400';
+    return 'text-[#64748b]';
   };
 
   return (
