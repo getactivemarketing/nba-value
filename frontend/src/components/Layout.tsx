@@ -23,17 +23,15 @@ export function Layout({ children }: LayoutProps) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-14">
             {/* Logo */}
-            <Link to="/" className="flex items-center gap-2 group">
+            <Link to="/" className="flex items-center gap-1.5 group">
               <img
                 src="/favicon.png"
-                alt="TruLine"
-                className="w-8 h-8 group-hover:brightness-125 transition-all"
+                alt=""
+                className="w-7 h-7 group-hover:brightness-125 transition-all"
               />
-              <img
-                src="/logo-dark.png"
-                alt="TruLine"
-                className="h-7 hidden sm:block"
-              />
+              <span className="text-xl font-display font-bold tracking-tight">
+                <span className="bg-gradient-to-r from-sky-400 to-accent-cyan bg-clip-text text-transparent">Tru</span><span className="text-white">Line</span>
+              </span>
             </Link>
 
             {/* Navigation */}
