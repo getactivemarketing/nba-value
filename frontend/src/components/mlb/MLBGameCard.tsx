@@ -1,6 +1,5 @@
-import type { MLBGame, ValueBetInfo } from '@/lib/mlbApi';
+import type { MLBGame, ValueBetInfo, PitcherInfo } from '@/lib/mlbApi';
 import { getTeamInfo, formatOdds } from '@/lib/mlbApi';
-import { PitcherMatchup } from './PitcherMatchup';
 
 interface MLBGameCardProps {
   game: MLBGame;
@@ -8,10 +7,10 @@ interface MLBGameCardProps {
 
 function ValueBadge({ value }: { value: ValueBetInfo }) {
   const scoreColor = value.value_score >= 70
-    ? 'bg-value-hot/10 text-value-hot border-value-hot/20'
+    ? 'bg-[#66f796]/10 text-[#66f796] border-[#66f796]/20'
     : value.value_score >= 60
-    ? 'bg-value-warm/10 text-value-warm border-value-warm/20'
-    : 'bg-tru-surface text-txt-secondary border-tru-border';
+    ? 'bg-[#f59e0b]/10 text-[#f59e0b] border-[#f59e0b]/20'
+    : 'bg-[#191c22] text-txt-secondary border-[#32353c]';
 
   const label = value.market_type === 'moneyline'
     ? `${value.team} ML`
@@ -23,30 +22,70 @@ function ValueBadge({ value }: { value: ValueBetInfo }) {
 
   return (
     <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border ${scoreColor}`}>
-      <span className="font-semibold">{label}</span>
-      <span className="text-sm font-mono">({formatOdds(value.odds_decimal)})</span>
-      <span className="font-bold font-mono">{value.value_score.toFixed(0)}</span>
+      <span className="font-semibold text-sm">{label}</span>
+      <span className="text-xs font-mono">({formatOdds(value.odds_decimal)})</span>
+      <span className="font-bold font-mono text-sm">{value.value_score.toFixed(0)}</span>
     </div>
   );
 }
 
-function TeamDisplay({ abbr, isHome, score }: { abbr: string; isHome: boolean; score?: number | null }) {
-  const team = getTeamInfo(abbr);
+function PitcherCard({ pitcher, teamAbbr }: { pitcher: PitcherInfo | null; teamAbbr: string }) {
+  const team = getTeamInfo(teamAbbr);
+
+  if (!pitcher) {
+    return (
+      <div className="bg-[#0b0e14] p-3.5 rounded-lg">
+        <div className="flex items-center justify-between mb-2.5">
+          <span className="text-xs font-bold text-slate-400">TBD</span>
+          <span className="text-[10px] font-mono text-[#a4e6ff] px-2 py-0.5 bg-[#a4e6ff]/10 rounded">{teamAbbr}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {['ERA', 'WHIP', 'K/9'].map(stat => (
+            <div key={stat} className="text-center">
+              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{stat}</div>
+              <div className="text-sm font-mono font-bold text-slate-600">--</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const hand = pitcher.throws === 'L' ? 'LHP' : 'RHP';
 
   return (
-    <div className={`flex items-center gap-3 ${isHome ? 'flex-row-reverse' : ''}`}>
-      <div
-        className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-sm opacity-90"
-        style={{ backgroundColor: team.color }}
-      >
-        {abbr}
+    <div className="bg-[#0b0e14] p-3.5 rounded-lg">
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="text-xs font-bold text-slate-400">
+          <span className="text-[10px] font-mono text-slate-500 mr-1.5">{hand}</span>
+          {pitcher.name}
+        </span>
+        <span
+          className="text-[10px] font-mono font-bold px-2 py-0.5 rounded"
+          style={{ backgroundColor: team.color + '22', color: team.color }}
+        >
+          {teamAbbr}
+        </span>
       </div>
-      <div className={isHome ? 'text-right' : 'text-left'}>
-        <p className="text-xs text-txt-muted uppercase">{isHome ? 'Home' : 'Away'}</p>
-        <p className="font-bold text-lg text-txt-primary">{team.name}</p>
-        {score !== undefined && score !== null && (
-          <p className="text-2xl font-bold text-txt-primary font-mono">{score}</p>
-        )}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="text-center">
+          <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">ERA</div>
+          <div className="text-sm font-mono font-bold text-txt-primary">
+            {pitcher.era !== null ? pitcher.era.toFixed(2) : '--'}
+          </div>
+        </div>
+        <div className="text-center">
+          <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">WHIP</div>
+          <div className="text-sm font-mono font-bold text-txt-primary">
+            {pitcher.whip !== null ? pitcher.whip.toFixed(2) : '--'}
+          </div>
+        </div>
+        <div className="text-center">
+          <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">K/9</div>
+          <div className="text-sm font-mono font-bold text-txt-primary">
+            {pitcher.k_per_9 !== null ? pitcher.k_per_9.toFixed(1) : '--'}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -66,134 +105,258 @@ export function MLBGameCard({ game }: MLBGameCardProps) {
   const homeWinPct = game.p_home_win ? Math.round(game.p_home_win * 100) : null;
   const awayWinPct = game.p_away_win ? Math.round(game.p_away_win * 100) : null;
 
+  // Team info
+  const awayTeam = getTeamInfo(game.away_team);
+  const homeTeam = getTeamInfo(game.home_team);
+
+  // Moneyline odds
+  const mlMarket = game.markets.find(m => m.market_type === 'moneyline');
+  const awayOdds = mlMarket?.away_odds ? formatOdds(mlMarket.away_odds) : null;
+  const homeOdds = mlMarket?.home_odds ? formatOdds(mlMarket.home_odds) : null;
+
+  // NRFI edge score: use best_bet value_score as proxy
+  const nrfiScore = game.best_bet?.value_score ?? null;
+  const hasHighValue = nrfiScore !== null && nrfiScore >= 65;
+
+  // Score badge styling
+  const getScoreBadge = (score: number) => {
+    if (score >= 70) {
+      return {
+        bg: 'bg-[#66f796]/10 border-[#66f796]/30',
+        text: 'text-[#66f796]',
+        label: 'STRONG',
+      };
+    }
+    if (score >= 60) {
+      return {
+        bg: 'bg-[#a4e6ff]/10 border-[#a4e6ff]/30',
+        text: 'text-[#a4e6ff]',
+        label: 'MODERATE',
+      };
+    }
+    return {
+      bg: 'bg-[#32353c]/50 border-[#32353c]',
+      text: 'text-slate-400',
+      label: 'LOW',
+    };
+  };
+
+  // First inning result
+  const hasFirstInning = game.home_first_inning_runs !== null && game.away_first_inning_runs !== null;
+  const isNRFI = hasFirstInning &&
+    (game.home_first_inning_runs! + game.away_first_inning_runs!) === 0;
+
   return (
-    <div className="bg-tru-card rounded-xl border border-tru-border overflow-hidden">
-      {/* Header with venue/weather */}
-      <div className="bg-tru-surface text-txt-secondary px-4 py-2 flex justify-between items-center">
-        <div className="flex items-center gap-2">
-          {game.context?.venue_name && (
-            <span className="text-sm">{game.context.venue_name}</span>
-          )}
-          {game.context?.is_dome && (
-            <span className="text-xs bg-tru-border px-2 py-0.5 rounded text-txt-muted">Dome</span>
-          )}
-        </div>
-        <div className="flex items-center gap-3 text-sm font-mono">
-          {game.context?.temperature && !game.context.is_dome && (
-            <span>{game.context.temperature}°F</span>
-          )}
-          {game.context?.park_factor && game.context.park_factor !== 1.0 && (
-            <span className={game.context.park_factor > 1 ? 'text-loss' : 'text-accent-blue'}>
-              PF: {game.context.park_factor.toFixed(2)}
-            </span>
-          )}
-          {isLive && (
-            <span className="bg-loss px-2 py-0.5 rounded text-xs font-bold text-white animate-pulse">
-              LIVE
-            </span>
-          )}
-          {isCompleted && (
-            <span className="bg-tru-border px-2 py-0.5 rounded text-xs text-txt-muted">FINAL</span>
-          )}
-          {!isLive && !isCompleted && (
-            <span className="text-txt-primary">{timeDisplay}</span>
-          )}
-        </div>
-      </div>
+    <div className="bg-[#191c22] rounded-xl relative overflow-hidden">
+      {/* Left edge glow for high-value games */}
+      {hasHighValue && (
+        <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#a4e6ff] shadow-[0_0_8px_rgba(164,230,255,0.4)]" />
+      )}
 
-      {/* Team matchup */}
-      <div className="p-4">
-        <div className="flex justify-between items-center">
-          <TeamDisplay
-            abbr={game.away_team}
-            isHome={false}
-            score={isCompleted || isLive ? game.away_score : undefined}
-          />
-
-          <div className="text-center px-4">
-            {/* Win probability bar */}
-            {homeWinPct !== null && awayWinPct !== null && !isCompleted && (
-              <div className="mb-2">
-                <div className="flex justify-between text-xs text-txt-muted mb-1 font-mono">
-                  <span>{awayWinPct}%</span>
-                  <span>{homeWinPct}%</span>
-                </div>
-                <div className="w-28 h-2 bg-tru-border rounded-full overflow-hidden flex">
-                  <div
-                    className="bg-loss/70 h-full"
-                    style={{ width: `${awayWinPct}%` }}
-                  />
-                  <div
-                    className="bg-accent-blue/70 h-full"
-                    style={{ width: `${homeWinPct}%` }}
-                  />
-                </div>
-              </div>
+      <div className="p-5">
+        {/* Status bar */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            {game.context?.venue_name && (
+              <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">
+                {game.context.venue_name}
+              </span>
             )}
-
-            {game.predicted_run_diff !== null && !isCompleted && (
-              <div className="mb-1">
-                <span className="text-xs text-txt-muted block">Run Diff</span>
-                <span className={`text-lg font-bold font-mono ${
-                  game.predicted_run_diff > 0 ? 'text-accent-blue' : 'text-loss'
-                }`}>
-                  {game.predicted_run_diff > 0 ? '+' : ''}{game.predicted_run_diff.toFixed(1)}
-                </span>
-              </div>
-            )}
-            {game.predicted_total !== null && !isCompleted && (
-              <div>
-                <span className="text-xs text-txt-muted block">Total</span>
-                <span className="text-sm font-bold text-txt-secondary font-mono">
-                  {game.predicted_total.toFixed(1)}
-                </span>
-              </div>
-            )}
-
-            {/* Completed game summary */}
-            {isCompleted && game.home_score !== null && game.away_score !== null && (
-              <div>
-                <div className="text-sm text-txt-muted font-mono">
-                  Total: {game.home_score + game.away_score}
-                </div>
-                {/* First inning result */}
-                {game.home_first_inning_runs !== null && game.away_first_inning_runs !== null && (
-                  <div className="mt-1">
-                    <span className="text-xs text-txt-muted">1st Inn</span>
-                    <p className={`text-xs font-semibold font-mono ${
-                      game.home_first_inning_runs + game.away_first_inning_runs === 0
-                        ? 'text-accent-cyan' : 'text-push'
-                    }`}>
-                      {game.away_first_inning_runs}-{game.home_first_inning_runs}
-                      {game.home_first_inning_runs + game.away_first_inning_runs === 0
-                        ? ' NRFI' : ''}
-                    </p>
-                  </div>
-                )}
-              </div>
+            {game.context?.is_dome && (
+              <span className="text-[10px] bg-[#32353c] px-2 py-0.5 rounded text-slate-400 font-mono">DOME</span>
             )}
           </div>
-
-          <TeamDisplay
-            abbr={game.home_team}
-            isHome={true}
-            score={isCompleted || isLive ? game.home_score : undefined}
-          />
+          <div className="flex items-center gap-2">
+            {isLive && (
+              <span className="bg-red-500/20 text-red-400 px-2 py-0.5 rounded text-[10px] font-bold font-mono uppercase tracking-widest animate-pulse">
+                LIVE
+              </span>
+            )}
+            {isCompleted && (
+              <span className="bg-[#32353c] px-2 py-0.5 rounded text-[10px] text-slate-400 font-bold font-mono uppercase tracking-widest">
+                FINAL
+              </span>
+            )}
+            {!isLive && !isCompleted && (
+              <span className="text-[10px] text-[#a4e6ff] font-bold font-mono uppercase tracking-widest">
+                {timeDisplay}
+              </span>
+            )}
+          </div>
         </div>
 
-        {/* Pitcher matchup */}
-        {!isCompleted && (
-          <PitcherMatchup
-            homePitcher={game.home_starter}
-            awayPitcher={game.away_starter}
-          />
+        {/* Top row: Teams + Context + Edge Score */}
+        <div className="flex justify-between items-start mb-5">
+          {/* Teams + Context */}
+          <div className="flex items-center gap-5">
+            {/* Teams stacked */}
+            <div className="flex flex-col gap-1.5">
+              {/* Away team */}
+              <div className="flex items-center gap-2.5">
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+                  style={{ backgroundColor: awayTeam.color }}
+                >
+                  {game.away_team}
+                </div>
+                <span className="text-base font-bold text-txt-primary">{awayTeam.name}</span>
+                {awayOdds && (
+                  <span className="text-slate-500 font-mono text-xs">{awayOdds}</span>
+                )}
+                {(isCompleted || isLive) && game.away_score !== null && (
+                  <span className="text-lg font-bold text-txt-primary font-mono ml-1">{game.away_score}</span>
+                )}
+              </div>
+              {/* Home team */}
+              <div className="flex items-center gap-2.5">
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+                  style={{ backgroundColor: homeTeam.color }}
+                >
+                  {game.home_team}
+                </div>
+                <span className="text-base font-bold text-txt-primary">{homeTeam.name}</span>
+                {homeOdds && (
+                  <span className="text-slate-500 font-mono text-xs">{homeOdds}</span>
+                )}
+                {(isCompleted || isLive) && game.home_score !== null && (
+                  <span className="text-lg font-bold text-txt-primary font-mono ml-1">{game.home_score}</span>
+                )}
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="h-12 w-px bg-slate-700/30 mx-1 hidden sm:block" />
+
+            {/* Context grid */}
+            <div className="hidden sm:grid grid-cols-2 gap-x-6 gap-y-1.5">
+              {game.context?.park_factor != null && (
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Park Factor</span>
+                  <span className={`text-sm font-mono font-semibold ${
+                    game.context.park_factor > 1 ? 'text-red-400' : 'text-[#a4e6ff]'
+                  }`}>
+                    {game.context.park_factor.toFixed(2)}
+                  </span>
+                </div>
+              )}
+              {game.context?.temperature != null && !game.context?.is_dome && (
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Weather</span>
+                  <span className="text-sm font-mono font-semibold text-txt-primary">
+                    {game.context.temperature}°F
+                  </span>
+                </div>
+              )}
+              {game.context?.wind_speed != null && !game.context?.is_dome && (
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Wind</span>
+                  <span className="text-sm font-mono font-semibold text-txt-primary">
+                    {game.context.wind_speed} mph
+                  </span>
+                </div>
+              )}
+              {game.predicted_total !== null && !isCompleted && (
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Proj Total</span>
+                  <span className="text-sm font-mono font-semibold text-txt-primary">
+                    {game.predicted_total.toFixed(1)}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Edge Score badge - RIGHT SIDE */}
+          {nrfiScore !== null && (() => {
+            const badge = getScoreBadge(nrfiScore);
+            return (
+              <div className="flex flex-col items-end flex-shrink-0">
+                <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Edge Score</span>
+                <div className={`${badge.bg} border px-3 py-1 rounded-full flex items-center gap-2`}>
+                  <span className={`${badge.text} font-black font-mono text-lg`}>
+                    {nrfiScore.toFixed(0)}
+                  </span>
+                  <span className={`text-[10px] ${badge.text} font-bold`}>
+                    {badge.label}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Win Probability Bar */}
+        {homeWinPct !== null && awayWinPct !== null && !isCompleted && (
+          <div className="mb-5">
+            <div className="flex justify-between text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1.5">
+              <span>{game.away_team} Win: {awayWinPct}%</span>
+              <span>{game.home_team} Win: {homeWinPct}%</span>
+            </div>
+            <div className="h-1.5 w-full bg-[#32353c] rounded-full overflow-hidden flex">
+              <div
+                className="h-full bg-gradient-to-r from-[#a4e6ff] to-[#00d1ff] transition-all"
+                style={{ width: `${awayWinPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Pitcher comparison */}
+        {!isCompleted && (game.away_starter || game.home_starter) && (
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">
+                Pitcher Matchup
+              </span>
+              {game.predicted_run_diff !== null && (
+                <span className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded ${
+                  game.predicted_run_diff > 0
+                    ? 'bg-[#a4e6ff]/10 text-[#a4e6ff]'
+                    : 'bg-red-400/10 text-red-400'
+                }`}>
+                  {game.predicted_run_diff > 0 ? 'HOME' : 'AWAY'} +{Math.abs(game.predicted_run_diff).toFixed(1)}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <PitcherCard pitcher={game.away_starter} teamAbbr={game.away_team} />
+              <PitcherCard pitcher={game.home_starter} teamAbbr={game.home_team} />
+            </div>
+          </div>
+        )}
+
+        {/* Completed game: score + NRFI result */}
+        {isCompleted && game.home_score !== null && game.away_score !== null && (
+          <div className="mt-4 pt-4 border-t border-slate-700/30">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-4">
+                <span className="font-mono text-lg font-bold text-txt-primary">
+                  {game.away_score} - {game.home_score}
+                </span>
+                <span className="text-slate-500 font-mono text-sm">
+                  Total: {game.away_score + game.home_score}
+                </span>
+              </div>
+              {hasFirstInning && (
+                <div className={`px-3 py-1 rounded-full text-xs font-bold font-mono flex items-center gap-1.5 ${
+                  isNRFI
+                    ? 'bg-[#66f796]/10 text-[#66f796] border border-[#66f796]/30'
+                    : 'bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/30'
+                }`}>
+                  <span>1st: {game.away_first_inning_runs}-{game.home_first_inning_runs}</span>
+                  <span>{isNRFI ? 'NRFI \u2713' : 'YRFI'}</span>
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {/* Value bets */}
         {!isCompleted && game.best_bet && (
-          <div className="mt-4 pt-3 border-t border-tru-border">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-txt-muted uppercase tracking-wide">
+          <div className="mt-4 pt-4 border-t border-slate-700/30">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">
                 Best Value
               </span>
               <ValueBadge value={game.best_bet} />
@@ -216,12 +379,12 @@ export function MLBGameCard({ game }: MLBGameCardProps) {
 
         {/* Markets summary */}
         {!isCompleted && game.markets.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-tru-border">
+          <div className="mt-3 pt-3 border-t border-slate-700/30">
             <div className="grid grid-cols-3 gap-2 text-center text-sm">
               {game.markets.find(m => m.market_type === 'moneyline') && (
-                <div className="bg-tru-surface rounded-lg py-2">
-                  <p className="text-xs text-txt-muted">Moneyline</p>
-                  <p className="font-semibold text-txt-primary font-mono">
+                <div className="bg-[#0b0e14] rounded-lg py-2">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Moneyline</p>
+                  <p className="font-semibold text-txt-primary font-mono text-sm">
                     {game.markets.find(m => m.market_type === 'moneyline')?.home_odds
                       ? formatOdds(game.markets.find(m => m.market_type === 'moneyline')!.home_odds!)
                       : '-'}
@@ -229,17 +392,17 @@ export function MLBGameCard({ game }: MLBGameCardProps) {
                 </div>
               )}
               {game.markets.find(m => m.market_type === 'runline') && (
-                <div className="bg-tru-surface rounded-lg py-2">
-                  <p className="text-xs text-txt-muted">Run Line</p>
-                  <p className="font-semibold text-txt-primary font-mono">
+                <div className="bg-[#0b0e14] rounded-lg py-2">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Run Line</p>
+                  <p className="font-semibold text-txt-primary font-mono text-sm">
                     {game.markets.find(m => m.market_type === 'runline')?.line || '-1.5'}
                   </p>
                 </div>
               )}
               {game.markets.find(m => m.market_type === 'total') && (
-                <div className="bg-tru-surface rounded-lg py-2">
-                  <p className="text-xs text-txt-muted">Total</p>
-                  <p className="font-semibold text-txt-primary font-mono">
+                <div className="bg-[#0b0e14] rounded-lg py-2">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Total</p>
+                  <p className="font-semibold text-txt-primary font-mono text-sm">
                     O/U {game.markets.find(m => m.market_type === 'total')?.line || '-'}
                   </p>
                 </div>
