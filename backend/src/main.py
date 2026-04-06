@@ -72,6 +72,25 @@ def _start_mlb_scheduler_thread():
     return thread
 
 
+def _run_social_scheduler():
+    """Run the social media scheduler in a background thread."""
+    try:
+        print("[SOCIAL-SCHEDULER] Importing social scheduler module...", flush=True)
+        from src.tasks.social_scheduler import start_scheduler as start_social_scheduler
+        print("[SOCIAL-SCHEDULER] Starting social scheduler daemon...", flush=True)
+        start_social_scheduler()
+    except Exception as e:
+        print(f"[SOCIAL-SCHEDULER] CRASHED: {e}", flush=True)
+        logger.error(f"Social scheduler thread crashed: {e}")
+
+
+def _start_social_scheduler_thread():
+    """Create and start social scheduler thread. Returns the thread."""
+    thread = threading.Thread(target=_run_social_scheduler, daemon=True, name="social-scheduler")
+    thread.start()
+    return thread
+
+
 def _scheduler_watchdog():
     """Monitor scheduler threads and restart them if they die."""
     global _scheduler_thread, _mlb_scheduler_thread
@@ -140,6 +159,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         _mlb_scheduler_thread = _start_mlb_scheduler_thread()
         print("[MLB-SCHEDULER] MLB background thread started", flush=True)
+
+        _start_social_scheduler_thread()
+        print("[SOCIAL-SCHEDULER] Social media thread started", flush=True)
 
         # Start watchdog to auto-restart schedulers if they crash
         watchdog_thread = threading.Thread(target=_scheduler_watchdog, daemon=True, name="scheduler-watchdog")

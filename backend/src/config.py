@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     odds_api_key: str = ""
     balldontlie_api_key: str = ""
 
+    # Twitter/X API
+    twitter_api_key: str = ""
+    twitter_api_secret: str = ""
+    twitter_access_token: str = ""
+    twitter_access_token_secret: str = ""
+    twitter_bearer_token: str = ""
+    twitter_posting_enabled: bool = False  # Safety switch
+
     # API Settings
     api_v1_prefix: str = "/api/v1"
 
