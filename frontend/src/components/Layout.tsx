@@ -24,12 +24,16 @@ export function Layout({ children }: LayoutProps) {
           <div className="flex justify-between items-center h-14">
             {/* Logo */}
             <Link to="/" className="flex items-center gap-2 group">
-              <div className="w-8 h-8 rounded-lg bg-accent-cyan/10 border border-accent-cyan/30 flex items-center justify-center group-hover:bg-accent-cyan/20 transition-colors">
-                <span className="text-accent-cyan font-mono font-bold text-sm">T</span>
-              </div>
-              <span className="text-lg font-display font-bold text-txt-primary tracking-tight">
-                Tru<span className="text-accent-cyan">Line</span>
-              </span>
+              <img
+                src="/favicon.png"
+                alt="TruLine"
+                className="w-8 h-8 group-hover:brightness-125 transition-all"
+              />
+              <img
+                src="/logo-dark.png"
+                alt="TruLine"
+                className="h-7 hidden sm:block"
+              />
             </Link>
 
             {/* Navigation */}
