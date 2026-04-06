@@ -1014,6 +1014,66 @@ async def debug_tweet_test() -> dict:
     }
 
 
+@router.get("/debug/score-test")
+async def debug_score_test() -> dict:
+    """Test scoring pipeline on today's games to diagnose failures."""
+    from datetime import timedelta
+    from src.services.mlb.scorer import MLBScorer
+    from sqlalchemy import text
+
+    # Use ET date
+    eastern = timedelta(hours=-5)
+    today = (datetime.now(timezone.utc) + eastern).date()
+
+    results = {"today_et": str(today), "games": [], "errors": []}
+
+    async with async_session() as session:
+        # Count games by status
+        for status in ["scheduled", "in_progress", "final"]:
+            row = await session.execute(text(
+                f"SELECT COUNT(*) FROM mlb_games WHERE game_date = '{today}' AND status = '{status}'"
+            ))
+            results[f"{status}_count"] = row.scalar()
+
+        # Try scoring one game
+        stmt = select(MLBGame).where(
+            and_(
+                MLBGame.game_date == today,
+                MLBGame.status == "scheduled",
+            )
+        ).limit(1)
+        result = await session.execute(stmt)
+        game = result.scalar_one_or_none()
+
+        if not game:
+            results["error"] = "No scheduled games found for today"
+            # Check tomorrow
+            tomorrow = today + timedelta(days=1)
+            row = await session.execute(text(
+                f"SELECT COUNT(*) FROM mlb_games WHERE game_date = '{tomorrow}' AND status = 'scheduled'"
+            ))
+            results["tomorrow_scheduled"] = row.scalar()
+            return results
+
+        results["test_game"] = f"{game.away_team} @ {game.home_team} ({game.game_id})"
+
+        try:
+            scorer = MLBScorer(session)
+            prediction = await scorer.score_game(game)
+            results["prediction"] = {
+                "run_diff": prediction.predicted_run_diff,
+                "total": prediction.predicted_total,
+                "p_home_win": prediction.p_home_win,
+                "best_bet": str(prediction.best_bet) if prediction.best_bet else None,
+            }
+        except Exception as e:
+            import traceback
+            results["scoring_error"] = str(e)
+            results["traceback"] = traceback.format_exc()
+
+    return results
+
+
 def _decimal_to_american(decimal_odds: float) -> int:
     """Convert decimal odds to American format."""
     if decimal_odds >= 2.0:
