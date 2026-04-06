@@ -998,13 +998,11 @@ async def debug_tweet_test() -> dict:
         "Introducing TruLine\n\n"
         "AI-powered MLB & NBA value bets.\n"
         "Every pick scored, tracked, and graded.\n\n"
-        "What we do:\n"
-        "- ML model analyzes 28+ features per game\n"
-        "- Compares model odds vs 11 sportsbooks\n"
-        "- Surfaces the best value plays daily\n"
+        "- 28+ features per game\n"
+        "- 11 sportsbooks compared\n"
         "- NRFI specialist\n\n"
-        "Free picks daily. Full card at truline.app\n\n"
-        "#MLB #NBA #SportsBetting #NRFI #GamblingX"
+        "Free daily picks at truline.app\n\n"
+        "#MLB #NBA #NRFI #GamblingX"
     )
 
     tweet_id = post_tweet(intro)
