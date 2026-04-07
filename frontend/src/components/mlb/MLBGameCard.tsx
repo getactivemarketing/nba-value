@@ -1,8 +1,41 @@
+import { useState } from 'react';
 import type { MLBGame, ValueBetInfo, PitcherInfo } from '@/lib/mlbApi';
 import { getTeamInfo, formatOdds } from '@/lib/mlbApi';
+import { getMLBLogo } from '@/lib/mlbLogos';
 
 interface MLBGameCardProps {
   game: MLBGame;
+}
+
+function MLBLogoCircle({ team, size = 32 }: { team: string; size?: number }) {
+  const [imgError, setImgError] = useState(false);
+  const teamInfo = getTeamInfo(team);
+  const logoUrl = getMLBLogo(team);
+
+  if (imgError || !logoUrl) {
+    return (
+      <div
+        className="rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+        style={{ width: size, height: size, backgroundColor: teamInfo.color }}
+      >
+        {team}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="rounded-full bg-white/5 flex items-center justify-center flex-shrink-0 overflow-hidden p-0.5"
+      style={{ width: size, height: size }}
+    >
+      <img
+        src={logoUrl}
+        alt={team}
+        className="w-full h-full object-contain"
+        onError={() => setImgError(true)}
+      />
+    </div>
+  );
 }
 
 function ValueBadge({ value }: { value: ValueBetInfo }) {
@@ -193,12 +226,7 @@ export function MLBGameCard({ game }: MLBGameCardProps) {
             <div className="flex flex-col gap-1.5">
               {/* Away team */}
               <div className="flex items-center gap-2.5">
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
-                  style={{ backgroundColor: awayTeam.color }}
-                >
-                  {game.away_team}
-                </div>
+                <MLBLogoCircle team={game.away_team} />
                 <span className="text-base font-bold text-txt-primary">{awayTeam.name}</span>
                 {awayOdds && (
                   <span className="text-slate-500 font-mono text-xs">{awayOdds}</span>
@@ -209,12 +237,7 @@ export function MLBGameCard({ game }: MLBGameCardProps) {
               </div>
               {/* Home team */}
               <div className="flex items-center gap-2.5">
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
-                  style={{ backgroundColor: homeTeam.color }}
-                >
-                  {game.home_team}
-                </div>
+                <MLBLogoCircle team={game.home_team} />
                 <span className="text-base font-bold text-txt-primary">{homeTeam.name}</span>
                 {homeOdds && (
                   <span className="text-slate-500 font-mono text-xs">{homeOdds}</span>
