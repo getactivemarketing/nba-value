@@ -1032,7 +1032,43 @@ async def debug_tweet_test() -> dict:
 @router.get("/debug/version")
 async def debug_version() -> dict:
     """Returns a unique version string to verify deployments."""
-    return {"version": "2026-04-07-v2", "commit": "latest"}
+    return {"version": "2026-04-07-v3-trigger-scoring", "commit": "latest"}
+
+
+@router.post("/debug/trigger-scoring")
+@router.get("/debug/trigger-scoring")
+async def debug_trigger_scoring() -> dict:
+    """Manually trigger the scoring pipeline and report results."""
+    from datetime import timedelta
+    from src.services.mlb.scorer import run_scoring
+    from sqlalchemy import text
+
+    eastern = timedelta(hours=-5)
+    today = (datetime.now(timezone.utc) + eastern).date()
+
+    results = {"today_et": str(today)}
+
+    try:
+        async with async_session() as session:
+            predictions = await run_scoring(session, game_date=today)
+            results["predictions_count"] = len(predictions)
+            results["with_best_bet"] = sum(1 for p in predictions if p.best_bet)
+            if predictions:
+                results["sample"] = {
+                    "game_id": predictions[0].game_id,
+                    "run_diff": predictions[0].predicted_run_diff,
+                }
+
+        # Verify they were saved
+        async with async_session() as session:
+            row = await session.execute(text("SELECT COUNT(*) FROM mlb_predictions WHERE game_id IN (SELECT game_id FROM mlb_games WHERE game_date = :d)"), {"d": today})
+            results["saved_to_db"] = row.scalar()
+    except Exception as e:
+        import traceback
+        results["error"] = str(e)[:300]
+        results["traceback"] = traceback.format_exc()[:1000]
+
+    return results
 
 
 @router.get("/debug/score-all")
