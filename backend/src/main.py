@@ -208,8 +208,9 @@ app.include_router(mlb.router, prefix=settings.api_v1_prefix, tags=["MLB"])
 async def root() -> dict:
     """Root endpoint."""
     return {
-        "name": "NBA Value Betting API",
-        "version": "0.1.0",
+        "name": "TruLine API",
+        "version": "0.4.0",
+        "build": "2026-04-07-v4",
         "docs": "/docs",
     }
 
