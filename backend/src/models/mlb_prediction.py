@@ -3,7 +3,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import String, Integer, DateTime, Numeric, ForeignKey
+from sqlalchemy import String, Integer, DateTime, Numeric, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.database import Base
@@ -13,6 +13,9 @@ class MLBPrediction(Base):
     """MLB model predictions."""
 
     __tablename__ = "mlb_predictions"
+    __table_args__ = (
+        UniqueConstraint("game_id", "market_type", name="uq_mlb_predictions_game_market"),
+    )
 
     prediction_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     game_id: Mapped[str] = mapped_column(String(50), ForeignKey("mlb_games.game_id"), nullable=False, index=True)

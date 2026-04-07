@@ -74,3 +74,22 @@ async def init_db() -> None:
                 ))
             except Exception:
                 pass  # Column already exists or table doesn't exist yet
+
+    # Add unique constraints needed for ON CONFLICT upserts
+    unique_constraints = [
+        ("mlb_predictions", "uq_mlb_predictions_game_market", "game_id, market_type"),
+    ]
+
+    async with engine.begin() as conn:
+        for table, name, columns in unique_constraints:
+            try:
+                # Check if constraint exists first (PostgreSQL doesn't have IF NOT EXISTS for constraints)
+                exists_result = await conn.execute(text(
+                    "SELECT 1 FROM pg_constraint WHERE conname = :name"
+                ), {"name": name})
+                if exists_result.scalar() is None:
+                    await conn.execute(text(
+                        f"ALTER TABLE {table} ADD CONSTRAINT {name} UNIQUE ({columns})"
+                    ))
+            except Exception:
+                pass  # Constraint conflict or table doesn't exist
