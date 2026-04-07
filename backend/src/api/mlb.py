@@ -1014,6 +1014,12 @@ async def debug_tweet_test() -> dict:
     }
 
 
+@router.get("/debug/version")
+async def debug_version() -> dict:
+    """Returns a unique version string to verify deployments."""
+    return {"version": "2026-04-07-v1", "commit": "e3bd74f"}
+
+
 @router.get("/debug/score-test")
 async def debug_score_test() -> dict:
     """Test scoring pipeline on today's games to diagnose failures."""
