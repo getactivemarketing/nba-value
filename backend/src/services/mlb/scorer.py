@@ -211,13 +211,25 @@ class MLBScorer:
         p_home_cover = self._run_diff_to_cover_prob(predicted_run_diff, self.RUNLINE)
         p_away_cover = 1 - p_home_cover
 
-        # Get pitcher names
+        # Get pitcher names — query explicitly to avoid lazy-load issues
+        # in async sessions (relationship access triggers MissingGreenlet)
+        from src.models import MLBPitcher
         home_starter_name = None
         away_starter_name = None
-        if game.home_starter:
-            home_starter_name = game.home_starter.player_name
-        if game.away_starter:
-            away_starter_name = game.away_starter.player_name
+        if game.home_starter_id:
+            pitcher_result = await self.session.execute(
+                select(MLBPitcher).where(MLBPitcher.pitcher_id == game.home_starter_id)
+            )
+            pitcher = pitcher_result.scalar_one_or_none()
+            if pitcher:
+                home_starter_name = pitcher.player_name
+        if game.away_starter_id:
+            pitcher_result = await self.session.execute(
+                select(MLBPitcher).where(MLBPitcher.pitcher_id == game.away_starter_id)
+            )
+            pitcher = pitcher_result.scalar_one_or_none()
+            if pitcher:
+                away_starter_name = pitcher.player_name
 
         prediction = MLBGamePrediction(
             game_id=game.game_id,
