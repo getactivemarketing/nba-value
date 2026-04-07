@@ -1032,7 +1032,46 @@ async def debug_tweet_test() -> dict:
 @router.get("/debug/version")
 async def debug_version() -> dict:
     """Returns a unique version string to verify deployments."""
-    return {"version": "2026-04-07-v3-trigger-scoring", "commit": "latest"}
+    return {"version": "2026-04-07-v4-add-constraint", "commit": "latest"}
+
+
+@router.post("/debug/add-prediction-constraint")
+@router.get("/debug/add-prediction-constraint")
+async def debug_add_prediction_constraint() -> dict:
+    """Manually add the unique constraint to mlb_predictions table."""
+    from sqlalchemy import text
+
+    results = {}
+    async with async_session() as session:
+        try:
+            # Check if it already exists
+            row = await session.execute(text(
+                "SELECT 1 FROM pg_constraint WHERE conname = 'uq_mlb_predictions_game_market'"
+            ))
+            if row.scalar():
+                results["status"] = "already_exists"
+                return results
+
+            # First, dedupe any existing rows that would violate the constraint
+            await session.execute(text("""
+                DELETE FROM mlb_predictions a USING mlb_predictions b
+                WHERE a.prediction_id < b.prediction_id
+                AND a.game_id = b.game_id
+                AND a.market_type = b.market_type
+            """))
+            await session.commit()
+
+            # Add the constraint
+            await session.execute(text(
+                "ALTER TABLE mlb_predictions ADD CONSTRAINT uq_mlb_predictions_game_market UNIQUE (game_id, market_type)"
+            ))
+            await session.commit()
+            results["status"] = "added"
+        except Exception as e:
+            await session.rollback()
+            results["error"] = str(e)[:300]
+
+    return results
 
 
 @router.post("/debug/trigger-scoring")
