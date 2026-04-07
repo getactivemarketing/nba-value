@@ -1,9 +1,41 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getTeamColor } from '@/lib/teamLogos';
+import { getTeamColor, getTeamLogo } from '@/lib/teamLogos';
 import type { Market } from '@/types/market';
 import type { TeamTrends, GamePrediction, TornadoFactor, TeamInjuries, HeadToHead, SharpMoney } from '@/lib/api';
 import { ValueBadge } from '@/components/ui/ValueBadge';
 import { SharpMoneyBadge } from '@/components/ui/SharpMoneyBadge';
+
+function NBALogoCircle({ team, size = 32 }: { team: string; size?: number }) {
+  const [imgError, setImgError] = useState(false);
+  const teamColor = getTeamColor(team);
+  const logoUrl = getTeamLogo(team);
+
+  if (imgError || !logoUrl) {
+    return (
+      <div
+        className="rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+        style={{ width: size, height: size, backgroundColor: teamColor }}
+      >
+        {team.slice(0, 3)}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="rounded-full bg-white/5 flex items-center justify-center flex-shrink-0 overflow-hidden p-0.5"
+      style={{ width: size, height: size }}
+    >
+      <img
+        src={logoUrl}
+        alt={team}
+        className="w-full h-full object-contain"
+        onError={() => setImgError(true)}
+      />
+    </div>
+  );
+}
 
 interface GameCardProps {
   gameId: string;
@@ -204,12 +236,7 @@ export function GameCard({ gameId: _gameId, homeTeam, awayTeam, tipTime, markets
             <div className="flex flex-col gap-1.5">
               {/* Away team */}
               <div className="flex items-center gap-2.5">
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
-                  style={{ backgroundColor: awayColor }}
-                >
-                  {awayTeam.slice(0, 3)}
-                </div>
+                <NBALogoCircle team={awayTeam} />
                 <span className="text-base font-bold text-[#f1f5f9]">{awayTeam}</span>
                 {awaySpread && (
                   <span className="text-slate-500 font-mono text-xs">{formatLine(awaySpread.line)}</span>
@@ -217,12 +244,7 @@ export function GameCard({ gameId: _gameId, homeTeam, awayTeam, tipTime, markets
               </div>
               {/* Home team */}
               <div className="flex items-center gap-2.5">
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
-                  style={{ backgroundColor: homeColor }}
-                >
-                  {homeTeam.slice(0, 3)}
-                </div>
+                <NBALogoCircle team={homeTeam} />
                 <span className="text-base font-bold text-[#f1f5f9]">{homeTeam}</span>
                 {homeSpread && (
                   <span className="text-slate-500 font-mono text-xs">{formatLine(homeSpread.line)}</span>
