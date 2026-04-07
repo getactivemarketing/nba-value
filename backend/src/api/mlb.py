@@ -941,6 +941,21 @@ async def debug_odds() -> dict:
         row = await session.execute(text("SELECT COUNT(*) FROM mlb_games"))
         results["existing_games"] = row.scalar()
 
+        row = await session.execute(text("SELECT COUNT(*) FROM mlb_predictions"))
+        results["mlb_predictions_count"] = row.scalar()
+
+        row = await session.execute(text("SELECT COUNT(*) FROM mlb_prediction_snapshots"))
+        results["mlb_snapshots_count"] = row.scalar()
+
+        # Most recent prediction
+        row = await session.execute(text(
+            "SELECT game_id, market_type, predicted_run_diff, created_at FROM mlb_predictions ORDER BY created_at DESC LIMIT 3"
+        ))
+        results["recent_predictions"] = [
+            {"game_id": r[0], "market": r[1], "run_diff": float(r[2]) if r[2] else None, "created_at": str(r[3])}
+            for r in row.fetchall()
+        ]
+
         # Check game dates
         row = await session.execute(text(
             "SELECT game_date, home_team, away_team, status FROM mlb_games ORDER BY game_date DESC LIMIT 5"
