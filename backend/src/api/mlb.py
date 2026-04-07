@@ -1006,8 +1006,8 @@ async def debug_odds_ingest() -> dict:
 
 @router.get("/debug/tweet-test")
 async def debug_tweet_test() -> dict:
-    """Send a test intro tweet to verify Twitter API connection."""
-    from src.services.social.twitter import post_tweet
+    """Send a test intro tweet via Typefully."""
+    from src.services.social.typefully import post_tweet
 
     intro = (
         "Introducing TruLine\n\n"
@@ -1020,12 +1020,12 @@ async def debug_tweet_test() -> dict:
         "#MLB #NBA #NRFI #GamblingX"
     )
 
-    tweet_id = post_tweet(intro)
+    result = post_tweet(intro)
     return {
         "tweet_text": intro,
         "tweet_length": len(intro),
-        "tweet_id": tweet_id,
-        "posted": tweet_id is not None,
+        "result": result,
+        "posted": result is not None,
     }
 
 

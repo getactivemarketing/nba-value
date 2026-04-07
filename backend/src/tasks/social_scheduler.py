@@ -77,7 +77,7 @@ def _run_async(coro):
 async def _post_results_async() -> dict:
     """Post yesterday's results recap."""
     from src.services.social.content import generate_results_tweet
-    from src.services.social.twitter import post_tweet
+    from src.services.social.typefully import post_tweet
 
     yesterday = _today_et() - timedelta(days=1)
 
@@ -95,7 +95,7 @@ async def _post_results_async() -> dict:
 async def _post_nrfi_results_async() -> dict:
     """Post yesterday's NRFI recap."""
     from src.services.social.content import generate_nrfi_results_tweet
-    from src.services.social.twitter import post_tweet
+    from src.services.social.typefully import post_tweet
 
     yesterday = _today_et() - timedelta(days=1)
 
@@ -113,7 +113,7 @@ async def _post_nrfi_results_async() -> dict:
 async def _post_daily_picks_async() -> dict:
     """Post today's picks thread."""
     from src.services.social.content import generate_daily_picks_thread
-    from src.services.social.twitter import post_thread
+    from src.services.social.typefully import post_thread
 
     today = _today_et()
 
@@ -131,7 +131,7 @@ async def _post_daily_picks_async() -> dict:
 async def _post_nrfi_plays_async() -> dict:
     """Post today's NRFI plays."""
     from src.services.social.content import generate_nrfi_tweet
-    from src.services.social.twitter import post_tweet
+    from src.services.social.typefully import post_tweet
 
     today = _today_et()
 

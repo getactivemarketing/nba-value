@@ -34,13 +34,20 @@ class Settings(BaseSettings):
     odds_api_key: str = ""
     balldontlie_api_key: str = ""
 
-    # Twitter/X API
+    # Twitter/X API (legacy direct posting — kept for fallback)
     twitter_api_key: str = ""
     twitter_api_secret: str = ""
     twitter_access_token: str = ""
     twitter_access_token_secret: str = ""
     twitter_bearer_token: str = ""
-    twitter_posting_enabled: bool = False  # Safety switch
+
+    # Typefully (preferred posting service)
+    typefully_api_key: str = ""
+    typefully_social_set_id: int = 296324  # @trulineapp
+    typefully_auto_share: bool = True  # Auto-publish drafts (vs save as draft)
+
+    # Posting safety switch (applies to both direct Twitter and Typefully)
+    twitter_posting_enabled: bool = False
 
     # API Settings
     api_v1_prefix: str = "/api/v1"
