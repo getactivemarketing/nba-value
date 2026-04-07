@@ -25,13 +25,14 @@ def _headers() -> dict:
     }
 
 
-def post_tweet(text: str, schedule_at: datetime | None = None) -> dict | None:
+def post_tweet(text: str, schedule_at: datetime | str | None = "next-free-slot") -> dict | None:
     """
     Post a single tweet via Typefully.
 
     Args:
         text: Tweet text (max 280 chars per post)
-        schedule_at: Optional UTC datetime to schedule. If None, publishes immediately.
+        schedule_at: Either a datetime, "next-free-slot" (default — uses Typefully queue),
+                     or None (saves as draft only without publishing).
 
     Returns:
         Dict with draft_id and other metadata, or None on failure.
@@ -39,13 +40,14 @@ def post_tweet(text: str, schedule_at: datetime | None = None) -> dict | None:
     return post_thread([text], schedule_at=schedule_at)
 
 
-def post_thread(posts: list[str], schedule_at: datetime | None = None) -> dict | None:
+def post_thread(posts: list[str], schedule_at: datetime | str | None = "next-free-slot") -> dict | None:
     """
     Post a thread of tweets via Typefully.
 
     Args:
         posts: List of tweet texts (each max 280 chars)
-        schedule_at: Optional UTC datetime to schedule. If None, publishes immediately.
+        schedule_at: Either a datetime, "next-free-slot" (default — uses Typefully queue),
+                     or None (saves as draft only without publishing).
 
     Returns:
         Dict with draft_id and other metadata, or None on failure.
@@ -72,12 +74,15 @@ def post_thread(posts: list[str], schedule_at: datetime | None = None) -> dict |
                 "posts": [{"text": text} for text in posts],
             }
         },
-        "share": settings.typefully_auto_share,
     }
 
-    if schedule_at:
-        # Typefully expects ISO 8601 with Z suffix for UTC
-        payload["publish_at"] = schedule_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Schedule the post — defaults to "next-free-slot" using Typefully's queue
+    if schedule_at is not None:
+        if isinstance(schedule_at, str):
+            payload["publish_at"] = schedule_at
+        else:
+            # ISO 8601 with Z suffix for UTC
+            payload["publish_at"] = schedule_at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     url = f"{API_BASE}/social-sets/{settings.typefully_social_set_id}/drafts"
 
