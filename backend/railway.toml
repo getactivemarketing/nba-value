@@ -1,6 +1,7 @@
 # Railway deployment configuration
 # This file lives in backend/ which Railway uses as the project root,
 # so watchPatterns are relative to backend/, not the repo root.
+# Last updated: 2026-04-07 to force redeploy
 [build]
 builder = "NIXPACKS"
 watchPatterns = ["src/**", "requirements.txt", "Procfile", "railway.toml"]
