@@ -39,18 +39,28 @@ def _today_et() -> date:
     return (datetime.now(timezone.utc) + eastern).date()
 
 
-# Dedicated engine for social scheduler
-_social_engine = create_async_engine(
-    settings.async_database_url,
-    pool_pre_ping=True,
-    pool_size=1,
-    max_overflow=1,
-    pool_recycle=300,
-    pool_timeout=30,
-)
-_social_session_factory = async_sessionmaker(
-    _social_engine, class_=AsyncSession, expire_on_commit=False
-)
+# Lazy-initialized engine for social scheduler.
+# Created inside start_scheduler() to avoid blocking app startup.
+_social_engine = None
+_social_session_factory = None
+
+
+def _init_engine():
+    """Initialize the social scheduler's DB engine. Called once from start_scheduler()."""
+    global _social_engine, _social_session_factory
+    if _social_engine is None:
+        _social_engine = create_async_engine(
+            settings.async_database_url,
+            pool_pre_ping=True,
+            pool_size=1,
+            max_overflow=1,
+            pool_recycle=300,
+            pool_timeout=30,
+        )
+        _social_session_factory = async_sessionmaker(
+            _social_engine, class_=AsyncSession, expire_on_commit=False
+        )
+
 
 # Persistent event loop
 _social_loop: asyncio.AbstractEventLoop | None = None
@@ -196,6 +206,9 @@ def start_scheduler():
     log_task("Starting social media scheduler...")
     log_task("Waiting 180s for other schedulers to finish startup...")
     time.sleep(180)
+
+    # Initialize DB engine after startup delay so it doesn't compete with healthcheck
+    _init_engine()
 
     social_scheduler = schedule.Scheduler()
 

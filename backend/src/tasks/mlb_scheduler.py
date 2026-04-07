@@ -36,24 +36,35 @@ logger = structlog.get_logger()
 # Track last run times for health monitoring
 _last_run_times: dict[str, datetime] = {}
 
-# Dedicated engine for the MLB scheduler thread.
+# Lazy-initialized engine for the MLB scheduler thread.
+# Created inside start_scheduler() to avoid blocking app startup.
 # Sharing the main engine causes "Future attached to a different loop" errors
 # because asyncpg connections are bound to the event loop that created them.
-_mlb_engine = create_async_engine(
-    settings.async_database_url,
-    pool_pre_ping=True,
-    pool_size=2,
-    max_overflow=1,
-    pool_recycle=180,
-    pool_timeout=30,
-)
-_mlb_session_factory = async_sessionmaker(
-    _mlb_engine, class_=AsyncSession, expire_on_commit=False
-)
+_mlb_engine = None
+_mlb_session_factory = None
+
+
+def _init_engine():
+    """Initialize the MLB scheduler's DB engine. Called once from start_scheduler()."""
+    global _mlb_engine, _mlb_session_factory
+    if _mlb_engine is None:
+        _mlb_engine = create_async_engine(
+            settings.async_database_url,
+            pool_pre_ping=True,
+            pool_size=2,
+            max_overflow=1,
+            pool_recycle=180,
+            pool_timeout=30,
+        )
+        _mlb_session_factory = async_sessionmaker(
+            _mlb_engine, class_=AsyncSession, expire_on_commit=False
+        )
 
 
 def mlb_session():
     """Get an async session from the MLB scheduler's dedicated engine."""
+    if _mlb_session_factory is None:
+        _init_engine()
     return _mlb_session_factory()
 
 
@@ -682,6 +693,9 @@ def start_scheduler():
     # Delay initial run to let the app finish startup and healthcheck
     log_task("Waiting 120s before initial run to avoid connection pressure during startup...")
     time.sleep(120)
+
+    # Initialize DB engine after startup delay so it doesn't compete with healthcheck
+    _init_engine()
 
     # Run all tasks on startup
     run_all()
