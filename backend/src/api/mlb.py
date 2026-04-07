@@ -1017,7 +1017,70 @@ async def debug_tweet_test() -> dict:
 @router.get("/debug/version")
 async def debug_version() -> dict:
     """Returns a unique version string to verify deployments."""
-    return {"version": "2026-04-07-v1", "commit": "e3bd74f"}
+    return {"version": "2026-04-07-v2", "commit": "latest"}
+
+
+@router.get("/debug/score-all")
+async def debug_score_all() -> dict:
+    """Score all today's games and report success/failure per game."""
+    from datetime import timedelta
+    from src.services.mlb.scorer import MLBScorer
+
+    eastern = timedelta(hours=-5)
+    today = (datetime.now(timezone.utc) + eastern).date()
+
+    results = {"today_et": str(today), "scored": [], "failed": [], "saved_count": 0}
+
+    async with async_session() as session:
+        stmt = select(MLBGame).where(
+            and_(
+                MLBGame.game_date == today,
+                MLBGame.status == "scheduled",
+            )
+        )
+        result = await session.execute(stmt)
+        games = result.scalars().all()
+        results["total_games"] = len(games)
+
+        scorer = MLBScorer(session)
+
+        for game in games:
+            try:
+                prediction = await scorer.score_game(game)
+                results["scored"].append({
+                    "game_id": game.game_id,
+                    "matchup": f"{game.away_team} @ {game.home_team}",
+                    "run_diff": prediction.predicted_run_diff,
+                    "total": prediction.predicted_total,
+                    "best_bet": str(prediction.best_bet)[:80] if prediction.best_bet else None,
+                })
+            except Exception as e:
+                results["failed"].append({
+                    "game_id": game.game_id,
+                    "matchup": f"{game.away_team} @ {game.home_team}",
+                    "error": str(e)[:200],
+                })
+
+        # Try to save the successful ones
+        if results["scored"]:
+            try:
+                # Re-run score_games which calls save_predictions
+                predictions = []
+                for game in games:
+                    try:
+                        pred = await scorer.score_game(game)
+                        predictions.append(pred)
+                    except Exception:
+                        pass
+
+                save_count = await scorer.save_predictions(predictions)
+                results["saved_count"] = save_count
+            except Exception as e:
+                import traceback
+                results["save_error"] = str(e)[:300]
+                results["save_traceback"] = traceback.format_exc()[:500]
+
+    return results
 
 
 @router.get("/debug/score-test")
