@@ -1,7 +1,9 @@
 # Railway deployment configuration
+# This file lives in backend/ which Railway uses as the project root,
+# so watchPatterns are relative to backend/, not the repo root.
 [build]
 builder = "NIXPACKS"
-watchPatterns = ["backend/**"]
+watchPatterns = ["src/**", "requirements.txt", "Procfile", "railway.toml"]
 
 [deploy]
 startCommand = "uvicorn src.main:app --host 0.0.0.0 --port $PORT"
