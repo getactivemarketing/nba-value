@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import type { MLBGame, ValueBetInfo, PitcherInfo } from '@/lib/mlbApi';
+import type { MLBGame, ValueBetInfo, PitcherInfo, FirstInningStats } from '@/lib/mlbApi';
 import { getTeamInfo, formatOdds } from '@/lib/mlbApi';
 import { getMLBLogo } from '@/lib/mlbLogos';
 
 interface MLBGameCardProps {
   game: MLBGame;
+  firstInningStats?: Map<string, FirstInningStats>;
 }
 
 function MLBLogoCircle({ team, size = 32 }: { team: string; size?: number }) {
@@ -124,7 +125,7 @@ function PitcherCard({ pitcher, teamAbbr }: { pitcher: PitcherInfo | null; teamA
   );
 }
 
-export function MLBGameCard({ game }: MLBGameCardProps) {
+export function MLBGameCard({ game, firstInningStats }: MLBGameCardProps) {
   const gameTime = game.game_time ? new Date(game.game_time) : null;
   const isCompleted = game.status === 'final';
   const isLive = game.status === 'in_progress';
@@ -147,30 +148,51 @@ export function MLBGameCard({ game }: MLBGameCardProps) {
   const awayOdds = mlMarket?.away_odds ? formatOdds(mlMarket.away_odds) : null;
   const homeOdds = mlMarket?.home_odds ? formatOdds(mlMarket.home_odds) : null;
 
-  // NRFI edge score: use best_bet value_score as proxy
-  const nrfiScore = game.best_bet?.value_score ?? null;
+  // NRFI probability: combine both teams' first inning scoreless rates
+  // (probability neither team scores in the 1st)
+  const homeFI = firstInningStats?.get(game.home_team);
+  const awayFI = firstInningStats?.get(game.away_team);
+  let nrfiScore: number | null = null;
+  let nrfiMinGames = 0;
+  if (homeFI && awayFI && homeFI.games > 0 && awayFI.games > 0) {
+    const homeScoreless = 1 - homeFI.score_pct;
+    const awayScoreless = 1 - awayFI.score_pct;
+    nrfiScore = homeScoreless * awayScoreless * 100;
+    nrfiMinGames = Math.min(homeFI.games, awayFI.games);
+  }
+  // Fall back to best_bet value_score if no first inning data
+  if (nrfiScore === null && game.best_bet?.value_score) {
+    nrfiScore = game.best_bet.value_score;
+  }
   const hasHighValue = nrfiScore !== null && nrfiScore >= 65;
 
-  // Score badge styling
+  // Score badge styling (for NRFI probability)
   const getScoreBadge = (score: number) => {
     if (score >= 70) {
       return {
         bg: 'bg-[#66f796]/10 border-[#66f796]/30',
         text: 'text-[#66f796]',
-        label: 'STRONG',
+        label: 'STRONG NRFI',
       };
     }
-    if (score >= 60) {
+    if (score >= 55) {
       return {
         bg: 'bg-[#a4e6ff]/10 border-[#a4e6ff]/30',
         text: 'text-[#a4e6ff]',
-        label: 'MODERATE',
+        label: 'LEAN NRFI',
+      };
+    }
+    if (score >= 40) {
+      return {
+        bg: 'bg-[#32353c]/50 border-[#32353c]',
+        text: 'text-slate-400',
+        label: 'TOSSUP',
       };
     }
     return {
-      bg: 'bg-[#32353c]/50 border-[#32353c]',
-      text: 'text-slate-400',
-      label: 'LOW',
+      bg: 'bg-[#f59e0b]/10 border-[#f59e0b]/30',
+      text: 'text-[#f59e0b]',
+      label: 'LEAN YRFI',
     };
   };
 
@@ -290,20 +312,28 @@ export function MLBGameCard({ game }: MLBGameCardProps) {
             </div>
           </div>
 
-          {/* Edge Score badge - RIGHT SIDE */}
+          {/* NRFI Chance badge - RIGHT SIDE */}
           {nrfiScore !== null && (() => {
             const badge = getScoreBadge(nrfiScore);
+            const isNrfiFromStats = homeFI && awayFI;
             return (
               <div className="flex flex-col items-end flex-shrink-0">
-                <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Edge Score</span>
+                <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">
+                  {isNrfiFromStats ? 'NRFI Chance' : 'Edge Score'}
+                </span>
                 <div className={`${badge.bg} border px-3 py-1 rounded-full flex items-center gap-2`}>
                   <span className={`${badge.text} font-black font-mono text-lg`}>
-                    {nrfiScore.toFixed(0)}
+                    {nrfiScore.toFixed(0)}{isNrfiFromStats ? '%' : ''}
                   </span>
-                  <span className={`text-[10px] ${badge.text} font-bold`}>
+                  <span className={`text-[10px] ${badge.text} font-bold tracking-widest`}>
                     {badge.label}
                   </span>
                 </div>
+                {isNrfiFromStats && nrfiMinGames > 0 && (
+                  <span className="text-[9px] text-slate-600 font-mono mt-1">
+                    n={nrfiMinGames}+
+                  </span>
+                )}
               </div>
             );
           })()}

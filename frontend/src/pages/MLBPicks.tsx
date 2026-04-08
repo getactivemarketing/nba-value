@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { mlbApi, type MLBTopPick } from '@/lib/mlbApi';
+import { mlbApi, type MLBTopPick, type FirstInningStats } from '@/lib/mlbApi';
 import { MLBGameCard } from '@/components/mlb/MLBGameCard';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { ErrorMessage } from '@/components/ui/ErrorMessage';
@@ -165,6 +165,24 @@ export function MLBPicks() {
     enabled: !isPast,
   });
 
+  // Fetch first inning stats (league-wide, updated daily — safe to cache)
+  const { data: firstInningData } = useQuery({
+    queryKey: ['mlb-first-inning'],
+    queryFn: () => mlbApi.getFirstInningStats(),
+    staleTime: 5 * 60 * 1000, // 5 min
+  });
+
+  // Build a team → stats lookup map for O(1) access in each game card
+  const firstInningMap = useMemo(() => {
+    const map = new Map<string, FirstInningStats>();
+    if (firstInningData) {
+      for (const stats of firstInningData) {
+        map.set(stats.team, stats);
+      }
+    }
+    return map;
+  }, [firstInningData]);
+
   const games = gamesData?.games || [];
   const topPicks = picksData?.picks || [];
 
@@ -245,7 +263,7 @@ export function MLBPicks() {
             </div>
           ) : (
             games.map((game) => (
-              <MLBGameCard key={game.game_id} game={game} />
+              <MLBGameCard key={game.game_id} game={game} firstInningStats={firstInningMap} />
             ))
           )}
         </div>
