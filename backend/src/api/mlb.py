@@ -1087,6 +1087,7 @@ async def debug_trigger_posts(task: str = "all") -> dict:
         task: "all", "picks", "nrfi", "results", "nrfi_results", "pregame"
     """
     from datetime import timedelta
+    from sqlalchemy import text
     from src.services.social.content import (
         generate_results_tweet,
         generate_nrfi_results_tweet,
@@ -1155,6 +1156,104 @@ async def debug_trigger_posts(task: str = "all") -> dict:
                     results["nrfi"] = {"posted": False, "reason": "no_data"}
             except Exception as e:
                 results["nrfi_error"] = str(e)[:200]
+
+        # First inning recaps (games whose 1st inning just ended)
+        if task in ("all", "first_inning"):
+            from sqlalchemy import or_
+            from src.services.social.content import generate_first_inning_recap_tweet
+            from src.services.social.image_generator import generate_recap_card
+
+            stmt = select(MLBGame).where(
+                and_(
+                    MLBGame.game_date == today,
+                    MLBGame.first_inning_tweet_posted == False,  # noqa: E712
+                    MLBGame.home_first_inning_runs.isnot(None),
+                    MLBGame.away_first_inning_runs.isnot(None),
+                    or_(
+                        and_(MLBGame.status == "in_progress", MLBGame.inning >= 2),
+                        MLBGame.status == "final",
+                    ),
+                )
+            )
+            games = list((await session.execute(stmt)).scalars().all())
+            posted = 0
+            for game in games:
+                try:
+                    tweet = generate_first_inning_recap_tweet(game)
+                    if not tweet:
+                        continue
+
+                    media_urls = None
+                    try:
+                        away_fi = game.away_first_inning_runs or 0
+                        home_fi = game.home_first_inning_runs or 0
+                        is_nrfi = (away_fi + home_fi) == 0
+                        home_off, home_def = await _get_team_first_inning_pct(session, game.home_team)
+                        away_off, away_def = await _get_team_first_inning_pct(session, game.away_team)
+                        predicted_nrfi_pct = None
+                        if all(x is not None for x in [home_off, home_def, away_off, away_def]):
+                            p_away_scores = (away_off + home_def) / 2.0
+                            p_home_scores = (home_off + away_def) / 2.0
+                            predicted_nrfi_pct = (1.0 - p_away_scores) * (1.0 - p_home_scores) * 100
+                        png = generate_recap_card(
+                            away_team=game.away_team,
+                            home_team=game.home_team,
+                            away_name=TEAM_NAMES.get(game.away_team, game.away_team),
+                            home_name=TEAM_NAMES.get(game.home_team, game.home_team),
+                            away_first=away_fi,
+                            home_first=home_fi,
+                            is_nrfi=is_nrfi,
+                            predicted_nrfi_pct=predicted_nrfi_pct,
+                        )
+                        public_url = upload_media(png, filename=f"recap_{game.game_id}.png")
+                        if public_url:
+                            media_urls = [public_url]
+                    except Exception:
+                        pass
+
+                    r = post_tweet(tweet, schedule_at="next-free-slot", media_urls=media_urls)
+                    if r:
+                        await session.execute(
+                            text("UPDATE mlb_games SET first_inning_tweet_posted = TRUE WHERE game_id = :gid"),
+                            {"gid": game.game_id},
+                        )
+                        posted += 1
+                except Exception as e:
+                    results.setdefault("first_inning_errors", []).append(str(e)[:100])
+            await session.commit()
+            results["first_inning"] = {"posted": posted, "checked": len(games)}
+
+        # Final recaps (games just finished)
+        if task in ("all", "final"):
+            from src.services.social.content import generate_final_recap_tweet
+
+            stmt = select(MLBGame).where(
+                and_(
+                    MLBGame.game_date == today,
+                    MLBGame.status == "final",
+                    MLBGame.final_tweet_posted == False,  # noqa: E712
+                    MLBGame.home_score.isnot(None),
+                    MLBGame.away_score.isnot(None),
+                )
+            )
+            games = list((await session.execute(stmt)).scalars().all())
+            posted = 0
+            for game in games:
+                try:
+                    tweet = generate_final_recap_tweet(game)
+                    if not tweet:
+                        continue
+                    r = post_tweet(tweet, schedule_at="next-free-slot")
+                    if r:
+                        await session.execute(
+                            text("UPDATE mlb_games SET final_tweet_posted = TRUE WHERE game_id = :gid"),
+                            {"gid": game.game_id},
+                        )
+                        posted += 1
+                except Exception as e:
+                    results.setdefault("final_errors", []).append(str(e)[:100])
+            await session.commit()
+            results["final"] = {"posted": posted, "checked": len(games)}
 
     return results
 
