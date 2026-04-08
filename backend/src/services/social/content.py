@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import (
     MLBGame, MLBPredictionSnapshot, MLBPrediction, MLBPitcher, MLBGameContext,
+    MLBTeamStats, MLBPitcherStats, MLBMarket,
 )
 
 logger = structlog.get_logger()
@@ -45,33 +46,60 @@ def _fmt_odds(decimal_odds: float) -> str:
         return str(round(-100 / (decimal_odds - 1)))
 
 
+async def _get_pitcher_era(session: AsyncSession, pitcher_id: int | None) -> tuple[str | None, float | None]:
+    """Fetch pitcher name and latest ERA. Returns (name, era)."""
+    if not pitcher_id:
+        return None, None
+    p_row = await session.execute(
+        select(MLBPitcher).where(MLBPitcher.pitcher_id == pitcher_id)
+    )
+    pitcher = p_row.scalar_one_or_none()
+    if not pitcher:
+        return None, None
+    s_row = await session.execute(
+        select(MLBPitcherStats)
+        .where(MLBPitcherStats.pitcher_id == pitcher_id)
+        .order_by(desc(MLBPitcherStats.stat_date))
+        .limit(1)
+    )
+    stats = s_row.scalar_one_or_none()
+    era = float(stats.era) if stats and stats.era is not None else None
+    # Use last name only for brevity
+    last_name = pitcher.player_name.split()[-1] if pitcher.player_name else None
+    return last_name, era
+
+
+async def _get_team_first_inning_pct(session: AsyncSession, team: str) -> float | None:
+    """Fetch latest first_inning_score_pct for a team."""
+    row = await session.execute(
+        select(MLBTeamStats)
+        .where(MLBTeamStats.team_abbr == team)
+        .order_by(desc(MLBTeamStats.stat_date))
+        .limit(1)
+    )
+    stats = row.scalar_one_or_none()
+    if stats and stats.first_inning_score_pct is not None:
+        return float(stats.first_inning_score_pct)
+    return None
+
+
+def _implied_prob_from_decimal(decimal_odds: float) -> float:
+    """Raw implied probability from decimal odds (not de-vigged)."""
+    if not decimal_odds or decimal_odds <= 1.0:
+        return 0.0
+    return 1.0 / decimal_odds
+
+
 async def generate_daily_picks_thread(session: AsyncSession, game_date: date) -> list[str]:
     """
-    Generate a Twitter thread with today's best MLB value picks.
+    Generate a Twitter thread with today's best MLB value bets.
 
+    Shows actual value plays where the model disagrees with the market.
     Returns a list of tweet-length strings (max 280 chars each).
     """
     tweets = []
 
-    # Get today's games with predictions
-    stmt = select(MLBPrediction).where(
-        MLBPrediction.game_id.in_(
-            select(MLBGame.game_id).where(
-                and_(
-                    MLBGame.game_date == game_date,
-                    MLBGame.status == "scheduled",
-                )
-            )
-        )
-    ).where(MLBPrediction.market_type == "moneyline")
-
-    result = await session.execute(stmt)
-    predictions = result.scalars().all()
-
-    if not predictions:
-        return []
-
-    # Get games for context
+    # Today's scheduled games
     games_result = await session.execute(
         select(MLBGame).where(
             and_(
@@ -80,73 +108,155 @@ async def generate_daily_picks_thread(session: AsyncSession, game_date: date) ->
             )
         ).order_by(MLBGame.game_time)
     )
-    games = {g.game_id: g for g in games_result.scalars().all()}
+    games = list(games_result.scalars().all())
+    if not games:
+        return []
+
+    game_ids = [g.game_id for g in games]
+
+    # Predictions (moneyline)
+    pred_result = await session.execute(
+        select(MLBPrediction).where(
+            and_(
+                MLBPrediction.game_id.in_(game_ids),
+                MLBPrediction.market_type == "moneyline",
+            )
+        )
+    )
+    pred_map = {p.game_id: p for p in pred_result.scalars().all()}
+
+    # Markets (moneyline) - take latest per game
+    mkt_result = await session.execute(
+        select(MLBMarket).where(
+            and_(
+                MLBMarket.game_id.in_(game_ids),
+                MLBMarket.market_type == "moneyline",
+            )
+        ).order_by(desc(MLBMarket.updated_at))
+    )
+    mkt_map: dict[str, MLBMarket] = {}
+    for m in mkt_result.scalars().all():
+        if m.game_id not in mkt_map:
+            mkt_map[m.game_id] = m
 
     date_str = game_date.strftime("%m/%d")
+
+    # Build value plays
+    value_plays = []
+    for game in games:
+        pred = pred_map.get(game.game_id)
+        mkt = mkt_map.get(game.game_id)
+        if not pred or not mkt:
+            continue
+        if pred.p_home_win is None or pred.p_away_win is None:
+            continue
+        if mkt.home_odds is None or mkt.away_odds is None:
+            continue
+
+        p_home = float(pred.p_home_win)
+        p_away = float(pred.p_away_win)
+        home_odds = float(mkt.home_odds)
+        away_odds = float(mkt.away_odds)
+        mk_home = _implied_prob_from_decimal(home_odds)
+        mk_away = _implied_prob_from_decimal(away_odds)
+
+        # Which side has edge?
+        home_edge = p_home - mk_home
+        away_edge = p_away - mk_away
+
+        if home_edge >= away_edge:
+            side = "home"
+            team = game.home_team
+            model_p = p_home
+            market_p = mk_home
+            odds = home_odds
+            edge = home_edge
+        else:
+            side = "away"
+            team = game.away_team
+            model_p = p_away
+            market_p = mk_away
+            odds = away_odds
+            edge = away_edge
+
+        if edge <= 0.05:
+            continue
+        confidence = (pred.confidence or "").lower()
+        if confidence and confidence not in ("high", "medium"):
+            continue
+
+        value_plays.append({
+            "game": game,
+            "side": side,
+            "team": team,
+            "model_p": model_p,
+            "market_p": market_p,
+            "odds": odds,
+            "edge": edge,
+        })
+
+    value_plays.sort(key=lambda x: x["edge"], reverse=True)
 
     # Header tweet
     header = (
         f"MLB Picks {date_str}\n\n"
-        f"Today's AI value plays from the model.\n"
+        f"Today's value plays from the model.\n"
         f"{len(games)} games analyzed.\n\n"
-        f"Full card + value scores: truline.app\n\n"
+        f"Full card: truline.app\n\n"
         f"#MLB #SportsBetting #GamblingX"
     )
     tweets.append(header)
 
-    # Individual game tweets (top games by predicted run diff magnitude)
-    pred_map = {p.game_id: p for p in predictions}
-    scored_games = []
+    if not value_plays:
+        return tweets
 
-    for game_id, game in games.items():
-        pred = pred_map.get(game_id)
-        if not pred or pred.predicted_run_diff is None:
-            continue
-
-        run_diff = float(pred.predicted_run_diff)
-        p_home = float(pred.p_home_win) if pred.p_home_win else 0.5
-        p_away = float(pred.p_away_win) if pred.p_away_win else 0.5
-
-        favored_team = game.home_team if run_diff > 0 else game.away_team
-        favored_pct = max(p_home, p_away)
-
-        scored_games.append({
-            "game": game,
-            "pred": pred,
-            "favored_team": favored_team,
-            "favored_pct": favored_pct,
-            "abs_diff": abs(run_diff),
-            "run_diff": run_diff,
-        })
-
-    # Sort by model confidence (biggest predicted edge)
-    scored_games.sort(key=lambda x: x["abs_diff"], reverse=True)
-
-    # Top 3-5 picks as individual tweets
-    for sg in scored_games[:5]:
-        game = sg["game"]
+    for play in value_plays[:5]:
+        game = play["game"]
         away = game.away_team
         home = game.home_team
-        pick = sg["favored_team"]
-        pct = round(sg["favored_pct"] * 100)
-        diff = sg["run_diff"]
+        team = play["team"]
+        model_pct = round(play["model_p"] * 100)
+        market_pct = round(play["market_p"] * 100)
+        edge_pct = play["edge"] * 100
+        odds_str = _fmt_odds(play["odds"])
 
         game_time = ""
         if game.game_time:
-            et = game.game_time - timedelta(hours=4)  # UTC to ET approx
-            game_time = et.strftime("%-I:%M %p ET")
+            et = game.game_time - timedelta(hours=4)
+            try:
+                game_time = et.strftime("%-I:%M %p ET")
+            except Exception:
+                game_time = et.strftime("%I:%M %p ET").lstrip("0")
 
-        pick_name = TEAM_NAMES.get(pick, pick)
         away_name = TEAM_NAMES.get(away, away)
         home_name = TEAM_NAMES.get(home, home)
-        hashtag = TEAM_HASHTAGS.get(pick, "")
+        team_name = TEAM_NAMES.get(team, team)
+        hashtag = TEAM_HASHTAGS.get(team, "")
+
+        # Pitcher matchup
+        away_last, away_era = await _get_pitcher_era(session, game.away_starter_id)
+        home_last, home_era = await _get_pitcher_era(session, game.home_starter_id)
+        matchup_line = ""
+        if away_last and home_last:
+            a_era = f"{away_era:.2f}" if away_era is not None else "-"
+            h_era = f"{home_era:.2f}" if home_era is not None else "-"
+            matchup_line = f"\n\n{away_last} {a_era} vs {home_last} {h_era}"
+
+        header_line = f"{away_name} @ {home_name}"
+        if game_time:
+            header_line += f"  {game_time}"
 
         tweet = (
-            f"{away_name} @ {home_name} | {game_time}\n\n"
-            f"Model pick: {pick_name} ({pct}%)\n"
-            f"Predicted run diff: {diff:+.1f}\n\n"
+            f"{header_line}\n\n"
+            f"Model: {team_name} ML ({model_pct}%)\n"
+            f"Market: {team_name} {odds_str} ({market_pct}%)\n"
+            f"Edge: +{edge_pct:.1f}%"
+            f"{matchup_line}\n\n"
             f"{hashtag} #MLB"
-        )
+        ).strip()
+
+        if len(tweet) > 280:
+            tweet = tweet[:277] + "..."
         tweets.append(tweet)
 
     return tweets
@@ -156,30 +266,10 @@ async def generate_nrfi_tweet(session: AsyncSession, game_date: date) -> str | N
     """
     Generate a NRFI (No Run First Inning) picks tweet for today's games.
 
-    Analyzes pitcher matchups and team first inning scoring rates.
+    Uses MLBTeamStats.first_inning_score_pct directly and includes
+    pitcher matchups with ERA.
     """
-    # Get first inning stats
-    fi_result = await session.execute(text("""
-        SELECT team,
-               COUNT(*) as games,
-               SUM(CASE WHEN runs > 0 THEN 1 ELSE 0 END) as scored,
-               SUM(CASE WHEN runs = 0 THEN 1 ELSE 0 END) as scoreless
-        FROM (
-            SELECT home_team as team, COALESCE(home_first_inning_runs, 0) as runs
-            FROM mlb_games WHERE status = 'final' AND game_type = 'R' AND home_first_inning_runs IS NOT NULL
-            UNION ALL
-            SELECT away_team as team, COALESCE(away_first_inning_runs, 0) as runs
-            FROM mlb_games WHERE status = 'final' AND game_type = 'R' AND away_first_inning_runs IS NOT NULL
-        ) t
-        GROUP BY team
-    """))
-    fi_stats = {row[0]: {"games": int(row[1]), "scored": int(row[2]), "scoreless": int(row[3])}
-                for row in fi_result.fetchall()}
-
-    if not fi_stats:
-        return None
-
-    # Get today's scheduled games
+    # Today's scheduled games
     games_result = await session.execute(
         select(MLBGame).where(
             and_(
@@ -188,70 +278,72 @@ async def generate_nrfi_tweet(session: AsyncSession, game_date: date) -> str | N
             )
         ).order_by(MLBGame.game_time)
     )
-    games = games_result.scalars().all()
-
+    games = list(games_result.scalars().all())
     if not games:
         return None
 
-    # Score each game for NRFI likelihood
     nrfi_picks = []
     for game in games:
-        home_fi = fi_stats.get(game.home_team)
-        away_fi = fi_stats.get(game.away_team)
-
-        if not home_fi or not away_fi:
+        home_pct = await _get_team_first_inning_pct(session, game.home_team)
+        away_pct = await _get_team_first_inning_pct(session, game.away_team)
+        if home_pct is None or away_pct is None:
             continue
 
-        home_nrfi = home_fi["scoreless"] / home_fi["games"] if home_fi["games"] > 0 else 0.5
-        away_nrfi = away_fi["scoreless"] / away_fi["games"] if away_fi["games"] > 0 else 0.5
+        combined_nrfi = (1.0 - home_pct) * (1.0 - away_pct)
 
-        # Combined NRFI probability (both teams need to be scoreless)
-        combined_nrfi = home_nrfi * away_nrfi
-        min_games = min(home_fi["games"], away_fi["games"])
+        away_last, away_era = await _get_pitcher_era(session, game.away_starter_id)
+        home_last, home_era = await _get_pitcher_era(session, game.home_starter_id)
 
         nrfi_picks.append({
             "game": game,
             "combined_nrfi": combined_nrfi,
-            "home_nrfi": home_nrfi,
-            "away_nrfi": away_nrfi,
-            "min_games": min_games,
+            "away_last": away_last,
+            "away_era": away_era,
+            "home_last": home_last,
+            "home_era": home_era,
         })
-
-    # Sort by NRFI likelihood
-    nrfi_picks.sort(key=lambda x: x["combined_nrfi"], reverse=True)
 
     if not nrfi_picks:
         return None
 
+    nrfi_picks.sort(key=lambda x: x["combined_nrfi"], reverse=True)
+
     date_str = game_date.strftime("%m/%d")
+    footer = "\nFree picks at truline.app\n\n#NRFI #MLB #GamblingX"
 
-    # Build the tweet
-    lines = [f"NRFI Plays {date_str}\n"]
+    def build(picks_to_include):
+        lines = [f"NRFI Plays {date_str}\n"]
+        for pick in picks_to_include:
+            game = pick["game"]
+            away = game.away_team
+            home = game.home_team
+            pct = round(pick["combined_nrfi"] * 100)
+            lines.append(f"* {away} @ {home} {pct}% NRFI")
+            if pick["away_last"] and pick["home_last"]:
+                a_era = f"{pick['away_era']:.2f}" if pick["away_era"] is not None else "-"
+                h_era = f"{pick['home_era']:.2f}" if pick["home_era"] is not None else "-"
+                lines.append(f"  {pick['away_last']} {a_era} vs {pick['home_last']} {h_era}")
+            lines.append("")
+        return "\n".join(lines).rstrip() + footer
 
-    for pick in nrfi_picks[:3]:
-        game = pick["game"]
-        away = TEAM_NAMES.get(game.away_team, game.away_team)
-        home = TEAM_NAMES.get(game.home_team, game.home_team)
-        pct = round(pick["combined_nrfi"] * 100)
-        lines.append(f"{'*' if pct >= 70 else '-'} {away} @ {home}: {pct}% NRFI")
+    # Try 5 down to 3 picks until it fits
+    for n in (5, 4, 3):
+        tweet = build(nrfi_picks[:n])
+        if len(tweet) <= 280:
+            return tweet
 
-    lines.append(f"\nBased on {nrfi_picks[0]['min_games']}+ games per team")
-    lines.append(f"\n#NRFI #MLB #GamblingX")
-
-    tweet = "\n".join(lines)
-
-    # Ensure under 280
+    # Final fallback: truncate
+    tweet = build(nrfi_picks[:3])
     if len(tweet) > 280:
         tweet = tweet[:277] + "..."
-
     return tweet
 
 
 async def generate_results_tweet(session: AsyncSession, game_date: date) -> str | None:
     """
     Generate a results recap tweet for yesterday's picks.
+    Includes best/worst bet highlights.
     """
-    # Get graded snapshots for the date
     stmt = select(MLBPredictionSnapshot).where(
         and_(
             MLBPredictionSnapshot.game_date == game_date,
@@ -259,7 +351,7 @@ async def generate_results_tweet(session: AsyncSession, game_date: date) -> str 
         )
     )
     result = await session.execute(stmt)
-    snapshots = result.scalars().all()
+    snapshots = list(result.scalars().all())
 
     if not snapshots:
         return None
@@ -273,9 +365,9 @@ async def generate_results_tweet(session: AsyncSession, game_date: date) -> str 
     win_rate = round(wins / total * 100, 1) if total > 0 else 0
 
     date_str = game_date.strftime("%m/%d")
-    profit_str = f"+{profit:.1f}" if profit >= 0 else f"{profit:.1f}"
+    profit_str = f"+{profit:.2f}" if profit >= 0 else f"{profit:.2f}"
 
-    # Get NRFI results
+    # NRFI results
     nrfi_result = await session.execute(
         select(MLBGame).where(
             and_(
@@ -285,27 +377,46 @@ async def generate_results_tweet(session: AsyncSession, game_date: date) -> str 
             )
         )
     )
-    nrfi_games = nrfi_result.scalars().all()
+    nrfi_games = list(nrfi_result.scalars().all())
     nrfi_count = sum(1 for g in nrfi_games
                      if (g.home_first_inning_runs or 0) + (g.away_first_inning_runs or 0) == 0)
+    nrfi_pct = round(nrfi_count / len(nrfi_games) * 100) if nrfi_games else 0
 
-    tweet = (
-        f"Results {date_str}\n\n"
-        f"Record: {wins}-{losses}"
-    )
+    # Best / worst bets by profit
+    graded = [s for s in snapshots if s.best_bet_profit is not None]
+    best_line = ""
+    worst_line = ""
+    if graded:
+        sorted_by_profit = sorted(graded, key=lambda s: float(s.best_bet_profit or 0), reverse=True)
+        best = sorted_by_profit[0]
+        worst = sorted_by_profit[-1]
 
+        def _fmt_snap(s, mark):
+            team = s.best_bet_team or "?"
+            odds_str = ""
+            if s.best_bet_odds:
+                odds_str = f" {_fmt_odds(float(s.best_bet_odds))}"
+            btype = (s.best_bet_type or "").lower()
+            label = "ML" if btype == "moneyline" else ("RL" if btype == "runline" else ("O/U" if btype == "total" else ""))
+            return f"{team} {label}{odds_str} {mark}".strip()
+
+        if float(best.best_bet_profit or 0) > 0:
+            best_line = f"Best: {_fmt_snap(best, 'W')}\n"
+        if float(worst.best_bet_profit or 0) < 0:
+            worst_line = f"Worst: {_fmt_snap(worst, 'L')}\n"
+
+    tweet = f"RESULTS {date_str}\n\nRecord: {wins}-{losses}"
     if pushes:
         tweet += f"-{pushes}"
-
-    tweet += (
-        f" ({win_rate}%)\n"
-        f"P/L: {profit_str}u\n"
-    )
+    tweet += f" ({win_rate}%)\nP/L: {profit_str}u\n"
 
     if nrfi_games:
-        tweet += f"\nNRFI: {nrfi_count}/{len(nrfi_games)} games scoreless in 1st\n"
+        tweet += f"NRFI: {nrfi_count}/{len(nrfi_games)} ({nrfi_pct}%)\n"
 
-    tweet += f"\nFull breakdown: truline.app\n\n#MLB #SportsBetting #GamblingX"
+    if best_line or worst_line:
+        tweet += "\n" + best_line + worst_line
+
+    tweet += "\nSeason tracking at truline.app\n\n#MLB #SportsBetting"
 
     if len(tweet) > 280:
         tweet = tweet[:277] + "..."
@@ -314,7 +425,7 @@ async def generate_results_tweet(session: AsyncSession, game_date: date) -> str 
 
 
 async def generate_nrfi_results_tweet(session: AsyncSession, game_date: date) -> str | None:
-    """Generate a tweet showing yesterday's NRFI results."""
+    """Generate a tweet showing yesterday's NRFI results with our top picks."""
     result = await session.execute(
         select(MLBGame).where(
             and_(
@@ -324,41 +435,50 @@ async def generate_nrfi_results_tweet(session: AsyncSession, game_date: date) ->
             )
         ).order_by(MLBGame.game_time)
     )
-    games = result.scalars().all()
-
+    games = list(result.scalars().all())
     if not games:
         return None
 
     date_str = game_date.strftime("%m/%d")
+    nrfi_hit_count = 0
 
-    nrfi_games = []
-    yrfi_games = []
+    # Score games for NRFI % like the picks tweet did, to reconstruct "our top picks"
+    scored = []
     for g in games:
         first_inn_runs = (g.home_first_inning_runs or 0) + (g.away_first_inning_runs or 0)
-        away = TEAM_NAMES.get(g.away_team, g.away_team)
-        home = TEAM_NAMES.get(g.home_team, g.home_team)
-        label = f"{away}@{home}"
+        scoreless = first_inn_runs == 0
+        if scoreless:
+            nrfi_hit_count += 1
 
-        if first_inn_runs == 0:
-            nrfi_games.append(label)
-        else:
-            yrfi_games.append(f"{label} ({g.away_first_inning_runs}-{g.home_first_inning_runs})")
+        home_pct = await _get_team_first_inning_pct(session, g.home_team)
+        away_pct = await _get_team_first_inning_pct(session, g.away_team)
+        if home_pct is None or away_pct is None:
+            continue
+        combined_nrfi = (1.0 - home_pct) * (1.0 - away_pct)
+        scored.append({
+            "game": g,
+            "nrfi_prob": combined_nrfi,
+            "scoreless": scoreless,
+        })
 
-    nrfi_pct = round(len(nrfi_games) / len(games) * 100) if games else 0
+    nrfi_pct = round(nrfi_hit_count / len(games) * 100) if games else 0
 
     tweet = (
-        f"1st Inning Recap {date_str}\n\n"
-        f"NRFI: {len(nrfi_games)}/{len(games)} ({nrfi_pct}%)\n\n"
+        f"NRFI RESULTS {date_str}\n\n"
+        f"NRFI: {nrfi_hit_count}/{len(games)} ({nrfi_pct}%)\n"
     )
 
-    if nrfi_games:
-        tweet += "Scoreless 1st:\n"
-        tweet += ", ".join(nrfi_games[:6])
-        if len(nrfi_games) > 6:
-            tweet += f" +{len(nrfi_games) - 6} more"
-        tweet += "\n"
+    if scored:
+        scored.sort(key=lambda x: x["nrfi_prob"], reverse=True)
+        top_picks = scored[:3]
+        tweet += "\nOur top NRFI picks:\n"
+        for p in top_picks:
+            g = p["game"]
+            mark = "W" if p["scoreless"] else "L"
+            pct = round(p["nrfi_prob"] * 100)
+            tweet += f"{mark} {g.away_team} @ {g.home_team} ({pct}%)\n"
 
-    tweet += f"\n#NRFI #MLB #GamblingX"
+    tweet += "\nTrack daily at truline.app\n\n#NRFI #MLB"
 
     if len(tweet) > 280:
         tweet = tweet[:277] + "..."
