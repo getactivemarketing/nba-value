@@ -267,9 +267,13 @@ async def _post_first_inning_recaps_async() -> dict:
     posted_count = 0
     skipped = 0
 
+    # Only recap games from today (ET) to prevent spamming historical games
+    today = _today_et()
+
     async with _social_session_factory() as session:
         stmt = select(MLBGame).where(
             and_(
+                MLBGame.game_date == today,
                 MLBGame.first_inning_tweet_posted == False,  # noqa: E712
                 MLBGame.home_first_inning_runs.isnot(None),
                 MLBGame.away_first_inning_runs.isnot(None),
@@ -345,9 +349,13 @@ async def _post_final_recaps_async() -> dict:
     posted_count = 0
     skipped = 0
 
+    # Only recap games from today (ET) to prevent spamming historical games
+    today = _today_et()
+
     async with _social_session_factory() as session:
         stmt = select(MLBGame).where(
             and_(
+                MLBGame.game_date == today,
                 MLBGame.status == "final",
                 MLBGame.final_tweet_posted == False,  # noqa: E712
                 MLBGame.home_score.isnot(None),
