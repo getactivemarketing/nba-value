@@ -155,11 +155,16 @@ export function MLBGameCard({ game, firstInningStats }: MLBGameCardProps) {
   let nrfiScore: number | null = null;
   let nrfiMinGames = 0;
   if (homeFI && awayFI && homeFI.games > 0 && awayFI.games > 0) {
+    // Null-safe values — backend may not have deployed the new defensive fields yet
+    const homeOff = homeFI.score_pct ?? 0;
+    const awayOff = awayFI.score_pct ?? 0;
+    const homeDef = homeFI.opp_score_pct ?? homeOff; // fallback to offense if defense missing
+    const awayDef = awayFI.opp_score_pct ?? awayOff;
     // Blend each team's offense with the opponent's defense.
     // p(away scores top 1st) = avg(away offense, home defense)
     // p(home scores bot 1st) = avg(home offense, away defense)
-    const pAwayScores = (awayFI.score_pct + homeFI.opp_score_pct) / 2;
-    const pHomeScores = (homeFI.score_pct + awayFI.opp_score_pct) / 2;
+    const pAwayScores = (awayOff + homeDef) / 2;
+    const pHomeScores = (homeOff + awayDef) / 2;
     nrfiScore = (1 - pAwayScores) * (1 - pHomeScores) * 100;
     nrfiMinGames = Math.min(homeFI.games, awayFI.games);
   }

@@ -57,7 +57,13 @@ function TeamRow({
   metric: Metric;
   tone: Tone;
 }) {
-  const rawPct = (metric === 'opp_score_pct' ? stat.opp_score_pct : stat.score_pct) * 100;
+  // Defensive null-safety — backend may not have deployed the new fields yet
+  const scorePct = stat.score_pct ?? 0;
+  const oppScorePct = stat.opp_score_pct ?? 0;
+  const avgRuns = stat.avg_runs ?? 0;
+  const avgRunsAllowed = stat.avg_runs_allowed ?? 0;
+
+  const rawPct = (metric === 'opp_score_pct' ? oppScorePct : scorePct) * 100;
   const teamInfo = getTeamInfo(stat.team);
   const barPct = Math.min(100, Math.max(0, rawPct));
 
@@ -69,8 +75,8 @@ function TeamRow({
 
   const subStat =
     metric === 'opp_score_pct'
-      ? `${stat.avg_runs_allowed.toFixed(2)} R/1st allowed`
-      : `${stat.avg_runs.toFixed(2)} R/1st scored`;
+      ? `${avgRunsAllowed.toFixed(2)} R/1st allowed`
+      : `${avgRuns.toFixed(2)} R/1st scored`;
 
   return (
     <div className="px-4 py-3 border-b border-[#1e293b] last:border-b-0 hover:bg-[#0b0e14] transition-colors">
@@ -137,16 +143,16 @@ export function NRFI() {
   const stats = data || [];
 
   // Summary calculations
-  const totalGames = Math.round(stats.reduce((s, t) => s + t.games, 0) / 2);
-  const totalTeamGames = stats.reduce((s, t) => s + t.games, 0);
-  const totalScoreless = stats.reduce((s, t) => s + t.scoreless, 0);
+  const totalGames = Math.round(stats.reduce((s, t) => s + (t.games ?? 0), 0) / 2);
+  const totalTeamGames = stats.reduce((s, t) => s + (t.games ?? 0), 0);
+  const totalScoreless = stats.reduce((s, t) => s + (t.scoreless ?? 0), 0);
   const leagueNrfiRate = totalTeamGames > 0 ? (totalScoreless / totalTeamGames) * 100 : 0;
 
-  // Sorts
-  const bestPitching = [...stats].sort((a, b) => a.opp_score_pct - b.opp_score_pct);
-  const worstPitching = [...stats].sort((a, b) => b.opp_score_pct - a.opp_score_pct);
-  const coldestBats = [...stats].sort((a, b) => a.score_pct - b.score_pct);
-  const hottestBats = [...stats].sort((a, b) => b.score_pct - a.score_pct);
+  // Sorts — use nullish coalescing in case backend hasn't deployed new fields yet
+  const bestPitching = [...stats].sort((a, b) => (a.opp_score_pct ?? 0) - (b.opp_score_pct ?? 0));
+  const worstPitching = [...stats].sort((a, b) => (b.opp_score_pct ?? 0) - (a.opp_score_pct ?? 0));
+  const coldestBats = [...stats].sort((a, b) => (a.score_pct ?? 0) - (b.score_pct ?? 0));
+  const hottestBats = [...stats].sort((a, b) => (b.score_pct ?? 0) - (a.score_pct ?? 0));
 
   const bestPitchingTeam = bestPitching[0];
   const coldestBatsTeam = coldestBats[0];
@@ -190,13 +196,13 @@ export function NRFI() {
             />
             <StatCard
               label="Best Pitching"
-              value={bestPitchingTeam ? `${(bestPitchingTeam.opp_score_pct * 100).toFixed(1)}%` : '-'}
+              value={bestPitchingTeam ? `${((bestPitchingTeam.opp_score_pct ?? 0) * 100).toFixed(1)}%` : '-'}
               sub={bestPitchingTeam ? `${getTeamInfo(bestPitchingTeam.team).name} opp 1st` : ''}
               accent="text-[#66f796]"
             />
             <StatCard
               label="Coldest Bats"
-              value={coldestBatsTeam ? `${(coldestBatsTeam.score_pct * 100).toFixed(1)}%` : '-'}
+              value={coldestBatsTeam ? `${((coldestBatsTeam.score_pct ?? 0) * 100).toFixed(1)}%` : '-'}
               sub={coldestBatsTeam ? `${getTeamInfo(coldestBatsTeam.team).name} 1st scoring` : ''}
               accent="text-[#a4e6ff]"
             />
