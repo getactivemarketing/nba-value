@@ -1041,7 +1041,7 @@ async def debug_odds_ingest() -> dict:
 @router.get("/debug/tweet-test")
 async def debug_tweet_test() -> dict:
     """Send a test intro tweet via Typefully."""
-    from src.services.social.typefully import post_tweet
+    from src.services.social.blotato import post_tweet
 
     intro = (
         "Introducing TruLine\n\n"

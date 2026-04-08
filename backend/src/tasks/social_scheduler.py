@@ -77,7 +77,7 @@ def _run_async(coro):
 async def _post_results_async() -> dict:
     """Post yesterday's results recap."""
     from src.services.social.content import generate_results_tweet
-    from src.services.social.typefully import post_tweet
+    from src.services.social.blotato import post_tweet
 
     yesterday = _today_et() - timedelta(days=1)
 
@@ -95,7 +95,7 @@ async def _post_results_async() -> dict:
 async def _post_nrfi_results_async() -> dict:
     """Post yesterday's NRFI recap."""
     from src.services.social.content import generate_nrfi_results_tweet
-    from src.services.social.typefully import post_tweet
+    from src.services.social.blotato import post_tweet
 
     yesterday = _today_et() - timedelta(days=1)
 
@@ -113,7 +113,7 @@ async def _post_nrfi_results_async() -> dict:
 async def _post_daily_picks_async() -> dict:
     """Post today's picks thread."""
     from src.services.social.content import generate_daily_picks_thread
-    from src.services.social.typefully import post_thread
+    from src.services.social.blotato import post_thread
 
     today = _today_et()
 
@@ -131,7 +131,7 @@ async def _post_daily_picks_async() -> dict:
 async def _post_nrfi_plays_async() -> dict:
     """Post today's NRFI plays."""
     from src.services.social.content import generate_nrfi_tweet
-    from src.services.social.typefully import post_tweet
+    from src.services.social.blotato import post_tweet
 
     today = _today_et()
 
@@ -161,7 +161,7 @@ async def _post_pregame_nrfi_picks_async() -> dict:
         TEAM_NAMES,
         TEAM_HANDLES,
     )
-    from src.services.social.typefully import post_tweet, upload_media
+    from src.services.social.blotato import post_tweet, upload_media
     from src.services.social.image_generator import generate_nrfi_card
 
     today = _today_et()
@@ -204,7 +204,7 @@ async def _post_pregame_nrfi_picks_async() -> dict:
                 continue
 
             # Generate the card image
-            media_ids = None
+            media_urls = None
             try:
                 away_last, away_era = await _get_pitcher_era(session, game.away_starter_id)
                 home_last, home_era = await _get_pitcher_era(session, game.home_starter_id)
@@ -232,13 +232,13 @@ async def _post_pregame_nrfi_picks_async() -> dict:
                     game_time=game_time_str,
                 )
 
-                media_id = upload_media(png_bytes, filename=f"nrfi_{game.game_id}.png")
-                if media_id:
-                    media_ids = [media_id]
+                public_url = upload_media(png_bytes, filename=f"nrfi_{game.game_id}.png")
+                if public_url:
+                    media_urls = [public_url]
             except Exception as e:
                 log_task(f"Failed to generate/upload NRFI card for {game.game_id}: {e}")
 
-            result = post_tweet(tweet, schedule_at="next-free-slot", media_ids=media_ids)
+            result = post_tweet(tweet, schedule_at="next-free-slot", media_urls=media_urls)
             if result:
                 await session.execute(
                     text("UPDATE mlb_games SET pregame_tweet_posted = TRUE WHERE game_id = :gid"),
@@ -261,7 +261,7 @@ async def _post_first_inning_recaps_async() -> dict:
         _get_team_first_inning_pct,
         TEAM_NAMES,
     )
-    from src.services.social.typefully import post_tweet, upload_media
+    from src.services.social.blotato import post_tweet, upload_media
     from src.services.social.image_generator import generate_recap_card
 
     posted_count = 0
@@ -292,7 +292,7 @@ async def _post_first_inning_recaps_async() -> dict:
                 continue
 
             # Generate the recap card image
-            media_ids = None
+            media_urls = None
             try:
                 away_fi = game.away_first_inning_runs or 0
                 home_fi = game.home_first_inning_runs or 0
@@ -319,13 +319,13 @@ async def _post_first_inning_recaps_async() -> dict:
                     predicted_nrfi_pct=predicted_nrfi_pct,
                 )
 
-                media_id = upload_media(png_bytes, filename=f"recap_{game.game_id}.png")
-                if media_id:
-                    media_ids = [media_id]
+                public_url = upload_media(png_bytes, filename=f"recap_{game.game_id}.png")
+                if public_url:
+                    media_urls = [public_url]
             except Exception as e:
                 log_task(f"Failed to generate/upload recap card for {game.game_id}: {e}")
 
-            result = post_tweet(tweet, schedule_at="next-free-slot", media_ids=media_ids)
+            result = post_tweet(tweet, schedule_at="next-free-slot", media_urls=media_urls)
             if result:
                 await session.execute(
                     text("UPDATE mlb_games SET first_inning_tweet_posted = TRUE WHERE game_id = :gid"),
@@ -344,7 +344,7 @@ async def _post_final_recaps_async() -> dict:
     from sqlalchemy import select, and_, text
     from src.models import MLBGame
     from src.services.social.content import generate_final_recap_tweet
-    from src.services.social.typefully import post_tweet
+    from src.services.social.blotato import post_tweet
 
     posted_count = 0
     skipped = 0

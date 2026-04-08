@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     typefully_social_set_id: int = 296324  # @trulineapp
     typefully_auto_share: bool = True  # Auto-publish drafts (vs save as draft)
 
+    # Blotato (primary posting service — replaces Typefully)
+    blotato_api_key: str = ""
+    blotato_twitter_account_id: str = ""  # @trulineapp account ID on Blotato
+
     # Posting safety switch (applies to both direct Twitter and Typefully)
     twitter_posting_enabled: bool = False
 
