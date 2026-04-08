@@ -8,6 +8,7 @@ interface LayoutProps {
 const navItems = [
   { path: '/', label: 'NBA', icon: '🏀' },
   { path: '/mlb', label: 'MLB', icon: '⚾' },
+  { path: '/nrfi', label: 'NRFI' },
   { path: '/props', label: 'Props' },
   { path: '/trends', label: 'Trends' },
   { path: '/evaluation', label: 'Performance' },
