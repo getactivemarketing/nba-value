@@ -192,11 +192,14 @@ def post_thread(
             )
 
             # If useNextFreeSlot failed (no slots configured), fall back to
-            # immediate scheduling a few minutes in the future
-            if response.status_code == 400 and payload.get("useNextFreeSlot"):
+            # immediate scheduling a few minutes in the future.
+            # Blotato returns 422 with "No available slot time found" when
+            # schedule slots haven't been configured in the dashboard.
+            if response.status_code in (400, 422) and payload.get("useNextFreeSlot"):
                 err_text = response.text[:200]
                 if "slot" in err_text.lower():
                     logger.info("No Blotato slots configured, falling back to immediate post")
+                    print(f"[BLOTATO] Slot fallback triggered: {err_text}", flush=True)
                     from datetime import timezone as tz, timedelta as td
                     fallback_time = datetime.now(tz.utc) + td(minutes=2)
                     payload.pop("useNextFreeSlot", None)
