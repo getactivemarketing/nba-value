@@ -1092,6 +1092,38 @@ async def debug_backfill_predictions(days: int = 14) -> dict:
     return results
 
 
+@router.get("/debug/pregame-tweets")
+async def debug_pregame_tweets(dry_run: bool = True) -> dict:
+    """Generate pregame tweets for top NRFI picks (dry-run by default)."""
+    from src.services.social.content import generate_pregame_nrfi_tweet, _get_team_first_inning_pct
+    from datetime import timedelta
+
+    eastern = timedelta(hours=-5)
+    today = (datetime.now(timezone.utc) + eastern).date()
+
+    results = {"today_et": str(today), "tweets": []}
+
+    async with async_session() as session:
+        stmt = select(MLBGame).where(
+            and_(
+                MLBGame.game_date == today,
+                MLBGame.status == "scheduled",
+            )
+        ).order_by(MLBGame.game_time)
+        games = (await session.execute(stmt)).scalars().all()
+
+        for game in games:
+            tweet = await generate_pregame_nrfi_tweet(session, game)
+            if tweet:
+                results["tweets"].append({
+                    "game": f"{game.away_team} @ {game.home_team}",
+                    "length": len(tweet),
+                    "text": tweet,
+                })
+
+    return results
+
+
 def _decimal_to_american(decimal_odds: float) -> int:
     """Convert decimal odds to American format."""
     if decimal_odds >= 2.0:

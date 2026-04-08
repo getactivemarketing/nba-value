@@ -146,6 +146,182 @@ async def _post_nrfi_plays_async() -> dict:
         return {"posted": False, "reason": "no_nrfi_data"}
 
 
+async def _post_pregame_nrfi_picks_async() -> dict:
+    """Post per-game NRFI pregame picks for games starting within 90 minutes."""
+    from sqlalchemy import select, and_, text
+    from src.models import MLBGame
+    from src.services.social.content import generate_pregame_nrfi_tweet, _get_team_first_inning_pct
+    from src.services.social.typefully import post_tweet
+
+    today = _today_et()
+    now_utc = datetime.now(timezone.utc)
+    cutoff = now_utc + timedelta(minutes=90)
+
+    posted_count = 0
+    skipped = 0
+
+    async with _social_session_factory() as session:
+        stmt = select(MLBGame).where(
+            and_(
+                MLBGame.game_date == today,
+                MLBGame.status == "scheduled",
+                MLBGame.pregame_tweet_posted == False,  # noqa: E712
+                MLBGame.game_time.isnot(None),
+                MLBGame.game_time <= cutoff,
+                MLBGame.game_time >= now_utc,
+            )
+        ).order_by(MLBGame.game_time)
+        games = list((await session.execute(stmt)).scalars().all())
+
+        # Score each by NRFI% and keep top 5
+        scored = []
+        for g in games:
+            home_pct = await _get_team_first_inning_pct(session, g.home_team)
+            away_pct = await _get_team_first_inning_pct(session, g.away_team)
+            if home_pct is None or away_pct is None:
+                continue
+            nrfi = (1.0 - home_pct) * (1.0 - away_pct)
+            scored.append((nrfi, g))
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        for _nrfi, game in scored[:5]:
+            tweet = await generate_pregame_nrfi_tweet(session, game)
+            if not tweet:
+                skipped += 1
+                continue
+            result = post_tweet(tweet, schedule_at="next-free-slot")
+            if result:
+                await session.execute(
+                    text("UPDATE mlb_games SET pregame_tweet_posted = TRUE WHERE game_id = :gid"),
+                    {"gid": game.game_id},
+                )
+                posted_count += 1
+            else:
+                skipped += 1
+        await session.commit()
+
+    return {"posted": posted_count, "skipped": skipped, "type": "pregame_nrfi"}
+
+
+async def _post_first_inning_recaps_async() -> dict:
+    """Post per-game 1st inning recaps after the 1st inning ends."""
+    from sqlalchemy import select, and_, or_, text
+    from src.models import MLBGame
+    from src.services.social.content import generate_first_inning_recap_tweet
+    from src.services.social.typefully import post_tweet
+
+    posted_count = 0
+    skipped = 0
+
+    async with _social_session_factory() as session:
+        stmt = select(MLBGame).where(
+            and_(
+                MLBGame.first_inning_tweet_posted == False,  # noqa: E712
+                MLBGame.home_first_inning_runs.isnot(None),
+                MLBGame.away_first_inning_runs.isnot(None),
+                or_(
+                    and_(MLBGame.status == "in_progress", MLBGame.inning >= 2),
+                    MLBGame.status == "final",
+                ),
+            )
+        )
+        games = list((await session.execute(stmt)).scalars().all())
+
+        for game in games:
+            tweet = generate_first_inning_recap_tweet(game)
+            if not tweet:
+                skipped += 1
+                continue
+            result = post_tweet(tweet, schedule_at="next-free-slot")
+            if result:
+                await session.execute(
+                    text("UPDATE mlb_games SET first_inning_tweet_posted = TRUE WHERE game_id = :gid"),
+                    {"gid": game.game_id},
+                )
+                posted_count += 1
+            else:
+                skipped += 1
+        await session.commit()
+
+    return {"posted": posted_count, "skipped": skipped, "type": "first_inning_recap"}
+
+
+async def _post_final_recaps_async() -> dict:
+    """Post per-game final recaps for completed games."""
+    from sqlalchemy import select, and_, text
+    from src.models import MLBGame
+    from src.services.social.content import generate_final_recap_tweet
+    from src.services.social.typefully import post_tweet
+
+    posted_count = 0
+    skipped = 0
+
+    async with _social_session_factory() as session:
+        stmt = select(MLBGame).where(
+            and_(
+                MLBGame.status == "final",
+                MLBGame.final_tweet_posted == False,  # noqa: E712
+                MLBGame.home_score.isnot(None),
+                MLBGame.away_score.isnot(None),
+            )
+        )
+        games = list((await session.execute(stmt)).scalars().all())
+
+        for game in games:
+            tweet = generate_final_recap_tweet(game)
+            if not tweet:
+                skipped += 1
+                continue
+            result = post_tweet(tweet, schedule_at="next-free-slot")
+            if result:
+                await session.execute(
+                    text("UPDATE mlb_games SET final_tweet_posted = TRUE WHERE game_id = :gid"),
+                    {"gid": game.game_id},
+                )
+                posted_count += 1
+            else:
+                skipped += 1
+        await session.commit()
+
+    return {"posted": posted_count, "skipped": skipped, "type": "final_recap"}
+
+
+def run_post_pregame_nrfi():
+    """Post per-game pregame NRFI picks."""
+    log_task("Posting pregame NRFI picks...")
+    try:
+        result = _run_async(_post_pregame_nrfi_picks_async())
+        log_task("Pregame NRFI post complete", **{k: str(v) for k, v in result.items()})
+        return result
+    except Exception as e:
+        log_task(f"Pregame NRFI post FAILED: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
+def run_post_first_inning_recaps():
+    """Post per-game 1st inning recaps."""
+    log_task("Posting 1st inning recaps...")
+    try:
+        result = _run_async(_post_first_inning_recaps_async())
+        log_task("1st inning recaps post complete", **{k: str(v) for k, v in result.items()})
+        return result
+    except Exception as e:
+        log_task(f"1st inning recaps post FAILED: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
+def run_post_final_recaps():
+    """Post per-game final recaps."""
+    log_task("Posting final recaps...")
+    try:
+        result = _run_async(_post_final_recaps_async())
+        log_task("Final recaps post complete", **{k: str(v) for k, v in result.items()})
+        return result
+    except Exception as e:
+        log_task(f"Final recaps post FAILED: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
 def run_post_results():
     """Post yesterday's results."""
     log_task("Posting results recap...")
@@ -220,11 +396,22 @@ def start_scheduler():
     social_scheduler.every().day.at("14:00").do(run_post_daily_picks)
     social_scheduler.every().day.at("14:15").do(run_post_nrfi_plays)
 
+    # Per-game posting tasks
+    # Pregame NRFI picks — runs every 30 min; posts games within 90 min of start
+    social_scheduler.every(30).minutes.do(run_post_pregame_nrfi)
+    # First inning recaps — runs every 10 min during game hours
+    social_scheduler.every(10).minutes.do(run_post_first_inning_recaps)
+    # Final recaps — runs every 30 min, mostly evening
+    social_scheduler.every(30).minutes.do(run_post_final_recaps)
+
     log_task("Social scheduler configured:")
     log_task("  - Results recap: 9:00 AM ET (13:00 UTC)")
     log_task("  - NRFI results: 9:15 AM ET (13:15 UTC)")
     log_task("  - Daily picks: 10:00 AM ET (14:00 UTC)")
     log_task("  - NRFI plays: 10:15 AM ET (14:15 UTC)")
+    log_task("  - Pregame NRFI picks: every 30 min (games within 90 min of start)")
+    log_task("  - 1st inning recaps: every 10 min")
+    log_task("  - Final recaps: every 30 min")
 
     while True:
         social_scheduler.run_pending()

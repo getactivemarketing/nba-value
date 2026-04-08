@@ -64,6 +64,9 @@ async def init_db() -> None:
         ("mlb_team_stats", "first_inning_score_pct", "NUMERIC(4,3)"),
         ("mlb_team_stats", "first_inning_runs_avg", "NUMERIC(4,2)"),
         ("mlb_team_stats", "team_whip", "NUMERIC(5,3)"),
+        ("mlb_games", "pregame_tweet_posted", "BOOLEAN DEFAULT FALSE"),
+        ("mlb_games", "first_inning_tweet_posted", "BOOLEAN DEFAULT FALSE"),
+        ("mlb_games", "final_tweet_posted", "BOOLEAN DEFAULT FALSE"),
     ]
 
     async with engine.begin() as conn:

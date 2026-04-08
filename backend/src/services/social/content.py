@@ -26,6 +26,40 @@ TEAM_HASHTAGS = {
     "TOR": "#BlueJays", "WSH": "#Nationals",
 }
 
+# Official MLB team Twitter handles (for tagging)
+TEAM_HANDLES = {
+    "ARI": "@Dbacks",
+    "ATL": "@Braves",
+    "BAL": "@Orioles",
+    "BOS": "@RedSox",
+    "CHC": "@Cubs",
+    "CWS": "@whitesox",
+    "CIN": "@Reds",
+    "CLE": "@CleGuardians",
+    "COL": "@Rockies",
+    "DET": "@tigers",
+    "HOU": "@astros",
+    "KC": "@Royals",
+    "LAA": "@Angels",
+    "LAD": "@Dodgers",
+    "MIA": "@Marlins",
+    "MIL": "@Brewers",
+    "MIN": "@Twins",
+    "NYM": "@Mets",
+    "NYY": "@Yankees",
+    "OAK": "@Athletics",
+    "PHI": "@Phillies",
+    "PIT": "@Pirates",
+    "SD": "@Padres",
+    "SF": "@SFGiants",
+    "SEA": "@Mariners",
+    "STL": "@Cardinals",
+    "TB": "@RaysBaseball",
+    "TEX": "@Rangers",
+    "TOR": "@BlueJays",
+    "WSH": "@Nationals",
+}
+
 TEAM_NAMES = {
     "ARI": "D-backs", "ATL": "Braves", "BAL": "Orioles", "BOS": "Red Sox",
     "CHC": "Cubs", "CWS": "White Sox", "CIN": "Reds", "CLE": "Guardians",
@@ -483,4 +517,171 @@ async def generate_nrfi_results_tweet(session: AsyncSession, game_date: date) ->
     if len(tweet) > 280:
         tweet = tweet[:277] + "..."
 
+    return tweet
+
+
+def _nrfi_badge(nrfi_pct: float) -> str:
+    """Return a badge label based on NRFI percentage (0-100)."""
+    if nrfi_pct >= 70:
+        return "🔥 STRONG NRFI"
+    if nrfi_pct >= 55:
+        return "✅ LEAN NRFI"
+    if nrfi_pct >= 40:
+        return "⚖️ TOSSUP"
+    return "⚠️ LEAN YRFI"
+
+
+def _fmt_game_time_et(game_time: datetime | None) -> str:
+    """Format game_time as e.g. '7:05 PM ET'. Returns empty string if None."""
+    if not game_time:
+        return ""
+    et = game_time - timedelta(hours=4)
+    try:
+        return et.strftime("%-I:%M %p ET")
+    except Exception:
+        return et.strftime("%I:%M %p ET").lstrip("0")
+
+
+async def generate_pregame_nrfi_tweet(session: AsyncSession, game: MLBGame) -> str | None:
+    """Generate a single-game NRFI pregame pick tweet."""
+    home_pct = await _get_team_first_inning_pct(session, game.home_team)
+    away_pct = await _get_team_first_inning_pct(session, game.away_team)
+    if home_pct is None or away_pct is None:
+        return None
+
+    away_last, away_era = await _get_pitcher_era(session, game.away_starter_id)
+    home_last, home_era = await _get_pitcher_era(session, game.home_starter_id)
+    if not away_last or not home_last:
+        return None
+
+    nrfi_pct = (1.0 - home_pct) * (1.0 - away_pct) * 100.0
+    nrfi_pct_rounded = round(nrfi_pct)
+    badge = _nrfi_badge(nrfi_pct)
+
+    away_name = TEAM_NAMES.get(game.away_team, game.away_team)
+    home_name = TEAM_NAMES.get(game.home_team, game.home_team)
+    away_handle = TEAM_HANDLES.get(game.away_team, game.away_team)
+    home_handle = TEAM_HANDLES.get(game.home_team, game.home_team)
+
+    game_time_str = _fmt_game_time_et(game.game_time)
+
+    a_era = f"{away_era:.2f}" if away_era is not None else "-"
+    h_era = f"{home_era:.2f}" if home_era is not None else "-"
+
+    lines = [f"⚾ {away_name} @ {home_name}"]
+    if game_time_str:
+        lines.append(f"🕐 {game_time_str}")
+    lines.append("")
+    lines.append(f"NRFI Chance: {nrfi_pct_rounded}%")
+    lines.append(badge)
+    lines.append("")
+    lines.append(f"{away_last} {a_era} vs {home_last} {h_era}")
+    lines.append("")
+    lines.append(f"{away_handle} vs {home_handle}")
+    lines.append("")
+    lines.append("truline.app")
+    lines.append("")
+    lines.append("#NRFI #MLB")
+
+    tweet = "\n".join(lines)
+    if len(tweet) > 280:
+        # Drop truline.app line first, then handles line, then matchup
+        compact_lines = [
+            f"⚾ {away_name} @ {home_name}",
+        ]
+        if game_time_str:
+            compact_lines.append(f"🕐 {game_time_str}")
+        compact_lines.extend([
+            "",
+            f"NRFI: {nrfi_pct_rounded}% — {badge}",
+            f"{away_last} {a_era} vs {home_last} {h_era}",
+            f"{away_handle} vs {home_handle}",
+            "",
+            "#NRFI #MLB",
+        ])
+        tweet = "\n".join(compact_lines)
+        if len(tweet) > 280:
+            tweet = tweet[:277] + "..."
+    return tweet
+
+
+def generate_first_inning_recap_tweet(game: MLBGame) -> str | None:
+    """Generate a 1st inning recap tweet for a single game."""
+    if game.home_first_inning_runs is None or game.away_first_inning_runs is None:
+        return None
+
+    away_name = TEAM_NAMES.get(game.away_team, game.away_team)
+    home_name = TEAM_NAMES.get(game.home_team, game.home_team)
+    away_handle = TEAM_HANDLES.get(game.away_team, game.away_team)
+    home_handle = TEAM_HANDLES.get(game.home_team, game.home_team)
+
+    away_runs = game.away_first_inning_runs
+    home_runs = game.home_first_inning_runs
+    total = (away_runs or 0) + (home_runs or 0)
+    result_tag = "NRFI ✅ Model called it" if total == 0 else "YRFI ❌"
+
+    lines = [
+        "1st INNING RECAP",
+        "",
+        f"{away_name} @ {home_name}",
+        "",
+        f"1st: {away_runs}-{home_runs}",
+        "",
+        result_tag,
+        "",
+        f"{away_handle} vs {home_handle}",
+        "",
+        "#NRFI #MLB",
+    ]
+    tweet = "\n".join(lines)
+    if len(tweet) > 280:
+        tweet = tweet[:277] + "..."
+    return tweet
+
+
+def generate_final_recap_tweet(game: MLBGame) -> str | None:
+    """Generate a final recap tweet for a single game."""
+    if game.status != "final":
+        return None
+    if game.home_score is None or game.away_score is None:
+        return None
+
+    away_name = TEAM_NAMES.get(game.away_team, game.away_team)
+    home_name = TEAM_NAMES.get(game.home_team, game.home_team)
+
+    home_1st = game.home_first_inning_runs
+    away_1st = game.away_first_inning_runs
+    first_line = ""
+    if home_1st is not None and away_1st is not None:
+        tag = "NRFI" if (home_1st + away_1st) == 0 else "YRFI"
+        first_line = f"1st Inning: {away_1st}-{home_1st} ({tag})"
+
+    total_runs = (game.home_score or 0) + (game.away_score or 0)
+
+    if game.home_score > game.away_score:
+        winner = game.home_team
+    elif game.away_score > game.home_score:
+        winner = game.away_team
+    else:
+        winner = None
+    winner_handle = TEAM_HANDLES.get(winner, winner) if winner else None
+
+    lines = [
+        "FINAL",
+        "",
+        f"{away_name} {game.away_score}, {home_name} {game.home_score}",
+        "",
+    ]
+    if first_line:
+        lines.append(first_line)
+    lines.append(f"Total: {total_runs} runs")
+    lines.append("")
+    if winner_handle:
+        lines.append(f"{winner_handle} wins")
+        lines.append("")
+    lines.append("#MLB")
+
+    tweet = "\n".join(lines)
+    if len(tweet) > 280:
+        tweet = tweet[:277] + "..."
     return tweet

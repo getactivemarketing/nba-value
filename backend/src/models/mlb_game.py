@@ -3,7 +3,7 @@
 from datetime import datetime, date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Integer, DateTime, Date, ForeignKey
+from sqlalchemy import String, Integer, DateTime, Date, ForeignKey, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database import Base
@@ -46,6 +46,11 @@ class MLBGame(Base):
     # First inning runs
     home_first_inning_runs: Mapped[int | None] = mapped_column(Integer, nullable=True)
     away_first_inning_runs: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Social posting tracking
+    pregame_tweet_posted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    first_inning_tweet_posted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    final_tweet_posted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # MLB Stats API ID for data fetching
     external_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
