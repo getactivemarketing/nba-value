@@ -170,6 +170,9 @@ def post_thread(
     }
 
     # Handle scheduling
+    # Note: "next-free-slot" requires Blotato's schedule slots to be
+    # configured in the dashboard. If they're not, fall back to immediate
+    # posting via a timestamp a few minutes in the future.
     if schedule_at is not None:
         if isinstance(schedule_at, str):
             if schedule_at == "next-free-slot":
@@ -187,6 +190,23 @@ def post_thread(
                 headers=_headers(),
                 json=payload,
             )
+
+            # If useNextFreeSlot failed (no slots configured), fall back to
+            # immediate scheduling a few minutes in the future
+            if response.status_code == 400 and payload.get("useNextFreeSlot"):
+                err_text = response.text[:200]
+                if "slot" in err_text.lower():
+                    logger.info("No Blotato slots configured, falling back to immediate post")
+                    from datetime import timezone as tz, timedelta as td
+                    fallback_time = datetime.now(tz.utc) + td(minutes=2)
+                    payload.pop("useNextFreeSlot", None)
+                    payload["scheduledTime"] = fallback_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    response = client.post(
+                        f"{API_BASE}/posts",
+                        headers=_headers(),
+                        json=payload,
+                    )
+
             response.raise_for_status()
             data = response.json()
             submission_id = data.get("postSubmissionId")
