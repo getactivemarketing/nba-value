@@ -1076,6 +1076,89 @@ async def debug_tweet_test() -> dict:
     }
 
 
+@router.get("/debug/trigger-posts")
+async def debug_trigger_posts(task: str = "all") -> dict:
+    """Manually trigger social scheduler tasks for testing.
+
+    Each task generates and posts content directly (bypassing the
+    scheduler's dedicated event loop to avoid cross-loop issues).
+
+    Query params:
+        task: "all", "picks", "nrfi", "results", "nrfi_results", "pregame"
+    """
+    from datetime import timedelta
+    from src.services.social.content import (
+        generate_results_tweet,
+        generate_nrfi_results_tweet,
+        generate_daily_picks_thread,
+        generate_nrfi_tweet,
+        generate_pregame_nrfi_tweet,
+        _get_team_first_inning_pct,
+        _get_pitcher_era,
+        TEAM_NAMES,
+        TEAM_HANDLES,
+    )
+    from src.services.social.blotato import post_tweet, post_thread, upload_media
+    from src.services.social.image_generator import generate_nrfi_card
+
+    eastern = timedelta(hours=-5)
+    today = (datetime.now(timezone.utc) + eastern).date()
+    yesterday = today - timedelta(days=1)
+
+    results = {}
+
+    async with async_session() as session:
+        # Results recap (yesterday)
+        if task in ("all", "results"):
+            try:
+                tweet = await generate_results_tweet(session, yesterday)
+                if tweet:
+                    r = post_tweet(tweet, schedule_at="next-free-slot")
+                    results["results"] = {"posted": r is not None, "text": tweet[:100]}
+                else:
+                    results["results"] = {"posted": False, "reason": "no_data"}
+            except Exception as e:
+                results["results_error"] = str(e)[:200]
+
+        # NRFI results recap (yesterday)
+        if task in ("all", "nrfi_results"):
+            try:
+                tweet = await generate_nrfi_results_tweet(session, yesterday)
+                if tweet:
+                    r = post_tweet(tweet, schedule_at="next-free-slot")
+                    results["nrfi_results"] = {"posted": r is not None, "text": tweet[:100]}
+                else:
+                    results["nrfi_results"] = {"posted": False, "reason": "no_data"}
+            except Exception as e:
+                results["nrfi_results_error"] = str(e)[:200]
+
+        # Daily picks thread (today)
+        if task in ("all", "picks"):
+            try:
+                tweets = await generate_daily_picks_thread(session, today)
+                if tweets:
+                    r = post_thread(tweets, schedule_at="next-free-slot")
+                    results["picks"] = {"posted": r is not None, "count": len(tweets)}
+                else:
+                    results["picks"] = {"posted": False, "reason": "no_data"}
+            except Exception as e:
+                results["picks_error"] = str(e)[:200]
+
+        # NRFI plays (today)
+        if task in ("all", "nrfi"):
+            try:
+                tweet = await generate_nrfi_tweet(session, today)
+                if tweet:
+                    r = post_tweet(tweet, schedule_at="next-free-slot")
+                    results["nrfi"] = {"posted": r is not None, "text": tweet[:100]}
+                else:
+                    results["nrfi"] = {"posted": False, "reason": "no_data"}
+            except Exception as e:
+                results["nrfi_error"] = str(e)[:200]
+
+    return results
+
+
 @router.get("/debug/version")
 async def debug_version() -> dict:
     """Returns a unique version string to verify deployments."""
