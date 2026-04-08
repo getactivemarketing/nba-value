@@ -1035,6 +1035,63 @@ async def debug_version() -> dict:
     return {"version": "2026-04-07-v4-add-constraint", "commit": "latest"}
 
 
+@router.get("/debug/backfill-predictions")
+async def debug_backfill_predictions(days: int = 14) -> dict:
+    """Score completed games retroactively to build historical track record."""
+    from datetime import timedelta
+    from src.services.mlb.scorer import MLBScorer
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+
+    results = {
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+        "total_games": 0,
+        "scored": 0,
+        "errors": [],
+    }
+
+    async with async_session() as session:
+        stmt = select(MLBGame).where(
+            and_(
+                MLBGame.game_date >= start_date,
+                MLBGame.game_date <= end_date,
+                MLBGame.status == "final",
+                MLBGame.home_score.isnot(None),
+            )
+        ).order_by(MLBGame.game_date)
+
+        result = await session.execute(stmt)
+        games = list(result.scalars().all())
+        results["total_games"] = len(games)
+
+        scorer = MLBScorer(session)
+        predictions = []
+
+        for game in games:
+            try:
+                prediction = await scorer.score_game(game)
+                predictions.append(prediction)
+                results["scored"] += 1
+            except Exception as e:
+                results["errors"].append(f"{game.game_id}: {str(e)[:100]}")
+
+        if predictions:
+            try:
+                saved = await scorer.save_predictions(predictions)
+                results["saved_rows"] = saved
+            except Exception as e:
+                results["save_error"] = str(e)[:200]
+
+        # Keep first 5 errors only
+        if len(results["errors"]) > 5:
+            results["total_errors"] = len(results["errors"])
+            results["errors"] = results["errors"][:5]
+
+    return results
+
+
 def _decimal_to_american(decimal_odds: float) -> int:
     """Convert decimal odds to American format."""
     if decimal_odds >= 2.0:
