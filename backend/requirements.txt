@@ -20,6 +20,9 @@ redis>=5.0.0
 # HTTP Client
 httpx>=0.26.0
 
+# Image generation (for social media cards)
+Pillow>=10.0.0
+
 # Auth
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4

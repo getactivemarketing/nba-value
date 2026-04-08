@@ -1208,8 +1208,8 @@ async def debug_trigger_posts(task: str = "all") -> dict:
                         public_url = upload_media(png, filename=f"recap_{game.game_id}.png")
                         if public_url:
                             media_urls = [public_url]
-                    except Exception:
-                        pass
+                    except Exception as img_err:
+                        results.setdefault("image_errors", []).append(str(img_err)[:150])
 
                     r = post_tweet(tweet, schedule_at="next-free-slot", media_urls=media_urls)
                     if r:
