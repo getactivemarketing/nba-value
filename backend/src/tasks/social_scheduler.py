@@ -147,11 +147,22 @@ async def _post_nrfi_plays_async() -> dict:
 
 
 async def _post_pregame_nrfi_picks_async() -> dict:
-    """Post per-game NRFI pregame picks for games starting within 90 minutes."""
+    """Post per-game NRFI pregame picks for games starting within 90 minutes.
+
+    Each post includes a branded card image with team logos, NRFI %,
+    and pitcher matchup.
+    """
     from sqlalchemy import select, and_, text
     from src.models import MLBGame
-    from src.services.social.content import generate_pregame_nrfi_tweet, _get_team_first_inning_pct
-    from src.services.social.typefully import post_tweet
+    from src.services.social.content import (
+        generate_pregame_nrfi_tweet,
+        _get_team_first_inning_pct,
+        _get_pitcher_era,
+        TEAM_NAMES,
+        TEAM_HANDLES,
+    )
+    from src.services.social.typefully import post_tweet, upload_media
+    from src.services.social.image_generator import generate_nrfi_card
 
     today = _today_et()
     now_utc = datetime.now(timezone.utc)
@@ -181,15 +192,51 @@ async def _post_pregame_nrfi_picks_async() -> dict:
             if home_pct is None or away_pct is None:
                 continue
             nrfi = (1.0 - home_pct) * (1.0 - away_pct)
-            scored.append((nrfi, g))
+            scored.append((nrfi, g, home_pct, away_pct))
         scored.sort(key=lambda x: x[0], reverse=True)
 
-        for _nrfi, game in scored[:5]:
+        for nrfi, game, home_pct, away_pct in scored[:5]:
             tweet = await generate_pregame_nrfi_tweet(session, game)
             if not tweet:
                 skipped += 1
                 continue
-            result = post_tweet(tweet, schedule_at="next-free-slot")
+
+            # Generate the card image
+            media_ids = None
+            try:
+                away_last, away_era = await _get_pitcher_era(session, game.away_starter_id)
+                home_last, home_era = await _get_pitcher_era(session, game.home_starter_id)
+
+                game_time_str = None
+                if game.game_time:
+                    et = game.game_time - timedelta(hours=4)
+                    try:
+                        game_time_str = et.strftime("%-I:%M %p ET")
+                    except Exception:
+                        game_time_str = et.strftime("%I:%M %p ET").lstrip("0")
+
+                png_bytes = generate_nrfi_card(
+                    away_team=game.away_team,
+                    home_team=game.home_team,
+                    away_name=TEAM_NAMES.get(game.away_team, game.away_team),
+                    home_name=TEAM_NAMES.get(game.home_team, game.home_team),
+                    nrfi_pct=nrfi * 100,
+                    away_pitcher=away_last,
+                    away_era=away_era,
+                    home_pitcher=home_last,
+                    home_era=home_era,
+                    away_handle=TEAM_HANDLES.get(game.away_team),
+                    home_handle=TEAM_HANDLES.get(game.home_team),
+                    game_time=game_time_str,
+                )
+
+                media_id = upload_media(png_bytes, filename=f"nrfi_{game.game_id}.png")
+                if media_id:
+                    media_ids = [media_id]
+            except Exception as e:
+                log_task(f"Failed to generate/upload NRFI card for {game.game_id}: {e}")
+
+            result = post_tweet(tweet, schedule_at="next-free-slot", media_ids=media_ids)
             if result:
                 await session.execute(
                     text("UPDATE mlb_games SET pregame_tweet_posted = TRUE WHERE game_id = :gid"),
@@ -207,8 +254,13 @@ async def _post_first_inning_recaps_async() -> dict:
     """Post per-game 1st inning recaps after the 1st inning ends."""
     from sqlalchemy import select, and_, or_, text
     from src.models import MLBGame
-    from src.services.social.content import generate_first_inning_recap_tweet
-    from src.services.social.typefully import post_tweet
+    from src.services.social.content import (
+        generate_first_inning_recap_tweet,
+        _get_team_first_inning_pct,
+        TEAM_NAMES,
+    )
+    from src.services.social.typefully import post_tweet, upload_media
+    from src.services.social.image_generator import generate_recap_card
 
     posted_count = 0
     skipped = 0
@@ -232,7 +284,39 @@ async def _post_first_inning_recaps_async() -> dict:
             if not tweet:
                 skipped += 1
                 continue
-            result = post_tweet(tweet, schedule_at="next-free-slot")
+
+            # Generate the recap card image
+            media_ids = None
+            try:
+                away_fi = game.away_first_inning_runs or 0
+                home_fi = game.home_first_inning_runs or 0
+                is_nrfi = (away_fi + home_fi) == 0
+
+                # Get the model's pre-game NRFI prediction for context
+                home_pct = await _get_team_first_inning_pct(session, game.home_team)
+                away_pct = await _get_team_first_inning_pct(session, game.away_team)
+                predicted_nrfi_pct = None
+                if home_pct is not None and away_pct is not None:
+                    predicted_nrfi_pct = (1.0 - home_pct) * (1.0 - away_pct) * 100
+
+                png_bytes = generate_recap_card(
+                    away_team=game.away_team,
+                    home_team=game.home_team,
+                    away_name=TEAM_NAMES.get(game.away_team, game.away_team),
+                    home_name=TEAM_NAMES.get(game.home_team, game.home_team),
+                    away_first=away_fi,
+                    home_first=home_fi,
+                    is_nrfi=is_nrfi,
+                    predicted_nrfi_pct=predicted_nrfi_pct,
+                )
+
+                media_id = upload_media(png_bytes, filename=f"recap_{game.game_id}.png")
+                if media_id:
+                    media_ids = [media_id]
+            except Exception as e:
+                log_task(f"Failed to generate/upload recap card for {game.game_id}: {e}")
+
+            result = post_tweet(tweet, schedule_at="next-free-slot", media_ids=media_ids)
             if result:
                 await session.execute(
                     text("UPDATE mlb_games SET first_inning_tweet_posted = TRUE WHERE game_id = :gid"),
