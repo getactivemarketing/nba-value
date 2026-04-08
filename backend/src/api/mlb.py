@@ -115,13 +115,19 @@ class MLBGameResponse(BaseModel):
 
 
 class FirstInningTeamStats(BaseModel):
-    """First inning scoring stats for a team."""
+    """First inning scoring stats for a team (both sides of the ball)."""
     team: str
     games: int
+    # Offensive: how often team scores in 1st as batters
     scored: int
     scoreless: int
     score_pct: float
     avg_runs: float
+    # Defensive: how often opponents score against them in 1st
+    runs_allowed: int
+    no_runs_allowed: int
+    opp_score_pct: float
+    avg_runs_allowed: float
 
 
 class MLBGamesResponse(BaseModel):
@@ -544,20 +550,34 @@ async def get_first_inning_stats() -> list[FirstInningTeamStats]:
     async with async_session() as session:
         # Use raw SQL to aggregate without loading all game objects
         result = await session.execute(text("""
-            SELECT team,
-                   COUNT(*) as games,
-                   SUM(CASE WHEN runs > 0 THEN 1 ELSE 0 END) as scored,
-                   SUM(CASE WHEN runs = 0 THEN 1 ELSE 0 END) as scoreless,
-                   SUM(runs) as total_runs
+            SELECT
+                team,
+                COUNT(*) AS games,
+                SUM(CASE WHEN runs_for > 0 THEN 1 ELSE 0 END) AS scored,
+                SUM(CASE WHEN runs_for = 0 THEN 1 ELSE 0 END) AS scoreless,
+                SUM(runs_for) AS total_runs_for,
+                SUM(CASE WHEN runs_against > 0 THEN 1 ELSE 0 END) AS runs_allowed,
+                SUM(CASE WHEN runs_against = 0 THEN 1 ELSE 0 END) AS no_runs_allowed,
+                SUM(runs_against) AS total_runs_against
             FROM (
-                SELECT home_team as team, COALESCE(home_first_inning_runs, 0) as runs
-                FROM mlb_games WHERE status = 'final' AND game_type = 'R' AND home_first_inning_runs IS NOT NULL
+                SELECT
+                    home_team AS team,
+                    COALESCE(home_first_inning_runs, 0) AS runs_for,
+                    COALESCE(away_first_inning_runs, 0) AS runs_against
+                FROM mlb_games
+                WHERE status = 'final' AND game_type = 'R'
+                  AND home_first_inning_runs IS NOT NULL
                 UNION ALL
-                SELECT away_team as team, COALESCE(away_first_inning_runs, 0) as runs
-                FROM mlb_games WHERE status = 'final' AND game_type = 'R' AND away_first_inning_runs IS NOT NULL
+                SELECT
+                    away_team AS team,
+                    COALESCE(away_first_inning_runs, 0) AS runs_for,
+                    COALESCE(home_first_inning_runs, 0) AS runs_against
+                FROM mlb_games
+                WHERE status = 'final' AND game_type = 'R'
+                  AND away_first_inning_runs IS NOT NULL
             ) t
             GROUP BY team
-            ORDER BY SUM(CASE WHEN runs > 0 THEN 1 ELSE 0 END)::float / COUNT(*) DESC
+            ORDER BY SUM(CASE WHEN runs_against > 0 THEN 1 ELSE 0 END)::float / COUNT(*) ASC
         """))
 
         rows = result.fetchall()
@@ -566,13 +586,27 @@ async def get_first_inning_stats() -> list[FirstInningTeamStats]:
 
         response = []
         for row in rows:
-            team, games, scored, scoreless, total_runs = row
-            games, scored, scoreless, total_runs = int(games), int(scored), int(scoreless), int(total_runs)
-            score_pct = round(scored / games, 3) if games > 0 else 0.0
-            avg_runs = round(total_runs / games, 2) if games > 0 else 0.0
+            (team, games, scored, scoreless, total_runs_for,
+             runs_allowed, no_runs_allowed, total_runs_against) = row
+            games = int(games)
+            scored = int(scored)
+            scoreless = int(scoreless)
+            total_runs_for = int(total_runs_for)
+            runs_allowed = int(runs_allowed)
+            no_runs_allowed = int(no_runs_allowed)
+            total_runs_against = int(total_runs_against)
+
             response.append(FirstInningTeamStats(
-                team=team, games=games, scored=scored, scoreless=scoreless,
-                score_pct=float(score_pct), avg_runs=float(avg_runs),
+                team=team,
+                games=games,
+                scored=scored,
+                scoreless=scoreless,
+                score_pct=round(scored / games, 3) if games > 0 else 0.0,
+                avg_runs=round(total_runs_for / games, 2) if games > 0 else 0.0,
+                runs_allowed=runs_allowed,
+                no_runs_allowed=no_runs_allowed,
+                opp_score_pct=round(runs_allowed / games, 3) if games > 0 else 0.0,
+                avg_runs_allowed=round(total_runs_against / games, 2) if games > 0 else 0.0,
             ))
 
         return response

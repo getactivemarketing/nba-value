@@ -150,10 +150,16 @@ export interface MLBEvaluationSummary {
 export interface FirstInningStats {
   team: string;
   games: number;
+  // Offensive
   scored: number;
   scoreless: number;
   score_pct: number;
   avg_runs: number;
+  // Defensive
+  runs_allowed: number;
+  no_runs_allowed: number;
+  opp_score_pct: number;
+  avg_runs_allowed: number;
 }
 
 // API functions

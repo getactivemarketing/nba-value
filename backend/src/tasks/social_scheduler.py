@@ -187,12 +187,14 @@ async def _post_pregame_nrfi_picks_async() -> dict:
         # Score each by NRFI% and keep top 5
         scored = []
         for g in games:
-            home_pct = await _get_team_first_inning_pct(session, g.home_team)
-            away_pct = await _get_team_first_inning_pct(session, g.away_team)
-            if home_pct is None or away_pct is None:
+            home_off, home_def = await _get_team_first_inning_pct(session, g.home_team)
+            away_off, away_def = await _get_team_first_inning_pct(session, g.away_team)
+            if home_off is None or away_off is None or home_def is None or away_def is None:
                 continue
-            nrfi = (1.0 - home_pct) * (1.0 - away_pct)
-            scored.append((nrfi, g, home_pct, away_pct))
+            p_away_scores = (away_off + home_def) / 2.0
+            p_home_scores = (home_off + away_def) / 2.0
+            nrfi = (1.0 - p_away_scores) * (1.0 - p_home_scores)
+            scored.append((nrfi, g, home_off, away_off))
         scored.sort(key=lambda x: x[0], reverse=True)
 
         for nrfi, game, home_pct, away_pct in scored[:5]:
@@ -293,11 +295,14 @@ async def _post_first_inning_recaps_async() -> dict:
                 is_nrfi = (away_fi + home_fi) == 0
 
                 # Get the model's pre-game NRFI prediction for context
-                home_pct = await _get_team_first_inning_pct(session, game.home_team)
-                away_pct = await _get_team_first_inning_pct(session, game.away_team)
+                home_off, home_def = await _get_team_first_inning_pct(session, game.home_team)
+                away_off, away_def = await _get_team_first_inning_pct(session, game.away_team)
                 predicted_nrfi_pct = None
-                if home_pct is not None and away_pct is not None:
-                    predicted_nrfi_pct = (1.0 - home_pct) * (1.0 - away_pct) * 100
+                if (home_off is not None and away_off is not None
+                        and home_def is not None and away_def is not None):
+                    p_away_scores = (away_off + home_def) / 2.0
+                    p_home_scores = (home_off + away_def) / 2.0
+                    predicted_nrfi_pct = (1.0 - p_away_scores) * (1.0 - p_home_scores) * 100
 
                 png_bytes = generate_recap_card(
                     away_team=game.away_team,

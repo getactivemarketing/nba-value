@@ -103,18 +103,52 @@ async def _get_pitcher_era(session: AsyncSession, pitcher_id: int | None) -> tup
     return last_name, era
 
 
-async def _get_team_first_inning_pct(session: AsyncSession, team: str) -> float | None:
-    """Fetch latest first_inning_score_pct for a team."""
-    row = await session.execute(
-        select(MLBTeamStats)
-        .where(MLBTeamStats.team_abbr == team)
-        .order_by(desc(MLBTeamStats.stat_date))
-        .limit(1)
+async def _get_team_first_inning_pct(
+    session: AsyncSession, team: str
+) -> tuple[float | None, float | None]:
+    """Return (offensive_score_pct, defensive_opp_score_pct) for a team.
+
+    Computed directly from mlb_games first-inning runs over final regular
+    season games. Returns (None, None) if no games.
+    """
+    from sqlalchemy import text
+
+    result = await session.execute(
+        text("""
+            SELECT
+                COUNT(*) AS games,
+                SUM(CASE WHEN runs_for > 0 THEN 1 ELSE 0 END) AS scored,
+                SUM(CASE WHEN runs_against > 0 THEN 1 ELSE 0 END) AS runs_allowed
+            FROM (
+                SELECT
+                    COALESCE(home_first_inning_runs, 0) AS runs_for,
+                    COALESCE(away_first_inning_runs, 0) AS runs_against
+                FROM mlb_games
+                WHERE status = 'final' AND game_type = 'R'
+                  AND home_first_inning_runs IS NOT NULL
+                  AND home_team = :team
+                UNION ALL
+                SELECT
+                    COALESCE(away_first_inning_runs, 0) AS runs_for,
+                    COALESCE(home_first_inning_runs, 0) AS runs_against
+                FROM mlb_games
+                WHERE status = 'final' AND game_type = 'R'
+                  AND away_first_inning_runs IS NOT NULL
+                  AND away_team = :team
+            ) t
+        """),
+        {"team": team},
     )
-    stats = row.scalar_one_or_none()
-    if stats and stats.first_inning_score_pct is not None:
-        return float(stats.first_inning_score_pct)
-    return None
+    row = result.fetchone()
+    if not row:
+        return None, None
+    games, scored, runs_allowed = row
+    games = int(games or 0)
+    if games == 0:
+        return None, None
+    off_pct = float(int(scored or 0)) / games
+    def_pct = float(int(runs_allowed or 0)) / games
+    return off_pct, def_pct
 
 
 def _implied_prob_from_decimal(decimal_odds: float) -> float:
@@ -318,12 +352,14 @@ async def generate_nrfi_tweet(session: AsyncSession, game_date: date) -> str | N
 
     nrfi_picks = []
     for game in games:
-        home_pct = await _get_team_first_inning_pct(session, game.home_team)
-        away_pct = await _get_team_first_inning_pct(session, game.away_team)
-        if home_pct is None or away_pct is None:
+        home_off, home_def = await _get_team_first_inning_pct(session, game.home_team)
+        away_off, away_def = await _get_team_first_inning_pct(session, game.away_team)
+        if home_off is None or away_off is None or home_def is None or away_def is None:
             continue
 
-        combined_nrfi = (1.0 - home_pct) * (1.0 - away_pct)
+        p_away_scores = (away_off + home_def) / 2.0
+        p_home_scores = (home_off + away_def) / 2.0
+        combined_nrfi = (1.0 - p_away_scores) * (1.0 - p_home_scores)
 
         away_last, away_era = await _get_pitcher_era(session, game.away_starter_id)
         home_last, home_era = await _get_pitcher_era(session, game.home_starter_id)
@@ -484,11 +520,13 @@ async def generate_nrfi_results_tweet(session: AsyncSession, game_date: date) ->
         if scoreless:
             nrfi_hit_count += 1
 
-        home_pct = await _get_team_first_inning_pct(session, g.home_team)
-        away_pct = await _get_team_first_inning_pct(session, g.away_team)
-        if home_pct is None or away_pct is None:
+        home_off, home_def = await _get_team_first_inning_pct(session, g.home_team)
+        away_off, away_def = await _get_team_first_inning_pct(session, g.away_team)
+        if home_off is None or away_off is None or home_def is None or away_def is None:
             continue
-        combined_nrfi = (1.0 - home_pct) * (1.0 - away_pct)
+        p_away_scores = (away_off + home_def) / 2.0
+        p_home_scores = (home_off + away_def) / 2.0
+        combined_nrfi = (1.0 - p_away_scores) * (1.0 - p_home_scores)
         scored.append({
             "game": g,
             "nrfi_prob": combined_nrfi,
@@ -544,9 +582,9 @@ def _fmt_game_time_et(game_time: datetime | None) -> str:
 
 async def generate_pregame_nrfi_tweet(session: AsyncSession, game: MLBGame) -> str | None:
     """Generate a single-game NRFI pregame pick tweet."""
-    home_pct = await _get_team_first_inning_pct(session, game.home_team)
-    away_pct = await _get_team_first_inning_pct(session, game.away_team)
-    if home_pct is None or away_pct is None:
+    home_off, home_def = await _get_team_first_inning_pct(session, game.home_team)
+    away_off, away_def = await _get_team_first_inning_pct(session, game.away_team)
+    if home_off is None or away_off is None or home_def is None or away_def is None:
         return None
 
     away_last, away_era = await _get_pitcher_era(session, game.away_starter_id)
@@ -554,7 +592,9 @@ async def generate_pregame_nrfi_tweet(session: AsyncSession, game: MLBGame) -> s
     if not away_last or not home_last:
         return None
 
-    nrfi_pct = (1.0 - home_pct) * (1.0 - away_pct) * 100.0
+    p_away_scores = (away_off + home_def) / 2.0
+    p_home_scores = (home_off + away_def) / 2.0
+    nrfi_pct = (1.0 - p_away_scores) * (1.0 - p_home_scores) * 100.0
     nrfi_pct_rounded = round(nrfi_pct)
     badge = _nrfi_badge(nrfi_pct)
 

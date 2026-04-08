@@ -155,9 +155,12 @@ export function MLBGameCard({ game, firstInningStats }: MLBGameCardProps) {
   let nrfiScore: number | null = null;
   let nrfiMinGames = 0;
   if (homeFI && awayFI && homeFI.games > 0 && awayFI.games > 0) {
-    const homeScoreless = 1 - homeFI.score_pct;
-    const awayScoreless = 1 - awayFI.score_pct;
-    nrfiScore = homeScoreless * awayScoreless * 100;
+    // Blend each team's offense with the opponent's defense.
+    // p(away scores top 1st) = avg(away offense, home defense)
+    // p(home scores bot 1st) = avg(home offense, away defense)
+    const pAwayScores = (awayFI.score_pct + homeFI.opp_score_pct) / 2;
+    const pHomeScores = (homeFI.score_pct + awayFI.opp_score_pct) / 2;
+    nrfiScore = (1 - pAwayScores) * (1 - pHomeScores) * 100;
     nrfiMinGames = Math.min(homeFI.games, awayFI.games);
   }
   // Fall back to best_bet value_score if no first inning data
