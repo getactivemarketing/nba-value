@@ -142,6 +142,9 @@ export function NRFI() {
 
   const stats = data || [];
 
+  // Check if defensive stats are available (backend may not have deployed yet)
+  const hasDefensiveStats = stats.length > 0 && stats.some((s) => s.opp_score_pct !== undefined);
+
   // Summary calculations
   const totalGames = Math.round(stats.reduce((s, t) => s + (t.games ?? 0), 0) / 2);
   const totalTeamGames = stats.reduce((s, t) => s + (t.games ?? 0), 0);
@@ -194,12 +197,21 @@ export function NRFI() {
               sub="Scoreless first innings"
               accent="text-[#a4e6ff]"
             />
-            <StatCard
-              label="Best Pitching"
-              value={bestPitchingTeam ? `${((bestPitchingTeam.opp_score_pct ?? 0) * 100).toFixed(1)}%` : '-'}
-              sub={bestPitchingTeam ? `${getTeamInfo(bestPitchingTeam.team).name} opp 1st` : ''}
-              accent="text-[#66f796]"
-            />
+            {hasDefensiveStats && bestPitchingTeam ? (
+              <StatCard
+                label="Best Pitching"
+                value={`${((bestPitchingTeam.opp_score_pct ?? 0) * 100).toFixed(1)}%`}
+                sub={`${getTeamInfo(bestPitchingTeam.team).name} opp 1st`}
+                accent="text-[#66f796]"
+              />
+            ) : (
+              <StatCard
+                label="Hottest Bats"
+                value={hottestBats[0] ? `${((hottestBats[0].score_pct ?? 0) * 100).toFixed(1)}%` : '-'}
+                sub={hottestBats[0] ? `${getTeamInfo(hottestBats[0].team).name} 1st scoring` : ''}
+                accent="text-[#f59e0b]"
+              />
+            )}
             <StatCard
               label="Coldest Bats"
               value={coldestBatsTeam ? `${((coldestBatsTeam.score_pct ?? 0) * 100).toFixed(1)}%` : '-'}
@@ -208,22 +220,33 @@ export function NRFI() {
             />
           </div>
 
-          {/* 2x2 leaderboard */}
+          {/* Leaderboard */}
+          {!hasDefensiveStats && (
+            <div className="mb-4 p-3 bg-[#a4e6ff]/5 border border-[#a4e6ff]/20 rounded-lg">
+              <p className="text-xs text-[#a4e6ff] font-mono">
+                ℹ Defensive NRFI stats are being rolled out. Showing offensive stats only for now.
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Section
-              title="Best NRFI Pitching (Fewest 1st Inning Runs Allowed)"
-              accent="#66f796"
-              stats={bestPitching}
-              metric="opp_score_pct"
-              tone="good"
-            />
-            <Section
-              title="Worst NRFI Pitching (Most 1st Inning Runs Allowed)"
-              accent="#ef4444"
-              stats={worstPitching}
-              metric="opp_score_pct"
-              tone="bad"
-            />
+            {hasDefensiveStats && (
+              <>
+                <Section
+                  title="Best NRFI Pitching (Fewest 1st Inning Runs Allowed)"
+                  accent="#66f796"
+                  stats={bestPitching}
+                  metric="opp_score_pct"
+                  tone="good"
+                />
+                <Section
+                  title="Worst NRFI Pitching (Most 1st Inning Runs Allowed)"
+                  accent="#ef4444"
+                  stats={worstPitching}
+                  metric="opp_score_pct"
+                  tone="bad"
+                />
+              </>
+            )}
             <Section
               title="Coldest 1st Inning Bats"
               accent="#a4e6ff"
