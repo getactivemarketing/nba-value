@@ -256,15 +256,23 @@ def generate_recap_card(
     draw.text((W // 2, 170), score_text, font=fonts["huge"], fill=WHITE, anchor="mm")
     draw.text((W // 2, 250), "1ST INNING", font=fonts["s"], fill=MUTED, anchor="mm")
 
-    # Result tag
+    # Result tag — use plain ASCII instead of Unicode checkmarks
+    # (DejaVu/Helvetica don't reliably have the ✓/✗ glyphs on Linux containers)
     if is_nrfi:
-        draw.text((W // 2, 400), "NRFI ✓", font=fonts["xl"], fill=GREEN, anchor="mm")
-        if predicted_nrfi_pct is not None:
-            draw.text((W // 2, 470), f"Model: {predicted_nrfi_pct:.0f}% NRFI chance", font=fonts["s"], fill=MUTED, anchor="mm")
+        draw.text((W // 2, 420), "NRFI", font=fonts["xl"], fill=GREEN, anchor="mm")
+        draw.text((W // 2, 480), "MODEL CALLED IT", font=fonts["s"], fill=GREEN, anchor="mm")
     else:
-        draw.text((W // 2, 400), "YRFI ✗", font=fonts["xl"], fill=AMBER, anchor="mm")
-        if predicted_nrfi_pct is not None:
-            draw.text((W // 2, 470), f"Model: {predicted_nrfi_pct:.0f}% NRFI chance", font=fonts["s"], fill=MUTED, anchor="mm")
+        draw.text((W // 2, 420), "YRFI", font=fonts["xl"], fill=AMBER, anchor="mm")
+        draw.text((W // 2, 480), "RUNS IN THE 1ST", font=fonts["s"], fill=AMBER, anchor="mm")
+
+    if predicted_nrfi_pct is not None:
+        draw.text(
+            (W // 2, 540),
+            f"Model: {predicted_nrfi_pct:.0f}% NRFI chance",
+            font=fonts["s"],
+            fill=MUTED,
+            anchor="mm",
+        )
 
     # Footer
     draw.text((60, H - 40), "truline.app", font=fonts["xs"], fill=ACCENT)
