@@ -1038,9 +1038,22 @@ async def debug_odds_ingest() -> dict:
     return results
 
 
+@router.get("/debug/social-config")
+async def debug_social_config() -> dict:
+    """Show which social posting services are configured."""
+    from src.config import settings
+    return {
+        "twitter_posting_enabled": settings.twitter_posting_enabled,
+        "blotato_api_key_set": bool(settings.blotato_api_key),
+        "blotato_api_key_prefix": (settings.blotato_api_key[:8] + "...") if settings.blotato_api_key else None,
+        "blotato_twitter_account_id": settings.blotato_twitter_account_id or None,
+        "typefully_api_key_set": bool(settings.typefully_api_key),
+    }
+
+
 @router.get("/debug/tweet-test")
 async def debug_tweet_test() -> dict:
-    """Send a test intro tweet via Typefully."""
+    """Send a test intro tweet via Blotato."""
     from src.services.social.blotato import post_tweet
 
     intro = (
