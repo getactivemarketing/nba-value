@@ -755,6 +755,27 @@ def _nba_bet_label(
     return (team, f"{team} ML")
 
 
+def _nba_season_phase(game_date: date) -> tuple[str, str]:
+    """Returns (title_prefix, hashtags) based on the NBA calendar.
+
+    - Before 4/14/2026: Regular Season
+    - 4/15-4/18/2026: Play-In Tournament
+    - 4/19-6/25/2026: Playoffs
+    - 6/5-6/25: NBA Finals (detected as late playoffs)
+    """
+    # Play-in tournament
+    if date(2026, 4, 15) <= game_date <= date(2026, 4, 18):
+        return ("Play-In Picks", "#NBA #NBAPlayIn #PlayInTournament")
+    # NBA Finals (best guess)
+    if date(2026, 6, 5) <= game_date <= date(2026, 6, 25):
+        return ("NBA Finals Picks", "#NBAFinals #NBA")
+    # Playoffs
+    if date(2026, 4, 19) <= game_date <= date(2026, 6, 25):
+        return ("NBA Playoff Picks", "#NBA #NBAPlayoffs")
+    # Regular season
+    return ("NBA Picks", "#NBA #NBABets")
+
+
 async def generate_nba_picks_thread(session: AsyncSession, game_date: date) -> list[str]:
     """Generate NBA value picks thread for a given date."""
     result = await session.execute(
@@ -790,13 +811,14 @@ async def generate_nba_picks_thread(session: AsyncSession, game_date: date) -> l
     )
     games_count = int(count_result.scalar() or 0)
 
+    title, header_tags = _nba_season_phase(game_date)
     date_str = game_date.strftime("%m/%d")
     header = (
-        f"NBA Playoff Picks {date_str}\n\n"
+        f"{title} {date_str}\n\n"
         f"AI value bets from the model.\n"
-        f"{games_count} games analyzed.\n\n"
+        f"{games_count} games on the board.\n\n"
         f"Full card: truline.app\n\n"
-        f"#NBA #NBAPlayoffs #SportsBetting"
+        f"{header_tags} #SportsBetting"
     )
     tweets = [header]
 
@@ -840,7 +862,7 @@ async def generate_nba_picks_thread(session: AsyncSession, game_date: date) -> l
             f"Edge: +{edge_pct:.1f}%\n\n"
             f"Model: {model_pct}% | Market: {market_pct}%\n\n"
             f"Value Score: {score}/100\n\n"
-            f"{handle} #NBA #NBAPlayoffs"
+            f"{handle} {header_tags}"
         ).strip()
 
         if len(tweet) > 280:

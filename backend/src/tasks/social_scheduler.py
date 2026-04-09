@@ -557,13 +557,13 @@ def start_scheduler():
 
     # NBA posts (playoff schedule)
     # Results: 10:30 AM ET = 14:30 UTC
-    # Picks: 3:30 PM ET = 19:30 UTC (before evening games)
+    # Picks: 5:00 PM ET = 21:00 UTC (before evening games)
     social_scheduler.every().day.at("14:30").do(run_post_nba_results)
-    social_scheduler.every().day.at("19:30").do(run_post_nba_picks)
+    social_scheduler.every().day.at("21:00").do(run_post_nba_picks)
 
     log_task("Social scheduler configured:")
     log_task("  - NBA results: 10:30 AM ET (14:30 UTC)")
-    log_task("  - NBA picks: 3:30 PM ET (19:30 UTC)")
+    log_task("  - NBA picks: 5:00 PM ET (21:00 UTC)")
     log_task("  - Results recap: 9:00 AM ET (13:00 UTC)")
     log_task("  - NRFI results: 9:15 AM ET (13:15 UTC)")
     log_task("  - Daily picks: 10:00 AM ET (14:00 UTC)")

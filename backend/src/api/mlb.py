@@ -1164,11 +1164,18 @@ async def debug_trigger_posts(task: str = "all") -> dict:
                 tweets = await generate_nba_picks_thread(session, today)
                 if tweets and len(tweets) > 1:
                     r = post_thread(tweets, schedule_at="next-free-slot")
-                    results["nba_picks"] = {"posted": r is not None, "count": len(tweets)}
+                    results["nba_picks"] = {
+                        "posted": r is not None,
+                        "count": len(tweets),
+                        "submission_id": r.get("postSubmissionId") if isinstance(r, dict) else None,
+                        "first_tweet": tweets[0][:200],
+                    }
                 else:
-                    results["nba_picks"] = {"posted": False, "reason": "no_data"}
+                    results["nba_picks"] = {"posted": False, "reason": "no_data", "tweet_count": len(tweets) if tweets else 0}
             except Exception as e:
+                import traceback
                 results["nba_picks_error"] = str(e)[:200]
+                results["nba_picks_trace"] = traceback.format_exc()[-800:]
 
         # NBA results (yesterday)
         if task in ("all", "nba_results"):
