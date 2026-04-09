@@ -1157,6 +1157,32 @@ async def debug_trigger_posts(task: str = "all") -> dict:
             except Exception as e:
                 results["nrfi_error"] = str(e)[:200]
 
+        # NBA daily picks
+        if task in ("all", "nba_picks"):
+            try:
+                from src.services.social.content import generate_nba_picks_thread
+                tweets = await generate_nba_picks_thread(session, today)
+                if tweets and len(tweets) > 1:
+                    r = post_thread(tweets, schedule_at="next-free-slot")
+                    results["nba_picks"] = {"posted": r is not None, "count": len(tweets)}
+                else:
+                    results["nba_picks"] = {"posted": False, "reason": "no_data"}
+            except Exception as e:
+                results["nba_picks_error"] = str(e)[:200]
+
+        # NBA results (yesterday)
+        if task in ("all", "nba_results"):
+            try:
+                from src.services.social.content import generate_nba_results_tweet
+                tweet = await generate_nba_results_tweet(session, yesterday)
+                if tweet:
+                    r = post_tweet(tweet, schedule_at="next-free-slot")
+                    results["nba_results"] = {"posted": r is not None, "text": tweet[:100]}
+                else:
+                    results["nba_results"] = {"posted": False, "reason": "no_data"}
+            except Exception as e:
+                results["nba_results_error"] = str(e)[:200]
+
         # First inning recaps (games whose 1st inning just ended)
         if task in ("all", "first_inning"):
             from sqlalchemy import or_

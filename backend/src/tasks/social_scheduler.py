@@ -383,6 +383,60 @@ async def _post_final_recaps_async() -> dict:
     return {"posted": posted_count, "skipped": skipped, "type": "final_recap"}
 
 
+async def _post_nba_daily_picks_async() -> dict:
+    """Post NBA daily picks thread."""
+    from src.services.social.content import generate_nba_picks_thread
+    from src.services.social.blotato import post_thread
+
+    today = _today_et()
+    async with _social_session_factory() as session:
+        tweets = await generate_nba_picks_thread(session, today)
+
+    if tweets and len(tweets) > 1:
+        ids = post_thread(tweets, schedule_at="next-free-slot")
+        return {"posted": True, "count": len(tweets), "ids": ids, "type": "nba_picks"}
+    log_task("No NBA picks to post")
+    return {"posted": False, "count": 0, "type": "nba_picks"}
+
+
+async def _post_nba_results_async() -> dict:
+    """Post NBA results recap for yesterday."""
+    from src.services.social.content import generate_nba_results_tweet
+    from src.services.social.blotato import post_tweet
+
+    yesterday = _today_et() - timedelta(days=1)
+    async with _social_session_factory() as session:
+        tweet_text = await generate_nba_results_tweet(session, yesterday)
+
+    if tweet_text:
+        tid = post_tweet(tweet_text)
+        return {"posted": True, "tweet_id": tid, "type": "nba_results"}
+    log_task("No NBA results to post")
+    return {"posted": False, "type": "nba_results"}
+
+
+def run_post_nba_picks():
+    log_task("Posting NBA picks...")
+    try:
+        result = _run_async(_post_nba_daily_picks_async())
+        log_task("NBA picks complete", **{k: str(v) for k, v in result.items()})
+        return result
+    except Exception as e:
+        log_task(f"NBA picks FAILED: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
+def run_post_nba_results():
+    log_task("Posting NBA results...")
+    try:
+        result = _run_async(_post_nba_results_async())
+        log_task("NBA results complete", **{k: str(v) for k, v in result.items()})
+        return result
+    except Exception as e:
+        log_task(f"NBA results FAILED: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
 def run_post_pregame_nrfi():
     """Post per-game pregame NRFI picks."""
     log_task("Posting pregame NRFI picks...")
@@ -501,7 +555,15 @@ def start_scheduler():
     # Final recaps — runs every 30 min, mostly evening
     social_scheduler.every(30).minutes.do(run_post_final_recaps)
 
+    # NBA posts (playoff schedule)
+    # Results: 10:30 AM ET = 14:30 UTC
+    # Picks: 3:30 PM ET = 19:30 UTC (before evening games)
+    social_scheduler.every().day.at("14:30").do(run_post_nba_results)
+    social_scheduler.every().day.at("19:30").do(run_post_nba_picks)
+
     log_task("Social scheduler configured:")
+    log_task("  - NBA results: 10:30 AM ET (14:30 UTC)")
+    log_task("  - NBA picks: 3:30 PM ET (19:30 UTC)")
     log_task("  - Results recap: 9:00 AM ET (13:00 UTC)")
     log_task("  - NRFI results: 9:15 AM ET (13:15 UTC)")
     log_task("  - Daily picks: 10:00 AM ET (14:00 UTC)")

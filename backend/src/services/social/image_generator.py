@@ -60,11 +60,23 @@ def _get_fonts():
         return {size: default for size in ["huge", "xl", "l", "m", "s", "xs"]}
 
 
-def _fetch_logo(team_abbr: str):
-    """Download ESPN MLB team logo. Returns PIL Image or None."""
+NBA_ESPN_MAP = {
+    "ATL": "atl", "BOS": "bos", "BKN": "bkn", "CHA": "cha",
+    "CHI": "chi", "CLE": "cle", "DAL": "dal", "DEN": "den",
+    "DET": "det", "GSW": "gs", "HOU": "hou", "IND": "ind",
+    "LAC": "lac", "LAL": "lal", "MEM": "mem", "MIA": "mia",
+    "MIL": "mil", "MIN": "min", "NOP": "no", "NYK": "ny",
+    "OKC": "okc", "ORL": "orl", "PHI": "phi", "PHX": "phx",
+    "POR": "por", "SAC": "sac", "SAS": "sa", "TOR": "tor",
+    "UTA": "utah", "WAS": "wsh",
+}
+
+
+def _fetch_logo(team_abbr: str, sport: str = "mlb"):
+    """Download ESPN team logo. Returns PIL Image or None."""
     from PIL import Image
 
-    espn_map = {
+    mlb_map = {
         "ARI": "ari", "ATL": "atl", "BAL": "bal", "BOS": "bos",
         "CHC": "chc", "CWS": "chw", "CIN": "cin", "CLE": "cle",
         "COL": "col", "DET": "det", "HOU": "hou", "KC": "kc",
@@ -75,11 +87,14 @@ def _fetch_logo(team_abbr: str):
         "TOR": "tor", "WSH": "wsh",
     }
 
-    espn_abbr = espn_map.get(team_abbr.upper())
+    if sport == "nba":
+        espn_abbr = NBA_ESPN_MAP.get(team_abbr.upper())
+    else:
+        espn_abbr = mlb_map.get(team_abbr.upper())
     if not espn_abbr:
         return None
 
-    url = f"https://a.espncdn.com/i/teamlogos/mlb/500/{espn_abbr}.png"
+    url = f"https://a.espncdn.com/i/teamlogos/{sport}/500/{espn_abbr}.png"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -275,6 +290,98 @@ def generate_recap_card(
         )
 
     # Footer
+    draw.text((60, H - 40), "truline.app", font=fonts["xs"], fill=ACCENT)
+    draw.text((W - 60, H - 40), "@trulineapp", font=fonts["xs"], fill=ACCENT, anchor="ra")
+
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _value_tier(score: float) -> tuple[tuple[int, int, int], str]:
+    if score >= 75:
+        return GREEN, "STRONG VALUE"
+    if score >= 65:
+        return ACCENT, "GOOD VALUE"
+    if score >= 55:
+        return MUTED, "LEAN"
+    return AMBER, "LOW VALUE"
+
+
+def generate_nba_card(
+    away_team: str,
+    home_team: str,
+    away_name: str,
+    home_name: str,
+    pick_team: str,
+    pick_label: str,
+    value_score: float,
+    edge_pct: float,
+    model_prob: float,
+    market_prob: float,
+    odds_american: int,
+    away_handle: str | None = None,
+    home_handle: str | None = None,
+    game_time: str | None = None,
+) -> bytes:
+    """Generate an NBA pick card image. Returns PNG bytes."""
+    from PIL import Image, ImageDraw
+
+    W, H = 1200, 675
+    img = Image.new("RGB", (W, H), BG)
+    draw = ImageDraw.Draw(img)
+    fonts = _get_fonts()
+
+    _draw_background(draw, W, H)
+
+    draw.text((60, 40), "NBA PICK", font=fonts["s"], fill=ACCENT)
+    if game_time:
+        bbox = draw.textbbox((0, 0), game_time, font=fonts["s"])
+        draw.text((W - (bbox[2] - bbox[0]) - 60, 40), game_time, font=fonts["s"], fill=MUTED)
+
+    away_logo = _fetch_logo(away_team, sport="nba")
+    home_logo = _fetch_logo(home_team, sport="nba")
+    _paste_logo(img, away_logo, 200, 170, max_size=150)
+    _paste_logo(img, home_logo, 1000, 170, max_size=150)
+
+    draw.text((200, 310), away_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+    draw.text((1000, 310), home_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+
+    if away_handle:
+        draw.text((200, 360), away_handle, font=fonts["xs"], fill=DIM, anchor="mm")
+    if home_handle:
+        draw.text((1000, 360), home_handle, font=fonts["xs"], fill=DIM, anchor="mm")
+
+    tier_color, tier_label = _value_tier(value_score)
+
+    # Center big pick label
+    draw.text((W // 2, 150), pick_label, font=fonts["xl"], fill=WHITE, anchor="mm")
+    odds_str = f"+{odds_american}" if odds_american > 0 else f"{odds_american}"
+    draw.text((W // 2, 210), odds_str, font=fonts["m"], fill=MUTED, anchor="mm")
+
+    # Value score badge
+    draw.text((W // 2, 290), f"{value_score:.0f}/100", font=fonts["huge"], fill=tier_color, anchor="mm")
+    draw.text((W // 2, 365), tier_label, font=fonts["s"], fill=tier_color, anchor="mm")
+
+    # Stats bar
+    bar_y = 440
+    bar_h = 170
+    draw.rectangle([40, bar_y, W - 40, bar_y + bar_h], fill=CARD, outline=SURFACE, width=2)
+    draw.text((W // 2, bar_y + 25), "MODEL vs MARKET", font=fonts["xs"], fill=DIM, anchor="mm")
+
+    model_txt = f"{model_prob * 100:.0f}%"
+    market_txt = f"{market_prob * 100:.0f}%"
+    edge_txt = f"+{edge_pct:.1f}%"
+
+    draw.text((260, bar_y + 75), "MODEL", font=fonts["xs"], fill=DIM, anchor="mm")
+    draw.text((260, bar_y + 115), model_txt, font=fonts["l"], fill=GREEN, anchor="mm")
+
+    draw.text((W // 2, bar_y + 75), "MARKET", font=fonts["xs"], fill=DIM, anchor="mm")
+    draw.text((W // 2, bar_y + 115), market_txt, font=fonts["l"], fill=WHITE, anchor="mm")
+
+    draw.text((W - 260, bar_y + 75), "EDGE", font=fonts["xs"], fill=DIM, anchor="mm")
+    draw.text((W - 260, bar_y + 115), edge_txt, font=fonts["l"], fill=tier_color, anchor="mm")
+
     draw.text((60, H - 40), "truline.app", font=fonts["xs"], fill=ACCENT)
     draw.text((W - 60, H - 40), "@trulineapp", font=fonts["xs"], fill=ACCENT, anchor="ra")
 

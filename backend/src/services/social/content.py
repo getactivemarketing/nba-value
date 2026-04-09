@@ -72,6 +72,43 @@ TEAM_NAMES = {
 }
 
 
+# NBA team metadata
+NBA_TEAM_NAMES = {
+    "ATL": "Hawks", "BOS": "Celtics", "BKN": "Nets", "CHA": "Hornets",
+    "CHI": "Bulls", "CLE": "Cavaliers", "DAL": "Mavericks", "DEN": "Nuggets",
+    "DET": "Pistons", "GSW": "Warriors", "HOU": "Rockets", "IND": "Pacers",
+    "LAC": "Clippers", "LAL": "Lakers", "MEM": "Grizzlies", "MIA": "Heat",
+    "MIL": "Bucks", "MIN": "Timberwolves", "NOP": "Pelicans", "NYK": "Knicks",
+    "OKC": "Thunder", "ORL": "Magic", "PHI": "76ers", "PHX": "Suns",
+    "POR": "Trail Blazers", "SAC": "Kings", "SAS": "Spurs", "TOR": "Raptors",
+    "UTA": "Jazz", "WAS": "Wizards",
+}
+
+NBA_TEAM_HANDLES = {
+    "ATL": "@ATLHawks", "BOS": "@celtics", "BKN": "@BrooklynNets", "CHA": "@hornets",
+    "CHI": "@chicagobulls", "CLE": "@cavs", "DAL": "@dallasmavs", "DEN": "@nuggets",
+    "DET": "@DetroitPistons", "GSW": "@warriors", "HOU": "@HoustonRockets", "IND": "@Pacers",
+    "LAC": "@LAClippers", "LAL": "@Lakers", "MEM": "@memgrizz", "MIA": "@MiamiHEAT",
+    "MIL": "@Bucks", "MIN": "@Timberwolves", "NOP": "@PelicansNBA", "NYK": "@nyknicks",
+    "OKC": "@okcthunder", "ORL": "@OrlandoMagic", "PHI": "@sixers", "PHX": "@Suns",
+    "POR": "@trailblazers", "SAC": "@SacramentoKings", "SAS": "@spurs", "TOR": "@Raptors",
+    "UTA": "@utahjazz", "WAS": "@WashWizards",
+}
+
+NBA_TEAM_HASHTAGS = {
+    "ATL": "#TrueToAtlanta", "BOS": "#DifferentHere", "BKN": "#NetsWorld",
+    "CHA": "#AllFly", "CHI": "#BullsNation", "CLE": "#LetEmKnow",
+    "DAL": "#MFFL", "DEN": "#MileHighBasketball", "DET": "#DetroitBasketball",
+    "GSW": "#DubNation", "HOU": "#Rockets", "IND": "#BoomBaby",
+    "LAC": "#Clippers", "LAL": "#LakeShow", "MEM": "#GrindCity",
+    "MIA": "#HEATCulture", "MIL": "#FearTheDeer", "MIN": "#WolvesBack",
+    "NOP": "#WontBowDown", "NYK": "#NewYorkForever", "OKC": "#ThunderUp",
+    "ORL": "#MagicTogether", "PHI": "#HereTheyCome", "PHX": "#ValleyProud",
+    "POR": "#RipCity", "SAC": "#SacramentoProud", "SAS": "#PorVida",
+    "TOR": "#WeTheNorth", "UTA": "#TakeNote", "WAS": "#DCFamily",
+}
+
+
 def _fmt_odds(decimal_odds: float) -> str:
     """Format decimal odds to American."""
     if decimal_odds >= 2.0:
@@ -673,6 +710,267 @@ def generate_first_inning_recap_tweet(game: MLBGame) -> str | None:
         "",
         "#NRFI #MLB",
     ]
+    tweet = "\n".join(lines)
+    if len(tweet) > 280:
+        tweet = tweet[:277] + "..."
+    return tweet
+
+
+# =========================================================================
+# NBA content generators
+# =========================================================================
+
+
+def _fmt_american(odds_decimal: float) -> str:
+    """Decimal -> American string with sign."""
+    if not odds_decimal or odds_decimal <= 1.0:
+        return "-"
+    if odds_decimal >= 2.0:
+        return f"+{round((odds_decimal - 1) * 100)}"
+    return f"{round(-100 / (odds_decimal - 1))}"
+
+
+def _nba_bet_label(
+    market_type: str,
+    outcome_label: str,
+    line: float | None,
+    home_team: str,
+    away_team: str,
+) -> tuple[str, str]:
+    """Return (pick_team_abbr, pick_label) e.g. ('LAL', 'LAL -4.5')."""
+    ol = (outcome_label or "").lower()
+    mt = (market_type or "").lower()
+    if mt == "total":
+        direction = "Over" if "over" in ol else "Under"
+        line_str = f" {line}" if line is not None else ""
+        return ("TOTAL", f"{direction}{line_str}")
+    is_home = "home" in ol
+    team = home_team if is_home else away_team
+    if mt == "spread":
+        if line is not None:
+            sign = "+" if line > 0 else ""
+            return (team, f"{team} {sign}{line}")
+        return (team, f"{team} spread")
+    # moneyline
+    return (team, f"{team} ML")
+
+
+async def generate_nba_picks_thread(session: AsyncSession, game_date: date) -> list[str]:
+    """Generate NBA value picks thread for a given date."""
+    result = await session.execute(
+        text("""
+            SELECT
+                g.game_id, g.home_team_id, g.away_team_id, g.tip_time_utc,
+                m.market_type, m.outcome_label, m.line, m.odds_decimal,
+                mp.p_true, mp.p_market, mp.raw_edge,
+                vs.algo_a_value_score
+            FROM value_scores vs
+            JOIN markets m ON m.market_id = vs.market_id
+            JOIN games g ON g.game_id = m.game_id
+            JOIN model_predictions mp ON mp.prediction_id = vs.prediction_id
+            WHERE DATE(g.tip_time_utc AT TIME ZONE 'America/New_York') = :date
+              AND vs.active_algorithm = 'A'
+              AND vs.algo_a_value_score >= 60
+              AND g.status = 'scheduled'
+            ORDER BY vs.algo_a_value_score DESC
+            LIMIT 5
+        """),
+        {"date": game_date},
+    )
+    rows = result.fetchall()
+
+    # Count games scheduled that day for the header
+    count_result = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM games
+            WHERE DATE(tip_time_utc AT TIME ZONE 'America/New_York') = :date
+              AND status = 'scheduled'
+        """),
+        {"date": game_date},
+    )
+    games_count = int(count_result.scalar() or 0)
+
+    date_str = game_date.strftime("%m/%d")
+    header = (
+        f"NBA Playoff Picks {date_str}\n\n"
+        f"AI value bets from the model.\n"
+        f"{games_count} games analyzed.\n\n"
+        f"Full card: truline.app\n\n"
+        f"#NBA #NBAPlayoffs #SportsBetting"
+    )
+    tweets = [header]
+
+    if not rows:
+        return tweets
+
+    for row in rows:
+        home = row.home_team_id
+        away = row.away_team_id
+        odds_dec = float(row.odds_decimal) if row.odds_decimal else 0.0
+        line = float(row.line) if row.line is not None else None
+        pick_team, pick_label = _nba_bet_label(
+            row.market_type, row.outcome_label, line, home, away
+        )
+        model_pct = round(float(row.p_true) * 100)
+        market_pct = round(float(row.p_market) * 100)
+        edge_pct = float(row.raw_edge) * 100
+        odds_str = _fmt_american(odds_dec)
+        score = int(row.algo_a_value_score or 0)
+
+        game_time = ""
+        if row.tip_time_utc:
+            et = row.tip_time_utc - timedelta(hours=4)
+            try:
+                game_time = et.strftime("%-I:%M %p ET")
+            except Exception:
+                game_time = et.strftime("%I:%M %p ET").lstrip("0")
+
+        away_name = NBA_TEAM_NAMES.get(away, away)
+        home_name = NBA_TEAM_NAMES.get(home, home)
+        handle = NBA_TEAM_HANDLES.get(pick_team, "")
+
+        header_line = f"{away_name} @ {home_name}"
+        if game_time:
+            header_line += f"  {game_time}"
+
+        tweet = (
+            f"{header_line}\n\n"
+            f"Model pick: {pick_label}\n"
+            f"Odds: {odds_str}\n"
+            f"Edge: +{edge_pct:.1f}%\n\n"
+            f"Model: {model_pct}% | Market: {market_pct}%\n\n"
+            f"Value Score: {score}/100\n\n"
+            f"{handle} #NBA #NBAPlayoffs"
+        ).strip()
+
+        if len(tweet) > 280:
+            tweet = tweet[:277] + "..."
+        tweets.append(tweet)
+
+    return tweets
+
+
+async def generate_nba_results_tweet(session: AsyncSession, game_date: date) -> str | None:
+    """NBA results recap tweet from prediction_snapshots."""
+    from src.models.prediction_snapshot import PredictionSnapshot
+
+    stmt = select(PredictionSnapshot).where(
+        and_(
+            PredictionSnapshot.game_date == game_date,
+            PredictionSnapshot.best_bet_result.isnot(None),
+        )
+    )
+    result = await session.execute(stmt)
+    snapshots = list(result.scalars().all())
+    if not snapshots:
+        return None
+
+    wins = sum(1 for s in snapshots if s.best_bet_result == "win")
+    losses = sum(1 for s in snapshots if s.best_bet_result == "loss")
+    pushes = sum(1 for s in snapshots if s.best_bet_result == "push")
+    profit = sum(float(s.best_bet_profit or 0) for s in snapshots)
+    total = wins + losses
+    pct = round(wins / total * 100, 1) if total else 0
+    date_str = game_date.strftime("%m/%d")
+    profit_str = f"+{profit:.2f}" if profit >= 0 else f"{profit:.2f}"
+
+    graded = [s for s in snapshots if s.best_bet_profit is not None]
+    best_line = ""
+    worst_line = ""
+    if graded:
+        srt = sorted(graded, key=lambda s: float(s.best_bet_profit or 0), reverse=True)
+        best, worst = srt[0], srt[-1]
+
+        def _fmt_snap(s, mark):
+            team = s.best_bet_team or "?"
+            btype = (s.best_bet_type or "").lower()
+            label = "ML" if btype == "moneyline" else ("SPR" if btype == "spread" else ("O/U" if btype == "total" else ""))
+            line_s = ""
+            if s.best_bet_line is not None and btype in ("spread", "total"):
+                line_s = f" {float(s.best_bet_line)}"
+            return f"{team} {label}{line_s} {mark}".strip()
+
+        if float(best.best_bet_profit or 0) > 0:
+            best_p = float(best.best_bet_profit or 0)
+            best_line = f"Best: {_fmt_snap(best, 'W')} (+{best_p:.0f})\n"
+        if float(worst.best_bet_profit or 0) < 0:
+            worst_p = float(worst.best_bet_profit or 0)
+            worst_line = f"Worst: {_fmt_snap(worst, 'L')} ({worst_p:.0f})\n"
+
+    tweet = f"NBA RESULTS {date_str}\n\nRecord: {wins}-{losses}"
+    if pushes:
+        tweet += f"-{pushes}"
+    tweet += f" ({pct}%)\nP/L: {profit_str}u\n"
+    if best_line or worst_line:
+        tweet += "\n" + best_line + worst_line
+    tweet += "\nFull report: truline.app\n\n#NBA #SportsBetting"
+
+    if len(tweet) > 280:
+        tweet = tweet[:277] + "..."
+    return tweet
+
+
+async def generate_nba_pregame_tweet(session: AsyncSession, market_id: str) -> str | None:
+    """Single NBA pregame pick tweet for a given market."""
+    result = await session.execute(
+        text("""
+            SELECT
+                g.home_team_id, g.away_team_id, g.tip_time_utc,
+                m.market_type, m.outcome_label, m.line, m.odds_decimal,
+                mp.p_true, mp.p_market, mp.raw_edge,
+                vs.algo_a_value_score
+            FROM value_scores vs
+            JOIN markets m ON m.market_id = vs.market_id
+            JOIN games g ON g.game_id = m.game_id
+            JOIN model_predictions mp ON mp.prediction_id = vs.prediction_id
+            WHERE m.market_id = :mid
+              AND vs.active_algorithm = 'A'
+            ORDER BY vs.calc_time DESC
+            LIMIT 1
+        """),
+        {"mid": market_id},
+    )
+    row = result.fetchone()
+    if not row:
+        return None
+
+    home, away = row.home_team_id, row.away_team_id
+    odds_dec = float(row.odds_decimal) if row.odds_decimal else 0.0
+    line = float(row.line) if row.line is not None else None
+    pick_team, pick_label = _nba_bet_label(row.market_type, row.outcome_label, line, home, away)
+    odds_str = _fmt_american(odds_dec)
+    edge_pct = float(row.raw_edge) * 100
+    score = int(row.algo_a_value_score or 0)
+
+    game_time = ""
+    if row.tip_time_utc:
+        et = row.tip_time_utc - timedelta(hours=4)
+        try:
+            game_time = et.strftime("%-I:%M %p ET")
+        except Exception:
+            game_time = et.strftime("%I:%M %p ET").lstrip("0")
+
+    away_name = NBA_TEAM_NAMES.get(away, away)
+    home_name = NBA_TEAM_NAMES.get(home, home)
+    away_handle = NBA_TEAM_HANDLES.get(away, away)
+    home_handle = NBA_TEAM_HANDLES.get(home, home)
+
+    lines = [f"🏀 {away_name} @ {home_name}"]
+    if game_time:
+        lines.append(f"🕐 {game_time}")
+    lines.append("")
+    lines.append(f"Model Pick: {pick_label}")
+    lines.append(f"Odds: {odds_str}")
+    lines.append("")
+    lines.append(f"Value Score: {score}/100")
+    lines.append(f"Edge: +{edge_pct:.1f}%")
+    lines.append("")
+    lines.append(f"{away_handle} vs {home_handle}")
+    lines.append("")
+    lines.append("truline.app")
+    lines.append("")
+    lines.append("#NBA #NBAPlayoffs")
+
     tweet = "\n".join(lines)
     if len(tweet) > 280:
         tweet = tweet[:277] + "..."
