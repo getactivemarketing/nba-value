@@ -388,3 +388,86 @@ def generate_nba_card(
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
     return buf.getvalue()
+
+
+def generate_final_card(
+    away_team: str,
+    home_team: str,
+    away_name: str,
+    home_name: str,
+    away_score: int,
+    home_score: int,
+    away_first: int | None = None,
+    home_first: int | None = None,
+    pick_team: str | None = None,
+    pick_type: str | None = None,
+    pick_line: float | None = None,
+    pick_result: str | None = None,
+) -> bytes:
+    """Generate a final score recap card image. Returns PNG bytes."""
+    from PIL import Image, ImageDraw
+
+    W, H = 1200, 675
+    img = Image.new("RGB", (W, H), BG)
+    draw = ImageDraw.Draw(img)
+    fonts = _get_fonts()
+
+    _draw_background(draw, W, H)
+
+    # Top label
+    draw.text((60, 40), "FINAL SCORE", font=fonts["s"], fill=ACCENT)
+
+    # Logos
+    away_logo = _fetch_logo(away_team)
+    home_logo = _fetch_logo(home_team)
+    _paste_logo(img, away_logo, 200, 170, max_size=150)
+    _paste_logo(img, home_logo, 1000, 170, max_size=150)
+
+    # Team names
+    draw.text((200, 310), away_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+    draw.text((1000, 310), home_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+
+    # Center: final score
+    score_text = f"{away_score} - {home_score}"
+    draw.text((W // 2, 170), score_text, font=fonts["huge"], fill=WHITE, anchor="mm")
+    draw.text((W // 2, 250), "FINAL", font=fonts["s"], fill=MUTED, anchor="mm")
+
+    # 1st inning result
+    if away_first is not None and home_first is not None:
+        is_nrfi = (away_first + home_first) == 0
+        tag = "NRFI" if is_nrfi else "YRFI"
+        tag_color = GREEN if is_nrfi else AMBER
+        fi_text = f"1st Inning: {away_first}-{home_first} ({tag})"
+        draw.text((W // 2, 380), fi_text, font=fonts["m"], fill=tag_color, anchor="mm")
+
+    # Pick result (if we had a bet on this game)
+    if pick_team and pick_result:
+        result_color = GREEN if pick_result == "win" else (RED if pick_result == "loss" else MUTED)
+        result_label = "W" if pick_result == "win" else ("L" if pick_result == "loss" else "P")
+        pick_label = pick_type.upper() if pick_type else ""
+        line_str = f" {pick_line:+g}" if pick_line is not None else ""
+        pick_text = f"Pick: {pick_team} {pick_label}{line_str} -- {result_label}"
+        draw.text((W // 2, 460), pick_text, font=fonts["m"], fill=result_color, anchor="mm")
+    elif pick_team:
+        pick_label = pick_type.upper() if pick_type else ""
+        line_str = f" {pick_line:+g}" if pick_line is not None else ""
+        pick_text = f"Pick: {pick_team} {pick_label}{line_str}"
+        draw.text((W // 2, 460), pick_text, font=fonts["m"], fill=MUTED, anchor="mm")
+
+    # Winner highlight
+    if away_score > home_score:
+        winner_name = away_name
+    elif home_score > away_score:
+        winner_name = home_name
+    else:
+        winner_name = None
+    if winner_name:
+        draw.text((W // 2, 540), f"{winner_name.upper()} WINS", font=fonts["l"], fill=WHITE, anchor="mm")
+
+    # Footer
+    draw.text((60, H - 40), "truline.app", font=fonts["xs"], fill=ACCENT)
+    draw.text((W - 60, H - 40), "@trulineapp", font=fonts["xs"], fill=ACCENT, anchor="ra")
+
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()

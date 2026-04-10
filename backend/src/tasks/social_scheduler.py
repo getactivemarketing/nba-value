@@ -340,11 +340,13 @@ async def _post_first_inning_recaps_async() -> dict:
 
 
 async def _post_final_recaps_async() -> dict:
-    """Post per-game final recaps for completed games."""
+    """Post per-game final recaps for completed games with card images."""
     from sqlalchemy import select, and_, text
     from src.models import MLBGame
-    from src.services.social.content import generate_final_recap_tweet
-    from src.services.social.blotato import post_tweet
+    from src.models.mlb_prediction_snapshot import MLBPredictionSnapshot
+    from src.services.social.content import generate_final_recap_tweet, TEAM_NAMES
+    from src.services.social.blotato import post_tweet, upload_media
+    from src.services.social.image_generator import generate_final_card
 
     posted_count = 0
     skipped = 0
@@ -369,7 +371,49 @@ async def _post_final_recaps_async() -> dict:
             if not tweet:
                 skipped += 1
                 continue
-            result = post_tweet(tweet, schedule_at="next-free-slot")
+
+            # Look up our pick for this game (if any)
+            pick_team = pick_type = pick_line = pick_result = None
+            try:
+                snap_stmt = select(MLBPredictionSnapshot).where(
+                    and_(
+                        MLBPredictionSnapshot.game_id == game.game_id,
+                        MLBPredictionSnapshot.best_bet_team.isnot(None),
+                    )
+                ).order_by(MLBPredictionSnapshot.snapshot_time.desc()).limit(1)
+                snap = (await session.execute(snap_stmt)).scalar_one_or_none()
+                if snap:
+                    pick_team = snap.best_bet_team
+                    pick_type = snap.best_bet_type
+                    pick_line = float(snap.best_bet_line) if snap.best_bet_line is not None else None
+                    pick_result = snap.best_bet_result
+            except Exception as e:
+                log_task(f"Failed to look up pick for {game.game_id}: {e}")
+
+            # Generate card image
+            media_urls = None
+            try:
+                png_bytes = generate_final_card(
+                    away_team=game.away_team,
+                    home_team=game.home_team,
+                    away_name=TEAM_NAMES.get(game.away_team, game.away_team),
+                    home_name=TEAM_NAMES.get(game.home_team, game.home_team),
+                    away_score=game.away_score,
+                    home_score=game.home_score,
+                    away_first=game.away_first_inning_runs,
+                    home_first=game.home_first_inning_runs,
+                    pick_team=pick_team,
+                    pick_type=pick_type,
+                    pick_line=pick_line,
+                    pick_result=pick_result,
+                )
+                public_url = upload_media(png_bytes, filename=f"final_{game.game_id}.png")
+                if public_url:
+                    media_urls = [public_url]
+            except Exception as e:
+                log_task(f"Failed to generate/upload final card for {game.game_id}: {e}")
+
+            result = post_tweet(tweet, schedule_at="next-free-slot", media_urls=media_urls)
             if result:
                 await session.execute(
                     text("UPDATE mlb_games SET final_tweet_posted = TRUE WHERE game_id = :gid"),
