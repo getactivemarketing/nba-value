@@ -873,13 +873,17 @@ async def generate_nba_picks_thread(session: AsyncSession, game_date: date) -> l
 
 
 async def generate_nba_results_tweet(session: AsyncSession, game_date: date) -> str | None:
-    """NBA results recap tweet from prediction_snapshots."""
+    """NBA results recap tweet from prediction_snapshots.
+
+    Posts results even when no bets qualified (reports winner prediction accuracy).
+    """
     from src.models.prediction_snapshot import PredictionSnapshot
 
+    # Fetch all graded snapshots (winner_correct set), not just those with bets
     stmt = select(PredictionSnapshot).where(
         and_(
             PredictionSnapshot.game_date == game_date,
-            PredictionSnapshot.best_bet_result.isnot(None),
+            PredictionSnapshot.winner_correct.isnot(None),
         )
     )
     result = await session.execute(stmt)
@@ -887,44 +891,62 @@ async def generate_nba_results_tweet(session: AsyncSession, game_date: date) -> 
     if not snapshots:
         return None
 
-    wins = sum(1 for s in snapshots if s.best_bet_result == "win")
-    losses = sum(1 for s in snapshots if s.best_bet_result == "loss")
-    pushes = sum(1 for s in snapshots if s.best_bet_result == "push")
-    profit = sum(float(s.best_bet_profit or 0) for s in snapshots)
-    total = wins + losses
-    pct = round(wins / total * 100, 1) if total else 0
     date_str = game_date.strftime("%m/%d")
-    profit_str = f"+{profit:.2f}" if profit >= 0 else f"{profit:.2f}"
 
-    graded = [s for s in snapshots if s.best_bet_profit is not None]
-    best_line = ""
-    worst_line = ""
-    if graded:
-        srt = sorted(graded, key=lambda s: float(s.best_bet_profit or 0), reverse=True)
-        best, worst = srt[0], srt[-1]
+    # Separate snapshots with qualifying bets from those without
+    with_bets = [s for s in snapshots if s.best_bet_result is not None]
 
-        def _fmt_snap(s, mark):
-            team = s.best_bet_team or "?"
-            btype = (s.best_bet_type or "").lower()
-            label = "ML" if btype == "moneyline" else ("SPR" if btype == "spread" else ("O/U" if btype == "total" else ""))
-            line_s = ""
-            if s.best_bet_line is not None and btype in ("spread", "total"):
-                line_s = f" {float(s.best_bet_line)}"
-            return f"{team} {label}{line_s} {mark}".strip()
+    # Winner prediction stats (always available)
+    winners_correct = sum(1 for s in snapshots if s.winner_correct)
+    winners_total = len(snapshots)
+    winners_pct = round(winners_correct / winners_total * 100, 1) if winners_total else 0
 
-        if float(best.best_bet_profit or 0) > 0:
-            best_p = float(best.best_bet_profit or 0)
-            best_line = f"Best: {_fmt_snap(best, 'W')} (+{best_p:.0f})\n"
-        if float(worst.best_bet_profit or 0) < 0:
-            worst_p = float(worst.best_bet_profit or 0)
-            worst_line = f"Worst: {_fmt_snap(worst, 'L')} ({worst_p:.0f})\n"
+    if with_bets:
+        # Normal path: we had qualifying bets
+        wins = sum(1 for s in with_bets if s.best_bet_result == "win")
+        losses = sum(1 for s in with_bets if s.best_bet_result == "loss")
+        pushes = sum(1 for s in with_bets if s.best_bet_result == "push")
+        profit = sum(float(s.best_bet_profit or 0) for s in with_bets)
+        total = wins + losses
+        pct = round(wins / total * 100, 1) if total else 0
+        profit_str = f"+{profit:.2f}" if profit >= 0 else f"{profit:.2f}"
 
-    tweet = f"NBA RESULTS {date_str}\n\nRecord: {wins}-{losses}"
-    if pushes:
-        tweet += f"-{pushes}"
-    tweet += f" ({pct}%)\nP/L: {profit_str}u\n"
-    if best_line or worst_line:
-        tweet += "\n" + best_line + worst_line
+        graded = [s for s in with_bets if s.best_bet_profit is not None]
+        best_line = ""
+        worst_line = ""
+        if graded:
+            srt = sorted(graded, key=lambda s: float(s.best_bet_profit or 0), reverse=True)
+            best, worst = srt[0], srt[-1]
+
+            def _fmt_snap(s, mark):
+                team = s.best_bet_team or "?"
+                btype = (s.best_bet_type or "").lower()
+                label = "ML" if btype == "moneyline" else ("SPR" if btype == "spread" else ("O/U" if btype == "total" else ""))
+                line_s = ""
+                if s.best_bet_line is not None and btype in ("spread", "total"):
+                    line_s = f" {float(s.best_bet_line)}"
+                return f"{team} {label}{line_s} {mark}".strip()
+
+            if float(best.best_bet_profit or 0) > 0:
+                best_p = float(best.best_bet_profit or 0)
+                best_line = f"Best: {_fmt_snap(best, 'W')} (+{best_p:.0f})\n"
+            if float(worst.best_bet_profit or 0) < 0:
+                worst_p = float(worst.best_bet_profit or 0)
+                worst_line = f"Worst: {_fmt_snap(worst, 'L')} ({worst_p:.0f})\n"
+
+        tweet = f"NBA RESULTS {date_str}\n\nBets: {wins}-{losses}"
+        if pushes:
+            tweet += f"-{pushes}"
+        tweet += f" ({pct}%)\nP/L: {profit_str}u\n"
+        tweet += f"Winners: {winners_correct}/{winners_total} ({winners_pct}%)\n"
+        if best_line or worst_line:
+            tweet += "\n" + best_line + worst_line
+    else:
+        # No qualifying bets — report winner predictions only
+        tweet = f"NBA RESULTS {date_str}\n\n"
+        tweet += f"No value bets qualified yesterday\n"
+        tweet += f"Winner picks: {winners_correct}/{winners_total} ({winners_pct}%)\n"
+
     tweet += "\nFull report: truline.app\n\n#NBA #SportsBetting"
 
     if len(tweet) > 280:
