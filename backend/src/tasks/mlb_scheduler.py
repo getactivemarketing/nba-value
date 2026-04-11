@@ -529,12 +529,105 @@ async def grade_predictions_async() -> dict:
     return {"predictions_graded": graded, "status": "success"}
 
 
+async def update_betting_records_async() -> dict:
+    """Compute ATS and O/U records from graded MLB prediction snapshots.
+
+    Counts runline wins/losses for ATS record and total bet overs/unders
+    for O/U record, then updates the latest mlb_team_stats row for each team.
+    """
+    from sqlalchemy import select, func, and_, case
+    from src.models import MLBPredictionSnapshot, MLBTeamStats
+
+    updated = 0
+
+    async with mlb_session() as session:
+        # Get all teams that have graded snapshots
+        teams_result = await session.execute(
+            select(MLBPredictionSnapshot.home_team).distinct()
+        )
+        all_teams = set()
+        for row in teams_result.fetchall():
+            all_teams.add(row[0])
+        teams_result2 = await session.execute(
+            select(MLBPredictionSnapshot.away_team).distinct()
+        )
+        for row in teams_result2.fetchall():
+            all_teams.add(row[0])
+
+        for team in all_teams:
+            # ATS: count runline results where this team was the bet team
+            rl_result = await session.execute(
+                select(
+                    func.count(case((MLBPredictionSnapshot.best_rl_result == "win", 1))).label("ats_w"),
+                    func.count(case((MLBPredictionSnapshot.best_rl_result == "loss", 1))).label("ats_l"),
+                    func.count(case((MLBPredictionSnapshot.best_rl_result == "push", 1))).label("ats_p"),
+                ).where(
+                    and_(
+                        MLBPredictionSnapshot.best_rl_team == team,
+                        MLBPredictionSnapshot.best_rl_result.isnot(None),
+                    )
+                )
+            )
+            rl_row = rl_result.first()
+
+            # O/U: count total results for games this team played in
+            ou_result = await session.execute(
+                select(
+                    func.count(case((MLBPredictionSnapshot.best_total_result == "win", 1))).label("ou_w"),
+                    func.count(case((MLBPredictionSnapshot.best_total_result == "loss", 1))).label("ou_l"),
+                    func.count(case((MLBPredictionSnapshot.best_total_result == "push", 1))).label("ou_p"),
+                ).where(
+                    and_(
+                        MLBPredictionSnapshot.best_total_result.isnot(None),
+                        (MLBPredictionSnapshot.home_team == team) | (MLBPredictionSnapshot.away_team == team),
+                    )
+                )
+            )
+            ou_row = ou_result.first()
+
+            if not rl_row and not ou_row:
+                continue
+
+            # Update latest team_stats row
+            latest = await session.execute(
+                select(MLBTeamStats).where(
+                    MLBTeamStats.team_abbr == team
+                ).order_by(MLBTeamStats.stat_date.desc()).limit(1)
+            )
+            stats = latest.scalar_one_or_none()
+            if not stats:
+                continue
+
+            if rl_row:
+                stats.ats_wins = rl_row.ats_w or 0
+                stats.ats_losses = rl_row.ats_l or 0
+                stats.ats_pushes = rl_row.ats_p or 0
+            if ou_row:
+                stats.ou_overs = ou_row.ou_w or 0
+                stats.ou_unders = ou_row.ou_l or 0
+                stats.ou_pushes = ou_row.ou_p or 0
+
+            updated += 1
+
+        await session.commit()
+
+    return {"teams_updated": updated, "status": "success"}
+
+
 def run_grading():
     """Sync wrapper for grading."""
     log_task("Running prediction grading...")
     try:
         result = _run_async(grade_predictions_async())
         log_task("Grading complete", **result)
+
+        # Update ATS/O-U records after grading
+        try:
+            br_result = _run_async(update_betting_records_async())
+            log_task("Betting records updated", **br_result)
+        except Exception as e:
+            log_task(f"Betting records update FAILED (non-fatal): {e}")
+
         _last_run_times['grading'] = datetime.now(timezone.utc)
         return result
     except Exception as e:

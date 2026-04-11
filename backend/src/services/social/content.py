@@ -109,6 +109,68 @@ NBA_TEAM_HASHTAGS = {
 }
 
 
+async def get_team_card_stats(session: AsyncSession, team_abbr: str) -> dict:
+    """Fetch team stats for social media card images.
+
+    Returns dict with: record, l10, div_rank, ats, ou (all as formatted strings or None).
+    """
+    from src.models.mlb_team import MLBTeam
+
+    result = {}
+
+    # Get latest team stats
+    stat_row = await session.execute(
+        select(MLBTeamStats).where(
+            MLBTeamStats.team_abbr == team_abbr
+        ).order_by(desc(MLBTeamStats.stat_date)).limit(1)
+    )
+    stats = stat_row.scalar_one_or_none()
+
+    if stats:
+        if stats.wins is not None and stats.losses is not None:
+            result["record"] = f"{stats.wins}-{stats.losses}"
+        result["l10"] = stats.last_10_record
+        if stats.ats_wins is not None and stats.ats_losses is not None:
+            result["ats"] = f"{stats.ats_wins}-{stats.ats_losses}"
+        if stats.ou_overs is not None and stats.ou_unders is not None:
+            result["ou"] = f"{stats.ou_overs}-{stats.ou_unders}"
+
+    # Get division + compute rank
+    team_row = await session.execute(
+        select(MLBTeam).where(MLBTeam.team_abbr == team_abbr)
+    )
+    team = team_row.scalar_one_or_none()
+
+    if team and stats and stats.wins is not None:
+        # Find all teams in same league+division, get their latest stats
+        div_teams = await session.execute(
+            select(MLBTeam.team_abbr).where(
+                and_(MLBTeam.league == team.league, MLBTeam.division == team.division)
+            )
+        )
+        div_abbrs = [r[0] for r in div_teams.fetchall()]
+
+        # Get latest win_pct for each team in division
+        div_records = []
+        for abbr in div_abbrs:
+            s = await session.execute(
+                select(MLBTeamStats.team_abbr, MLBTeamStats.win_pct).where(
+                    MLBTeamStats.team_abbr == abbr
+                ).order_by(desc(MLBTeamStats.stat_date)).limit(1)
+            )
+            row = s.first()
+            if row and row[1] is not None:
+                div_records.append((row[0], float(row[1])))
+
+        div_records.sort(key=lambda x: x[1], reverse=True)
+        rank = next((i + 1 for i, (a, _) in enumerate(div_records) if a == team_abbr), None)
+        if rank:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(rank, "th")
+            result["div_rank"] = f"{rank}{suffix} {team.league} {team.division}"
+
+    return result
+
+
 def _fmt_odds(decimal_odds: float) -> str:
     """Format decimal odds to American."""
     if decimal_odds >= 2.0:

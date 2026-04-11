@@ -158,6 +158,7 @@ async def _post_pregame_nrfi_picks_async() -> dict:
         generate_pregame_nrfi_tweet,
         _get_team_first_inning_pct,
         _get_pitcher_era,
+        get_team_card_stats,
         TEAM_NAMES,
         TEAM_HANDLES,
     )
@@ -217,6 +218,9 @@ async def _post_pregame_nrfi_picks_async() -> dict:
                     except Exception:
                         game_time_str = et.strftime("%I:%M %p ET").lstrip("0")
 
+                away_stats = await get_team_card_stats(session, game.away_team)
+                home_stats = await get_team_card_stats(session, game.home_team)
+
                 png_bytes = generate_nrfi_card(
                     away_team=game.away_team,
                     home_team=game.home_team,
@@ -230,6 +234,16 @@ async def _post_pregame_nrfi_picks_async() -> dict:
                     away_handle=TEAM_HANDLES.get(game.away_team),
                     home_handle=TEAM_HANDLES.get(game.home_team),
                     game_time=game_time_str,
+                    away_record=away_stats.get("record"),
+                    home_record=home_stats.get("record"),
+                    away_l10=away_stats.get("l10"),
+                    home_l10=home_stats.get("l10"),
+                    away_div_rank=away_stats.get("div_rank"),
+                    home_div_rank=home_stats.get("div_rank"),
+                    away_ats=away_stats.get("ats"),
+                    home_ats=home_stats.get("ats"),
+                    away_ou=away_stats.get("ou"),
+                    home_ou=home_stats.get("ou"),
                 )
 
                 public_url = upload_media(png_bytes, filename=f"nrfi_{game.game_id}.png")
@@ -259,6 +273,7 @@ async def _post_first_inning_recaps_async() -> dict:
     from src.services.social.content import (
         generate_first_inning_recap_tweet,
         _get_team_first_inning_pct,
+        get_team_card_stats,
         TEAM_NAMES,
     )
     from src.services.social.blotato import post_tweet, upload_media
@@ -308,6 +323,9 @@ async def _post_first_inning_recaps_async() -> dict:
                     p_home_scores = (home_off + away_def) / 2.0
                     predicted_nrfi_pct = (1.0 - p_away_scores) * (1.0 - p_home_scores) * 100
 
+                away_stats = await get_team_card_stats(session, game.away_team)
+                home_stats = await get_team_card_stats(session, game.home_team)
+
                 png_bytes = generate_recap_card(
                     away_team=game.away_team,
                     home_team=game.home_team,
@@ -317,6 +335,10 @@ async def _post_first_inning_recaps_async() -> dict:
                     home_first=home_fi,
                     is_nrfi=is_nrfi,
                     predicted_nrfi_pct=predicted_nrfi_pct,
+                    away_record=away_stats.get("record"),
+                    home_record=home_stats.get("record"),
+                    away_div_rank=away_stats.get("div_rank"),
+                    home_div_rank=home_stats.get("div_rank"),
                 )
 
                 public_url = upload_media(png_bytes, filename=f"recap_{game.game_id}.png")
@@ -344,7 +366,7 @@ async def _post_final_recaps_async() -> dict:
     from sqlalchemy import select, and_, text
     from src.models import MLBGame
     from src.models.mlb_prediction_snapshot import MLBPredictionSnapshot
-    from src.services.social.content import generate_final_recap_tweet, TEAM_NAMES
+    from src.services.social.content import generate_final_recap_tweet, get_team_card_stats, TEAM_NAMES
     from src.services.social.blotato import post_tweet, upload_media
     from src.services.social.image_generator import generate_final_card
 
@@ -394,6 +416,9 @@ async def _post_final_recaps_async() -> dict:
             # Generate card image
             media_urls = None
             try:
+                away_stats = await get_team_card_stats(session, game.away_team)
+                home_stats = await get_team_card_stats(session, game.home_team)
+
                 png_bytes = generate_final_card(
                     away_team=game.away_team,
                     home_team=game.home_team,
@@ -407,6 +432,16 @@ async def _post_final_recaps_async() -> dict:
                     pick_type=pick_type,
                     pick_line=pick_line,
                     pick_result=pick_result,
+                    away_record=away_stats.get("record"),
+                    home_record=home_stats.get("record"),
+                    away_l10=away_stats.get("l10"),
+                    home_l10=home_stats.get("l10"),
+                    away_div_rank=away_stats.get("div_rank"),
+                    home_div_rank=home_stats.get("div_rank"),
+                    away_ats=away_stats.get("ats"),
+                    home_ats=home_stats.get("ats"),
+                    away_ou=away_stats.get("ou"),
+                    home_ou=home_stats.get("ou"),
                 )
                 public_url = upload_media(png_bytes, filename=f"final_{game.game_id}.png")
                 if public_url:
