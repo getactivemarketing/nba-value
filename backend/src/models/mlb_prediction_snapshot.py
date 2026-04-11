@@ -15,7 +15,7 @@ class MLBPredictionSnapshot(Base):
     __tablename__ = "mlb_prediction_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    game_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    game_id: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
     snapshot_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     # Game info

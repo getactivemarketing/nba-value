@@ -383,10 +383,12 @@ async def snapshot_predictions_async(hours_ahead: float = 1.0) -> dict:
                     snapshot.best_bet_edge = prediction.best_bet.raw_edge
 
                 session.add(snapshot)
+                await session.flush()
                 snapshots_created += 1
 
             except Exception as e:
                 logger.warning(f"Failed to snapshot game {game.game_id}: {e}")
+                await session.rollback()
 
         await session.commit()
 

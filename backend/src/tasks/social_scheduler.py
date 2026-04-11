@@ -351,13 +351,14 @@ async def _post_final_recaps_async() -> dict:
     posted_count = 0
     skipped = 0
 
-    # Only recap games from today (ET) to prevent spamming historical games
+    # Include today and yesterday to catch late West Coast games that finish after midnight ET
     today = _today_et()
+    yesterday = today - timedelta(days=1)
 
     async with _social_session_factory() as session:
         stmt = select(MLBGame).where(
             and_(
-                MLBGame.game_date == today,
+                MLBGame.game_date.in_([today, yesterday]),
                 MLBGame.status == "final",
                 MLBGame.final_tweet_posted == False,  # noqa: E712
                 MLBGame.home_score.isnot(None),
