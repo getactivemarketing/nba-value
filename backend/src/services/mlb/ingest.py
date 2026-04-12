@@ -681,7 +681,7 @@ class MLBDataIngestor:
                 last_10_record=f"{record.get('last_10_wins', 0)}-{record.get('last_10_losses', 0)}",
                 team_whip=None,
             ).on_conflict_do_update(
-                constraint="idx_mlb_team_stats_unique",
+                constraint="uq_mlb_team_stats_team_date",
                 set_={
                     "wins": wins,
                     "losses": losses,

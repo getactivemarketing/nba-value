@@ -28,10 +28,13 @@ def _get_fonts():
     """Load fonts with fallbacks."""
     from PIL import ImageFont
 
+    # Bundled font checked first — guarantees availability on Railway/Docker
+    bundled = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts" / "DejaVuSans-Bold.ttf"
     font_paths = [
-        "/System/Library/Fonts/Helvetica.ttc",           # macOS
+        str(bundled),                                     # Bundled in repo
+        "/System/Library/Fonts/Helvetica.ttc",            # macOS
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux Debian
-        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",   # Linux RHEL
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",    # Linux RHEL
     ]
 
     font_path = None
