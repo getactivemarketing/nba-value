@@ -379,15 +379,13 @@ def _implied_prob_from_decimal(decimal_odds: float) -> float:
 
 
 async def generate_daily_picks_thread(session: AsyncSession, game_date: date) -> list[str]:
-    """
-    Generate a Twitter thread with today's best MLB value bets.
+    """Generate a Twitter thread with today's best MLB value bets.
 
-    Shows actual value plays where the model disagrees with the market.
+    Uses narrative voice with data-backed analysis instead of raw stat dumps.
     Returns a list of tweet-length strings (max 280 chars each).
     """
     tweets = []
 
-    # Today's scheduled games
     games_result = await session.execute(
         select(MLBGame).where(
             and_(
@@ -402,7 +400,6 @@ async def generate_daily_picks_thread(session: AsyncSession, game_date: date) ->
 
     game_ids = [g.game_id for g in games]
 
-    # Predictions (moneyline)
     pred_result = await session.execute(
         select(MLBPrediction).where(
             and_(
@@ -413,7 +410,6 @@ async def generate_daily_picks_thread(session: AsyncSession, game_date: date) ->
     )
     pred_map = {p.game_id: p for p in pred_result.scalars().all()}
 
-    # Markets (moneyline) - take latest per game
     mkt_result = await session.execute(
         select(MLBMarket).where(
             and_(
@@ -427,9 +423,6 @@ async def generate_daily_picks_thread(session: AsyncSession, game_date: date) ->
         if m.game_id not in mkt_map:
             mkt_map[m.game_id] = m
 
-    date_str = game_date.strftime("%m/%d")
-
-    # Build value plays
     value_plays = []
     for game in games:
         pred = pred_map.get(game.game_id)
@@ -448,24 +441,23 @@ async def generate_daily_picks_thread(session: AsyncSession, game_date: date) ->
         mk_home = _implied_prob_from_decimal(home_odds)
         mk_away = _implied_prob_from_decimal(away_odds)
 
-        # Which side has edge?
         home_edge = p_home - mk_home
         away_edge = p_away - mk_away
 
         if home_edge >= away_edge:
-            side = "home"
             team = game.home_team
             model_p = p_home
             market_p = mk_home
             odds = home_odds
             edge = home_edge
+            is_underdog = home_odds >= 2.0
         else:
-            side = "away"
             team = game.away_team
             model_p = p_away
             market_p = mk_away
             odds = away_odds
             edge = away_edge
+            is_underdog = away_odds >= 2.0
 
         if edge <= 0.05:
             continue
@@ -475,24 +467,43 @@ async def generate_daily_picks_thread(session: AsyncSession, game_date: date) ->
 
         value_plays.append({
             "game": game,
-            "side": side,
             "team": team,
             "model_p": model_p,
             "market_p": market_p,
             "odds": odds,
             "edge": edge,
+            "is_underdog": is_underdog,
         })
 
     value_plays.sort(key=lambda x: x["edge"], reverse=True)
 
     # Header tweet
-    header = (
-        f"MLB Picks {date_str}\n\n"
-        f"Today's value plays from the model.\n"
-        f"{len(games)} games analyzed.\n\n"
-        f"Full card: truline.app\n\n"
-        f"#MLB #SportsBetting #GamblingX"
-    )
+    day_name = game_date.strftime("%A")
+    dogs = sum(1 for p in value_plays[:5] if p["is_underdog"])
+    favs = min(len(value_plays), 5) - dogs
+
+    pick_desc_parts = []
+    if dogs:
+        pick_desc_parts.append(f"{dogs} underdog{'s' if dogs != 1 else ''}")
+    if favs:
+        pick_desc_parts.append(f"{favs} favorite{'s' if favs != 1 else ''}")
+    pick_desc = " and ".join(pick_desc_parts) if pick_desc_parts else "no value plays"
+
+    if value_plays:
+        header = (
+            f"MLB picks for {day_name} — {len(games)} games, "
+            f"{min(len(value_plays), 5)} cleared the model.\n\n"
+            f"Today's card: {pick_desc}.\n\n"
+            f"truline.app\n\n"
+            f"#MLB #GamblingX"
+        )
+    else:
+        header = (
+            f"MLB picks for {day_name} — {len(games)} games analyzed, "
+            f"nothing cleared the model today.\n\n"
+            f"truline.app\n\n"
+            f"#MLB #GamblingX"
+        )
     tweets.append(header)
 
     if not value_plays:
@@ -512,37 +523,78 @@ async def generate_daily_picks_thread(session: AsyncSession, game_date: date) ->
         if game.game_time:
             et = game.game_time - timedelta(hours=4)
             try:
-                game_time = et.strftime("%-I:%M %p ET")
+                game_time = et.strftime("%-I:%M %p")
             except Exception:
-                game_time = et.strftime("%I:%M %p ET").lstrip("0")
+                game_time = et.strftime("%I:%M %p").lstrip("0")
 
         away_name = TEAM_NAMES.get(away, away)
         home_name = TEAM_NAMES.get(home, home)
         team_name = TEAM_NAMES.get(team, team)
         hashtag = TEAM_HASHTAGS.get(team, "")
 
-        # Pitcher matchup
-        away_last, away_era = await _get_pitcher_era(session, game.away_starter_id)
-        home_last, home_era = await _get_pitcher_era(session, game.home_starter_id)
-        matchup_line = ""
-        if away_last and home_last:
-            a_era = f"{away_era:.2f}" if away_era is not None else "-"
-            h_era = f"{home_era:.2f}" if home_era is not None else "-"
-            matchup_line = f"\n\n{away_last} {a_era} vs {home_last} {h_era}"
+        # Fetch context
+        l10 = None
+        stat_row = await session.execute(
+            select(MLBTeamStats).where(
+                MLBTeamStats.team_abbr == team
+            ).order_by(desc(MLBTeamStats.stat_date)).limit(1)
+        )
+        stat = stat_row.scalar_one_or_none()
+        if stat:
+            l10 = stat.last_10_record or (
+                f"{stat.last_10_wins}-{stat.last_10_losses}"
+                if stat.last_10_wins is not None and stat.last_10_losses is not None
+                else None
+            )
 
-        header_line = f"{away_name} @ {home_name}"
+        streak = await _get_team_streak(session, team)
+
+        starter_id = game.home_starter_id if team == home else game.away_starter_id
+        pitcher_last, pitcher_era = await _get_pitcher_era(session, starter_id)
+        fi_record = await _get_pitcher_first_inning_record(session, starter_id)
+
+        # Build narrative
+        matchup_line = f"{away_name} @ {home_name}"
         if game_time:
-            header_line += f"  {game_time}"
+            matchup_line += f" — {game_time}"
+
+        context_bits = []
+        if l10:
+            context_bits.append(f"{l10} in their last 10")
+        if streak:
+            context_bits.append(f"on a {streak[1:]}-game {'win' if streak[0] == 'W' else 'losing'} streak")
+
+        pitcher_bit = ""
+        if pitcher_last and fi_record and fi_record[1] >= 3:
+            pitcher_bit = f" {pitcher_last} ({pitcher_era:.2f} ERA) has held opponents scoreless in the 1st in {fi_record[0]} of {fi_record[1]} starts."
+
+        context_str = ""
+        if context_bits:
+            context_str = f" They're {', '.join(context_bits)}."
+
+        dog_or_fav = "underdog" if play["is_underdog"] else "favorite"
 
         tweet = (
-            f"{header_line}\n\n"
-            f"Model: {team_name} ML ({model_pct}%)\n"
-            f"Market: {team_name} {odds_str} ({market_pct}%)\n"
-            f"Edge: +{edge_pct:.1f}%"
             f"{matchup_line}\n\n"
+            f"Model likes {team_name} ML at {odds_str} ({dog_or_fav}).{context_str}{pitcher_bit}\n\n"
+            f"{model_pct}% model vs {market_pct}% market — {edge_pct:.1f}% edge.\n\n"
             f"{hashtag} #MLB"
         ).strip()
 
+        if len(tweet) > 280:
+            tweet = (
+                f"{matchup_line}\n\n"
+                f"Model likes {team_name} ML at {odds_str}.{context_str}\n\n"
+                f"{model_pct}% vs {market_pct}% — {edge_pct:.1f}% edge.\n\n"
+                f"{hashtag} #MLB"
+            ).strip()
+        if len(tweet) > 280:
+            tweet = (
+                f"{matchup_line}\n\n"
+                f"Model likes {team_name} ML at {odds_str}.\n\n"
+                f"{model_pct}% vs {market_pct}% — {edge_pct:.1f}% edge.\n\n"
+                f"{hashtag} #MLB"
+            ).strip()
         if len(tweet) > 280:
             tweet = tweet[:277] + "..."
         tweets.append(tweet)
@@ -630,10 +682,7 @@ async def generate_nrfi_tweet(session: AsyncSession, game_date: date) -> str | N
 
 
 async def generate_results_tweet(session: AsyncSession, game_date: date) -> str | None:
-    """
-    Generate a results recap tweet for yesterday's picks.
-    Includes best/worst bet highlights.
-    """
+    """Generate a results recap tweet with narrative context."""
     stmt = select(MLBPredictionSnapshot).where(
         and_(
             MLBPredictionSnapshot.game_date == game_date,
@@ -654,7 +703,6 @@ async def generate_results_tweet(session: AsyncSession, game_date: date) -> str 
     total = wins + losses
     win_rate = round(wins / total * 100, 1) if total > 0 else 0
 
-    date_str = game_date.strftime("%m/%d")
     profit_str = f"+{profit:.2f}" if profit >= 0 else f"{profit:.2f}"
 
     # NRFI results
@@ -672,7 +720,7 @@ async def generate_results_tweet(session: AsyncSession, game_date: date) -> str 
                      if (g.home_first_inning_runs or 0) + (g.away_first_inning_runs or 0) == 0)
     nrfi_pct = round(nrfi_count / len(nrfi_games) * 100) if nrfi_games else 0
 
-    # Best / worst bets by profit
+    # Best / worst
     graded = [s for s in snapshots if s.best_bet_profit is not None]
     best_line = ""
     worst_line = ""
@@ -681,32 +729,45 @@ async def generate_results_tweet(session: AsyncSession, game_date: date) -> str 
         best = sorted_by_profit[0]
         worst = sorted_by_profit[-1]
 
-        def _fmt_snap(s, mark):
-            team = s.best_bet_team or "?"
-            odds_str = ""
-            if s.best_bet_odds:
-                odds_str = f" {_fmt_odds(float(s.best_bet_odds))}"
+        def _fmt_snap_name(s):
+            team = TEAM_NAMES.get(s.best_bet_team, s.best_bet_team or "?")
             btype = (s.best_bet_type or "").lower()
-            label = "ML" if btype == "moneyline" else ("RL" if btype == "runline" else ("O/U" if btype == "total" else ""))
-            return f"{team} {label}{odds_str} {mark}".strip()
+            label = "ML" if btype == "moneyline" else ("runline" if btype == "runline" else ("O/U" if btype == "total" else ""))
+            return f"{team} {label}".strip()
 
         if float(best.best_bet_profit or 0) > 0:
-            best_line = f"Best: {_fmt_snap(best, 'W')}\n"
+            best_line = f"Best: {_fmt_snap_name(best)} W\n"
         if float(worst.best_bet_profit or 0) < 0:
-            worst_line = f"Worst: {_fmt_snap(worst, 'L')}\n"
+            worst_line = f"Worst: {_fmt_snap_name(worst)} L\n"
 
-    tweet = f"RESULTS {date_str}\n\nRecord: {wins}-{losses}"
+    # Bet type context
+    type_summary = await _get_bet_type_summary(session, days=7)
+    type_context = ""
+    ml_data = type_summary.get("moneyline")
+    if ml_data and (ml_data["wins"] + ml_data["losses"]) >= 3:
+        ml_total = ml_data["wins"] + ml_data["losses"]
+        type_context = f" ML picks are {ml_data['wins']}-{ml_data['losses']} this week."
+
+    # Build tweet
+    record_str = f"{wins}-{losses}"
     if pushes:
-        tweet += f"-{pushes}"
-    tweet += f" ({win_rate}%)\nP/L: {profit_str}u\n"
+        record_str += f"-{pushes}"
 
+    tweet = f"Yesterday: {record_str}, {profit_str}u.{type_context}\n"
     if nrfi_games:
-        tweet += f"NRFI: {nrfi_count}/{len(nrfi_games)} ({nrfi_pct}%)\n"
-
+        tweet += f"NRFI: {nrfi_count}/{len(nrfi_games)} ({nrfi_pct}%).\n"
     if best_line or worst_line:
         tweet += "\n" + best_line + worst_line
 
-    tweet += "\nSeason tracking at truline.app\n\n#MLB #SportsBetting"
+    tweet += "\ntruline.app\n\n#MLB #SportsBetting"
+
+    if len(tweet) > 280:
+        tweet = f"Yesterday: {record_str}, {profit_str}u.\n"
+        if nrfi_games:
+            tweet += f"NRFI: {nrfi_count}/{len(nrfi_games)} ({nrfi_pct}%).\n"
+        if best_line or worst_line:
+            tweet += "\n" + best_line + worst_line
+        tweet += "\ntruline.app\n\n#MLB #SportsBetting"
 
     if len(tweet) > 280:
         tweet = tweet[:277] + "..."
@@ -801,7 +862,7 @@ def _fmt_game_time_et(game_time: datetime | None) -> str:
 
 
 async def generate_pregame_nrfi_tweet(session: AsyncSession, game: MLBGame) -> str | None:
-    """Generate a single-game NRFI pregame pick tweet."""
+    """Generate a single-game NRFI pregame pick tweet with pitcher context."""
     home_off, home_def = await _get_team_first_inning_pct(session, game.home_team)
     away_off, away_def = await _get_team_first_inning_pct(session, game.away_team)
     if home_off is None or away_off is None or home_def is None or away_def is None:
@@ -816,7 +877,6 @@ async def generate_pregame_nrfi_tweet(session: AsyncSession, game: MLBGame) -> s
     p_home_scores = (home_off + away_def) / 2.0
     nrfi_pct = (1.0 - p_away_scores) * (1.0 - p_home_scores) * 100.0
     nrfi_pct_rounded = round(nrfi_pct)
-    badge = _nrfi_badge(nrfi_pct)
 
     away_name = TEAM_NAMES.get(game.away_team, game.away_team)
     home_name = TEAM_NAMES.get(game.home_team, game.home_team)
@@ -825,43 +885,42 @@ async def generate_pregame_nrfi_tweet(session: AsyncSession, game: MLBGame) -> s
 
     game_time_str = _fmt_game_time_et(game.game_time)
 
-    a_era = f"{away_era:.2f}" if away_era is not None else "-"
-    h_era = f"{home_era:.2f}" if home_era is not None else "-"
+    away_fi = await _get_pitcher_first_inning_record(session, game.away_starter_id)
+    home_fi = await _get_pitcher_first_inning_record(session, game.home_starter_id)
 
-    lines = [f"⚾ {away_name} @ {home_name}"]
+    pitcher_context = ""
+    if away_fi and home_fi and away_fi[1] >= 3 and home_fi[1] >= 3:
+        pitcher_context = (
+            f"{home_last} has blanked the 1st in {home_fi[0]} of {home_fi[1]} starts, "
+            f"{away_last} in {away_fi[0]} of {away_fi[1]}."
+        )
+    elif home_fi and home_fi[1] >= 3:
+        pitcher_context = f"{home_last} has blanked the 1st in {home_fi[0]} of {home_fi[1]} starts."
+    elif away_fi and away_fi[1] >= 3:
+        pitcher_context = f"{away_last} has blanked the 1st in {away_fi[0]} of {away_fi[1]} starts."
+
+    matchup = f"{away_name} @ {home_name}"
     if game_time_str:
-        lines.append(f"🕐 {game_time_str}")
-    lines.append("")
-    lines.append(f"NRFI Chance: {nrfi_pct_rounded}%")
-    lines.append(badge)
-    lines.append("")
-    lines.append(f"{away_last} {a_era} vs {home_last} {h_era}")
-    lines.append("")
-    lines.append(f"{away_handle} vs {home_handle}")
-    lines.append("")
-    lines.append("truline.app")
-    lines.append("")
-    lines.append("#NRFI #MLB")
+        matchup += f", {game_time_str}"
 
-    tweet = "\n".join(lines)
+    if nrfi_pct_rounded >= 70:
+        confidence = f"NRFI at {nrfi_pct_rounded}% — strong lean."
+    elif nrfi_pct_rounded >= 60:
+        confidence = f"NRFI at {nrfi_pct_rounded}%."
+    else:
+        confidence = f"NRFI at {nrfi_pct_rounded}% — slight lean."
+
+    parts = [matchup, "", confidence]
+    if pitcher_context:
+        parts.append(pitcher_context)
+    parts.extend(["", f"{away_handle} vs {home_handle}", "", "#NRFI #MLB"])
+
+    tweet = "\n".join(parts)
     if len(tweet) > 280:
-        # Drop truline.app line first, then handles line, then matchup
-        compact_lines = [
-            f"⚾ {away_name} @ {home_name}",
-        ]
-        if game_time_str:
-            compact_lines.append(f"🕐 {game_time_str}")
-        compact_lines.extend([
-            "",
-            f"NRFI: {nrfi_pct_rounded}% — {badge}",
-            f"{away_last} {a_era} vs {home_last} {h_era}",
-            f"{away_handle} vs {home_handle}",
-            "",
-            "#NRFI #MLB",
-        ])
-        tweet = "\n".join(compact_lines)
-        if len(tweet) > 280:
-            tweet = tweet[:277] + "..."
+        parts = [matchup, "", confidence, "", f"{away_handle} vs {home_handle}", "", "#NRFI #MLB"]
+        tweet = "\n".join(parts)
+    if len(tweet) > 280:
+        tweet = tweet[:277] + "..."
     return tweet
 
 
