@@ -150,9 +150,14 @@ def _get_fonts():
     from PIL import ImageFont
 
     # Bundled font checked first — guarantees availability on Railway/Docker
-    bundled = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts" / "DejaVuSans-Bold.ttf"
-    font_paths = [
-        str(bundled),                                     # Bundled in repo
+    # File lives at backend/assets/fonts/, this file is at backend/src/services/social/
+    # so we need 4 .parent calls to get from src/services/social/ -> backend/
+    here = Path(__file__).resolve()
+    bundled_candidates = [
+        here.parent.parent.parent.parent / "assets" / "fonts" / "DejaVuSans-Bold.ttf",  # backend/assets/fonts/
+        here.parent.parent.parent / "assets" / "fonts" / "DejaVuSans-Bold.ttf",          # src/assets/fonts/ (legacy)
+    ]
+    font_paths = [str(p) for p in bundled_candidates] + [
         "/System/Library/Fonts/Helvetica.ttc",            # macOS
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux Debian
         "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",    # Linux RHEL
@@ -162,6 +167,7 @@ def _get_fonts():
     for p in font_paths:
         if Path(p).exists():
             font_path = p
+            logger.info(f"Loaded font from: {p}")
             break
 
     if not font_path:
