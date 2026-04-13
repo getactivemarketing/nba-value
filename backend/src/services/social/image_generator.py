@@ -23,6 +23,127 @@ MUTED = (148, 163, 184)
 DIM = (100, 116, 139)
 GRID = (15, 25, 35)
 
+# Team brand colors: (primary_rgb, secondary_rgb)
+MLB_TEAM_COLORS = {
+    "ARI": ((167, 25, 48), (227, 212, 173)),
+    "ATL": ((206, 17, 65), (19, 39, 79)),
+    "BAL": ((223, 70, 1), (39, 37, 31)),
+    "BOS": ((189, 48, 57), (12, 35, 64)),
+    "CHC": ((14, 51, 134), (204, 52, 51)),
+    "CWS": ((39, 37, 31), (196, 206, 212)),
+    "CIN": ((198, 1, 31), (0, 0, 0)),
+    "CLE": ((0, 56, 93), (227, 25, 55)),
+    "COL": ((51, 0, 111), (196, 206, 212)),
+    "DET": ((12, 35, 64), (250, 70, 22)),
+    "HOU": ((0, 45, 98), (235, 110, 31)),
+    "KC": ((0, 70, 135), (189, 155, 96)),
+    "LAA": ((186, 0, 33), (0, 50, 99)),
+    "LAD": ((0, 90, 156), (239, 62, 66)),
+    "MIA": ((0, 163, 224), (239, 51, 64)),
+    "MIL": ((18, 40, 75), (182, 146, 46)),
+    "MIN": ((0, 43, 92), (211, 17, 69)),
+    "NYM": ((0, 45, 114), (252, 89, 16)),
+    "NYY": ((0, 48, 135), (196, 206, 212)),
+    "OAK": ((0, 56, 49), (239, 178, 30)),
+    "PHI": ((232, 24, 40), (0, 45, 114)),
+    "PIT": ((253, 184, 39), (39, 37, 31)),
+    "SD": ((47, 36, 28), (255, 196, 37)),
+    "SF": ((253, 90, 30), (39, 37, 31)),
+    "SEA": ((0, 92, 92), (196, 206, 212)),
+    "STL": ((196, 30, 58), (12, 35, 64)),
+    "TB": ((9, 44, 92), (143, 188, 230)),
+    "TEX": ((0, 50, 120), (192, 17, 31)),
+    "TOR": ((19, 74, 142), (232, 41, 28)),
+    "WSH": ((171, 0, 3), (20, 34, 90)),
+}
+
+NBA_TEAM_COLORS = {
+    "ATL": ((225, 68, 52), (196, 214, 0)),
+    "BOS": ((0, 122, 51), (255, 255, 255)),
+    "BKN": ((0, 0, 0), (255, 255, 255)),
+    "CHA": ((29, 17, 96), (0, 120, 140)),
+    "CHI": ((206, 17, 65), (0, 0, 0)),
+    "CLE": ((134, 0, 56), (253, 187, 48)),
+    "DAL": ((0, 83, 188), (0, 43, 92)),
+    "DEN": ((13, 34, 64), (255, 198, 39)),
+    "DET": ((200, 16, 46), (29, 66, 138)),
+    "GSW": ((29, 66, 138), (255, 199, 44)),
+    "HOU": ((206, 17, 65), (0, 0, 0)),
+    "IND": ((0, 45, 98), (253, 187, 48)),
+    "LAC": ((200, 16, 46), (29, 66, 148)),
+    "LAL": ((85, 37, 130), (253, 185, 39)),
+    "MEM": ((93, 118, 169), (18, 23, 63)),
+    "MIA": ((152, 0, 46), (249, 160, 27)),
+    "MIL": ((0, 71, 27), (240, 235, 210)),
+    "MIN": ((12, 35, 64), (35, 97, 146)),
+    "NOP": ((0, 22, 65), (225, 58, 62)),
+    "NYK": ((0, 107, 182), (245, 132, 38)),
+    "OKC": ((0, 125, 195), (239, 59, 36)),
+    "ORL": ((0, 125, 197), (196, 206, 211)),
+    "PHI": ((0, 107, 182), (237, 23, 76)),
+    "PHX": ((29, 17, 96), (229, 95, 32)),
+    "POR": ((224, 58, 62), (0, 0, 0)),
+    "SAC": ((91, 43, 130), (99, 113, 122)),
+    "SAS": ((196, 206, 211), (0, 0, 0)),
+    "TOR": ((206, 17, 65), (0, 0, 0)),
+    "UTA": ((0, 43, 92), (249, 160, 27)),
+    "WAS": ((0, 43, 92), (227, 24, 55)),
+}
+
+
+def _get_team_color(team_abbr: str, sport: str = "mlb") -> tuple[tuple, tuple]:
+    """Return (primary, secondary) color tuple for a team. Falls back to accent colors."""
+    colors = MLB_TEAM_COLORS if sport == "mlb" else NBA_TEAM_COLORS
+    return colors.get(team_abbr.upper(), (ACCENT, MUTED))
+
+
+def _draw_gradient_bg_fast(img, W: int, H: int):
+    """Fast gradient background using horizontal bands instead of per-pixel."""
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(img)
+    center_y = H // 2
+    for y in range(H):
+        dy = abs(y - center_y) / center_y  # 0 at center, 1 at edges
+        t = dy * dy  # quadratic falloff
+        r = int(18 - 8 * t)
+        g = int(24 - 10 * t)
+        b = int(42 - 19 * t)
+        draw.line([(0, y), (W, y)], fill=(r, g, b))
+
+
+def _draw_team_bars(draw, W: int, H: int, away_team: str, home_team: str, sport: str = "mlb"):
+    """Draw team-colored accent bars at top and bottom of card."""
+    away_color = _get_team_color(away_team, sport)[0]
+    home_color = _get_team_color(home_team, sport)[0]
+    bar_h = 8
+    half = W // 2
+    # Top bar
+    draw.rectangle([0, 0, half, bar_h], fill=away_color)
+    draw.rectangle([half, 0, W, bar_h], fill=home_color)
+    # Bottom bar
+    draw.rectangle([0, H - bar_h, half, H], fill=away_color)
+    draw.rectangle([half, H - bar_h, W, H], fill=home_color)
+
+
+def _draw_rounded_rect(draw, xy, fill, outline=None, radius=16, width=1):
+    """Draw a rounded rectangle. xy = [x0, y0, x1, y1]."""
+    x0, y0, x1, y1 = xy
+    draw.rectangle([x0 + radius, y0, x1 - radius, y1], fill=fill)
+    draw.rectangle([x0, y0 + radius, x1, y1 - radius], fill=fill)
+    draw.pieslice([x0, y0, x0 + 2 * radius, y0 + 2 * radius], 180, 270, fill=fill)
+    draw.pieslice([x1 - 2 * radius, y0, x1, y0 + 2 * radius], 270, 360, fill=fill)
+    draw.pieslice([x0, y1 - 2 * radius, x0 + 2 * radius, y1], 90, 180, fill=fill)
+    draw.pieslice([x1 - 2 * radius, y1 - 2 * radius, x1, y1], 0, 90, fill=fill)
+    if outline:
+        draw.arc([x0, y0, x0 + 2 * radius, y0 + 2 * radius], 180, 270, fill=outline, width=width)
+        draw.arc([x1 - 2 * radius, y0, x1, y0 + 2 * radius], 270, 360, fill=outline, width=width)
+        draw.arc([x0, y1 - 2 * radius, x0 + 2 * radius, y1], 90, 180, fill=outline, width=width)
+        draw.arc([x1 - 2 * radius, y1 - 2 * radius, x1, y1], 0, 90, fill=outline, width=width)
+        draw.line([x0 + radius, y0, x1 - radius, y0], fill=outline, width=width)
+        draw.line([x0 + radius, y1, x1 - radius, y1], fill=outline, width=width)
+        draw.line([x0, y0 + radius, x0, y1 - radius], fill=outline, width=width)
+        draw.line([x1, y0 + radius, x1, y1 - radius], fill=outline, width=width)
+
 
 def _get_fonts():
     """Load fonts with fallbacks."""
@@ -46,21 +167,23 @@ def _get_fonts():
     if not font_path:
         logger.warning("No TTF font found, using PIL default")
         default = ImageFont.load_default()
-        return {size: default for size in ["huge", "xl", "l", "m", "s", "xs"]}
+        return {size: default for size in ["hero", "huge", "xl", "l", "m", "s", "xs", "footer"]}
 
     try:
         return {
-            "huge": ImageFont.truetype(font_path, 140),
-            "xl": ImageFont.truetype(font_path, 96),
-            "l": ImageFont.truetype(font_path, 64),
-            "m": ImageFont.truetype(font_path, 48),
-            "s": ImageFont.truetype(font_path, 36),
-            "xs": ImageFont.truetype(font_path, 30),
+            "hero": ImageFont.truetype(font_path, 200),
+            "huge": ImageFont.truetype(font_path, 160),
+            "xl": ImageFont.truetype(font_path, 108),
+            "l": ImageFont.truetype(font_path, 72),
+            "m": ImageFont.truetype(font_path, 56),
+            "s": ImageFont.truetype(font_path, 42),
+            "xs": ImageFont.truetype(font_path, 36),
+            "footer": ImageFont.truetype(font_path, 32),
         }
     except Exception as e:
         logger.warning(f"Font load failed: {e}")
         default = ImageFont.load_default()
-        return {size: default for size in ["huge", "xl", "l", "m", "s", "xs"]}
+        return {size: default for size in ["hero", "huge", "xl", "l", "m", "s", "xs", "footer"]}
 
 
 NBA_ESPN_MAP = {
