@@ -290,96 +290,73 @@ def generate_nrfi_card(
     away_ou: str | None = None,
     home_ou: str | None = None,
 ) -> bytes:
-    """
-    Generate an NRFI pick card image (1200x900).
-
-    Returns PNG bytes ready to upload.
-    """
+    """Generate an NRFI pick card image (1200x1200). Returns PNG bytes."""
     from PIL import Image, ImageDraw
 
-    W, H = 1200, 900
+    W, H = 1200, 1200
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
     fonts = _get_fonts()
 
-    _draw_background(draw, W, H)
+    _draw_gradient_bg_fast(img, W, H)
+    draw = ImageDraw.Draw(img)
+    _draw_team_bars(draw, W, H, away_team, home_team)
 
-    # Top label row
     draw.text((60, 30), "NRFI PICK", font=fonts["s"], fill=ACCENT)
     if game_time:
         bbox = draw.textbbox((0, 0), game_time, font=fonts["s"])
         draw.text((W - (bbox[2] - bbox[0]) - 60, 30), game_time, font=fonts["s"], fill=MUTED)
 
-    # --- Row 1: Logos + NRFI % (y ~100-280) ---
     away_logo = _fetch_logo(away_team)
     home_logo = _fetch_logo(home_team)
+    _paste_logo(img, away_logo, 200, 200, max_size=220)
+    _paste_logo(img, home_logo, 1000, 200, max_size=220)
 
-    _paste_logo(img, away_logo, 200, 180, max_size=180)
-    _paste_logo(img, home_logo, 1000, 180, max_size=180)
+    draw = ImageDraw.Draw(img)
+    draw.text((200, 340), away_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+    draw.text((1000, 340), home_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
 
-    # Team names below logos
-    draw.text((200, 300), away_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
-    draw.text((1000, 300), home_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
-
-    # Record + division rank below team names
     away_sub = _build_team_sub(away_record, away_div_rank)
     home_sub = _build_team_sub(home_record, home_div_rank)
     if away_sub:
-        draw.text((200, 350), away_sub, font=fonts["s"], fill=MUTED, anchor="mm")
+        draw.text((200, 400), away_sub, font=fonts["xs"], fill=MUTED, anchor="mm")
     if home_sub:
-        draw.text((1000, 350), home_sub, font=fonts["s"], fill=MUTED, anchor="mm")
+        draw.text((1000, 400), home_sub, font=fonts["xs"], fill=MUTED, anchor="mm")
 
-    # Center: NRFI percentage
     tier_color, tier_label = _nrfi_tier(nrfi_pct)
+    _draw_rounded_rect(draw, [350, 450, 850, 670], fill=CARD, outline=SURFACE, radius=20, width=2)
     pct_text = f"{nrfi_pct:.0f}%"
-    draw.text((W // 2, 175), pct_text, font=fonts["huge"], fill=tier_color, anchor="mm")
-    draw.text((W // 2, 275), "NRFI CHANCE", font=fonts["s"], fill=MUTED, anchor="mm")
-    draw.text((W // 2, 325), tier_label, font=fonts["m"], fill=tier_color, anchor="mm")
+    draw.text((W // 2, 530), pct_text, font=fonts["huge"], fill=tier_color, anchor="mm")
+    draw.text((W // 2, 625), tier_label, font=fonts["m"], fill=tier_color, anchor="mm")
 
-    # --- Starting Pitchers bar (y ~400) ---
-    bar_y = 400
-    bar_h = 160
-    draw.rectangle([40, bar_y, W - 40, bar_y + bar_h], fill=CARD, outline=SURFACE, width=2)
-    draw.text((W // 2, bar_y + 25), "STARTING PITCHERS", font=fonts["xs"], fill=DIM, anchor="mm")
+    _draw_rounded_rect(draw, [50, 700, W - 50, 870], fill=CARD, outline=SURFACE, radius=16, width=1)
+    draw.text((W // 2, 725), "STARTING PITCHERS", font=fonts["xs"], fill=DIM, anchor="mm")
 
     if away_pitcher:
-        draw.text((220, bar_y + 75), away_pitcher, font=fonts["m"], fill=WHITE, anchor="mm")
+        draw.text((250, 775), away_pitcher, font=fonts["m"], fill=WHITE, anchor="mm")
         if away_era is not None:
-            draw.text((220, bar_y + 125), f"{away_era:.2f} ERA", font=fonts["s"], fill=MUTED, anchor="mm")
+            draw.text((250, 830), f"{away_era:.2f} ERA", font=fonts["s"], fill=MUTED, anchor="mm")
 
-    draw.text((W // 2, bar_y + 90), "vs", font=fonts["s"], fill=DIM, anchor="mm")
+    draw.text((W // 2, 800), "vs", font=fonts["s"], fill=DIM, anchor="mm")
 
     if home_pitcher:
-        draw.text((980, bar_y + 75), home_pitcher, font=fonts["m"], fill=WHITE, anchor="mm")
+        draw.text((950, 775), home_pitcher, font=fonts["m"], fill=WHITE, anchor="mm")
         if home_era is not None:
-            draw.text((980, bar_y + 125), f"{home_era:.2f} ERA", font=fonts["s"], fill=MUTED, anchor="mm")
+            draw.text((950, 830), f"{home_era:.2f} ERA", font=fonts["s"], fill=MUTED, anchor="mm")
 
-    # --- Stats bar: L10 | ATS | O/U (y ~590) ---
-    stats_y = 590
-    stats_h = 220
-    draw.rectangle([40, stats_y, W - 40, stats_y + stats_h], fill=CARD, outline=SURFACE, width=2)
+    stats_parts = []
+    if away_l10 and home_l10:
+        stats_parts.append(f"L10: {away_l10} / {home_l10}")
+    if away_ats and home_ats:
+        stats_parts.append(f"ATS: {away_ats} / {home_ats}")
+    if away_ou and home_ou:
+        stats_parts.append(f"O/U: {away_ou} / {home_ou}")
+    if stats_parts:
+        stats_line = "    ".join(stats_parts)
+        draw.text((W // 2, 930), stats_line, font=fonts["xs"], fill=MUTED, anchor="mm")
 
-    col_centers = [240, 600, 960]
-    col_labels = ["L10", "ATS", "O/U"]
-    away_stats = [away_l10, away_ats, away_ou]
-    home_stats = [home_l10, home_ats, home_ou]
-
-    for cx, label, a_val, h_val in zip(col_centers, col_labels, away_stats, home_stats):
-        draw.text((cx, stats_y + 25), label, font=fonts["s"], fill=DIM, anchor="mm")
-        # Away stat
-        a_label = f"{away_team}  {a_val}" if a_val else away_team
-        draw.text((cx, stats_y + 80), a_label, font=fonts["m"], fill=WHITE, anchor="mm")
-        # Home stat
-        h_label = f"{home_team}  {h_val}" if h_val else home_team
-        draw.text((cx, stats_y + 140), h_label, font=fonts["m"], fill=WHITE, anchor="mm")
-
-    # Divider lines between columns
-    for div_x in [420, 780]:
-        draw.line([(div_x, stats_y + 10), (div_x, stats_y + stats_h - 10)], fill=SURFACE, width=2)
-
-    # Footer
-    draw.text((60, H - 45), "truline.app", font=fonts["xs"], fill=ACCENT)
-    draw.text((W - 60, H - 45), "@trulineapp", font=fonts["xs"], fill=ACCENT, anchor="ra")
+    draw.text((60, H - 50), "truline.app", font=fonts["footer"], fill=ACCENT)
+    draw.text((W - 60, H - 50), "@trulineapp", font=fonts["footer"], fill=ACCENT, anchor="ra")
 
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
@@ -400,66 +377,59 @@ def generate_recap_card(
     away_div_rank: str | None = None,
     home_div_rank: str | None = None,
 ) -> bytes:
-    """
-    Generate a 1st inning recap card image (1200x900).
-
-    Returns PNG bytes.
-    """
+    """Generate a 1st inning recap card image (1200x1200). Returns PNG bytes."""
     from PIL import Image, ImageDraw
 
-    W, H = 1200, 900
+    W, H = 1200, 1200
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
     fonts = _get_fonts()
 
-    _draw_background(draw, W, H)
+    _draw_gradient_bg_fast(img, W, H)
+    draw = ImageDraw.Draw(img)
+    _draw_team_bars(draw, W, H, away_team, home_team)
 
-    # Top label
     draw.text((60, 30), "1ST INNING RECAP", font=fonts["s"], fill=ACCENT)
 
-    # Logos
     away_logo = _fetch_logo(away_team)
     home_logo = _fetch_logo(home_team)
-    _paste_logo(img, away_logo, 200, 180, max_size=180)
-    _paste_logo(img, home_logo, 1000, 180, max_size=180)
+    _paste_logo(img, away_logo, 200, 200, max_size=220)
+    _paste_logo(img, home_logo, 1000, 200, max_size=220)
 
-    # Team names
-    draw.text((200, 300), away_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
-    draw.text((1000, 300), home_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+    draw = ImageDraw.Draw(img)
 
-    # Record + division rank
+    draw.text((200, 340), away_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+    draw.text((1000, 340), home_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+
     away_sub = _build_team_sub(away_record, away_div_rank)
     home_sub = _build_team_sub(home_record, home_div_rank)
     if away_sub:
-        draw.text((200, 350), away_sub, font=fonts["s"], fill=MUTED, anchor="mm")
+        draw.text((200, 400), away_sub, font=fonts["xs"], fill=MUTED, anchor="mm")
     if home_sub:
-        draw.text((1000, 350), home_sub, font=fonts["s"], fill=MUTED, anchor="mm")
+        draw.text((1000, 400), home_sub, font=fonts["xs"], fill=MUTED, anchor="mm")
 
-    # Center: 1st inning score
-    score_text = f"{away_first} - {home_first}"
-    draw.text((W // 2, 175), score_text, font=fonts["huge"], fill=WHITE, anchor="mm")
-    draw.text((W // 2, 275), "1ST INNING", font=fonts["s"], fill=MUTED, anchor="mm")
+    score_text = f"{away_first}  —  {home_first}"
+    draw.text((W // 2, 520), score_text, font=fonts["hero"], fill=WHITE, anchor="mm")
+    draw.text((W // 2, 630), "1ST INNING", font=fonts["s"], fill=MUTED, anchor="mm")
 
-    # Result tag
     if is_nrfi:
-        draw.text((W // 2, 460), "NRFI", font=fonts["xl"], fill=GREEN, anchor="mm")
-        draw.text((W // 2, 560), "MODEL CALLED IT", font=fonts["s"], fill=GREEN, anchor="mm")
+        draw.text((W // 2, 740), "NRFI", font=fonts["xl"], fill=GREEN, anchor="mm")
+        draw.text((W // 2, 840), "MODEL CALLED IT", font=fonts["s"], fill=GREEN, anchor="mm")
     else:
-        draw.text((W // 2, 460), "YRFI", font=fonts["xl"], fill=AMBER, anchor="mm")
-        draw.text((W // 2, 560), "RUNS IN THE 1ST", font=fonts["s"], fill=AMBER, anchor="mm")
+        draw.text((W // 2, 740), "YRFI", font=fonts["xl"], fill=AMBER, anchor="mm")
+        draw.text((W // 2, 840), "RUNS IN THE 1ST", font=fonts["s"], fill=AMBER, anchor="mm")
 
     if predicted_nrfi_pct is not None:
         draw.text(
-            (W // 2, 640),
-            f"Model: {predicted_nrfi_pct:.0f}% NRFI chance",
+            (W // 2, 920),
+            f"Model predicted {predicted_nrfi_pct:.0f}% NRFI",
             font=fonts["s"],
             fill=MUTED,
             anchor="mm",
         )
 
-    # Footer
-    draw.text((60, H - 45), "truline.app", font=fonts["xs"], fill=ACCENT)
-    draw.text((W - 60, H - 45), "@trulineapp", font=fonts["xs"], fill=ACCENT, anchor="ra")
+    draw.text((60, H - 50), "truline.app", font=fonts["footer"], fill=ACCENT)
+    draw.text((W - 60, H - 50), "@trulineapp", font=fonts["footer"], fill=ACCENT, anchor="ra")
 
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
@@ -582,69 +552,57 @@ def generate_final_card(
     away_ou: str | None = None,
     home_ou: str | None = None,
 ) -> bytes:
-    """Generate a final score recap card image (1200x900). Returns PNG bytes."""
+    """Generate a final score recap card image (1200x1200). Returns PNG bytes."""
     from PIL import Image, ImageDraw
 
-    W, H = 1200, 900
+    W, H = 1200, 1200
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
     fonts = _get_fonts()
 
-    _draw_background(draw, W, H)
+    _draw_gradient_bg_fast(img, W, H)
+    draw = ImageDraw.Draw(img)
+    _draw_team_bars(draw, W, H, away_team, home_team)
 
-    # Top label
-    draw.text((60, 30), "FINAL SCORE", font=fonts["s"], fill=ACCENT)
+    draw.text((60, 30), "FINAL", font=fonts["s"], fill=ACCENT)
 
-    # Logos
     away_logo = _fetch_logo(away_team)
     home_logo = _fetch_logo(home_team)
-    _paste_logo(img, away_logo, 200, 170, max_size=180)
-    _paste_logo(img, home_logo, 1000, 170, max_size=180)
+    _paste_logo(img, away_logo, 200, 190, max_size=220)
+    _paste_logo(img, home_logo, 1000, 190, max_size=220)
 
-    # Team names
-    draw.text((200, 290), away_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
-    draw.text((1000, 290), home_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+    draw = ImageDraw.Draw(img)
 
-    # Record + division rank
-    away_sub = _build_team_sub(away_record, away_div_rank)
-    home_sub = _build_team_sub(home_record, home_div_rank)
-    if away_sub:
-        draw.text((200, 340), away_sub, font=fonts["s"], fill=MUTED, anchor="mm")
-    if home_sub:
-        draw.text((1000, 340), home_sub, font=fonts["s"], fill=MUTED, anchor="mm")
+    draw.text((200, 330), away_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+    draw.text((1000, 330), home_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
 
-    # Center: final score
-    score_text = f"{away_score} - {home_score}"
-    draw.text((W // 2, 165), score_text, font=fonts["huge"], fill=WHITE, anchor="mm")
-    draw.text((W // 2, 260), "FINAL", font=fonts["s"], fill=MUTED, anchor="mm")
+    if away_record:
+        draw.text((200, 385), away_record, font=fonts["xs"], fill=MUTED, anchor="mm")
+    if home_record:
+        draw.text((1000, 385), home_record, font=fonts["xs"], fill=MUTED, anchor="mm")
 
-    # 1st inning result
-    y_mid = 390
+    score_text = f"{away_score}  —  {home_score}"
+    draw.text((W // 2, 490), score_text, font=fonts["hero"], fill=WHITE, anchor="mm")
+
+    y_mid = 610
     if away_first is not None and home_first is not None:
         is_nrfi = (away_first + home_first) == 0
         tag = "NRFI" if is_nrfi else "YRFI"
         tag_color = GREEN if is_nrfi else AMBER
         fi_text = f"1st Inning: {away_first}-{home_first} ({tag})"
         draw.text((W // 2, y_mid), fi_text, font=fonts["m"], fill=tag_color, anchor="mm")
-        y_mid += 70
+        y_mid += 80
 
-    # Pick result
     if pick_team and pick_result:
         result_color = GREEN if pick_result == "win" else (RED if pick_result == "loss" else MUTED)
         result_label = "W" if pick_result == "win" else ("L" if pick_result == "loss" else "P")
         pick_label = pick_type.upper() if pick_type else ""
         line_str = f" {pick_line:+g}" if pick_line is not None else ""
-        pick_text = f"Pick: {pick_team} {pick_label}{line_str} -- {result_label}"
-        draw.text((W // 2, y_mid), pick_text, font=fonts["m"], fill=result_color, anchor="mm")
-        y_mid += 70
-    elif pick_team:
-        pick_label = pick_type.upper() if pick_type else ""
-        line_str = f" {pick_line:+g}" if pick_line is not None else ""
-        pick_text = f"Pick: {pick_team} {pick_label}{line_str}"
-        draw.text((W // 2, y_mid), pick_text, font=fonts["m"], fill=MUTED, anchor="mm")
-        y_mid += 70
+        pick_text = f"Our Pick: {pick_team} {pick_label}{line_str} — {result_label}"
+        _draw_rounded_rect(draw, [200, y_mid - 10, 1000, y_mid + 60], fill=CARD, outline=SURFACE, radius=12)
+        draw.text((W // 2, y_mid + 25), pick_text, font=fonts["s"], fill=result_color, anchor="mm")
+        y_mid += 90
 
-    # Winner highlight
     if away_score > home_score:
         winner_name = away_name
     elif home_score > away_score:
@@ -652,31 +610,21 @@ def generate_final_card(
     else:
         winner_name = None
     if winner_name:
-        draw.text((W // 2, y_mid), f"{winner_name.upper()} WINS", font=fonts["l"], fill=WHITE, anchor="mm")
+        draw.text((W // 2, y_mid + 10), f"{winner_name.upper()} WINS", font=fonts["l"], fill=WHITE, anchor="mm")
 
-    # --- Stats bar: L10 | ATS | O/U ---
-    stats_y = 620
-    stats_h = 200
-    draw.rectangle([40, stats_y, W - 40, stats_y + stats_h], fill=CARD, outline=SURFACE, width=2)
+    stats_parts = []
+    if away_l10 and home_l10:
+        stats_parts.append(f"L10: {away_l10} / {home_l10}")
+    if away_ats and home_ats:
+        stats_parts.append(f"ATS: {away_ats} / {home_ats}")
+    if away_ou and home_ou:
+        stats_parts.append(f"O/U: {away_ou} / {home_ou}")
+    if stats_parts:
+        stats_line = "    ".join(stats_parts)
+        draw.text((W // 2, H - 110), stats_line, font=fonts["xs"], fill=MUTED, anchor="mm")
 
-    col_centers = [240, 600, 960]
-    col_labels = ["L10", "ATS", "O/U"]
-    away_stats = [away_l10, away_ats, away_ou]
-    home_stats = [home_l10, home_ats, home_ou]
-
-    for cx, label, a_val, h_val in zip(col_centers, col_labels, away_stats, home_stats):
-        draw.text((cx, stats_y + 20), label, font=fonts["s"], fill=DIM, anchor="mm")
-        a_label = f"{away_team}  {a_val}" if a_val else away_team
-        draw.text((cx, stats_y + 75), a_label, font=fonts["m"], fill=WHITE, anchor="mm")
-        h_label = f"{home_team}  {h_val}" if h_val else home_team
-        draw.text((cx, stats_y + 135), h_label, font=fonts["m"], fill=WHITE, anchor="mm")
-
-    for div_x in [420, 780]:
-        draw.line([(div_x, stats_y + 10), (div_x, stats_y + stats_h - 10)], fill=SURFACE, width=2)
-
-    # Footer
-    draw.text((60, H - 45), "truline.app", font=fonts["xs"], fill=ACCENT)
-    draw.text((W - 60, H - 45), "@trulineapp", font=fonts["xs"], fill=ACCENT, anchor="ra")
+    draw.text((60, H - 50), "truline.app", font=fonts["footer"], fill=ACCENT)
+    draw.text((W - 60, H - 50), "@trulineapp", font=fonts["footer"], fill=ACCENT, anchor="ra")
 
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
