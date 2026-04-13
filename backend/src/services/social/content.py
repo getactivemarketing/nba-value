@@ -126,47 +126,62 @@ async def get_team_card_stats(session: AsyncSession, team_abbr: str) -> dict:
     )
     stats = stat_row.scalar_one_or_none()
 
-    if stats:
-        if stats.wins is not None and stats.losses is not None:
-            result["record"] = f"{stats.wins}-{stats.losses}"
+    if not stats:
+        logger.warning("get_team_card_stats: no MLBTeamStats row", team=team_abbr)
+        return result
+
+    if stats.wins is not None and stats.losses is not None:
+        result["record"] = f"{stats.wins}-{stats.losses}"
+    # L10: prefer the string column, fall back to building from ints
+    if stats.last_10_record:
         result["l10"] = stats.last_10_record
-        if stats.ats_wins is not None and stats.ats_losses is not None:
-            result["ats"] = f"{stats.ats_wins}-{stats.ats_losses}"
-        if stats.ou_overs is not None and stats.ou_unders is not None:
-            result["ou"] = f"{stats.ou_overs}-{stats.ou_unders}"
+    elif stats.last_10_wins is not None and stats.last_10_losses is not None:
+        result["l10"] = f"{stats.last_10_wins}-{stats.last_10_losses}"
+    if stats.ats_wins is not None and stats.ats_losses is not None:
+        result["ats"] = f"{stats.ats_wins}-{stats.ats_losses}"
+    if stats.ou_overs is not None and stats.ou_unders is not None:
+        result["ou"] = f"{stats.ou_overs}-{stats.ou_unders}"
 
-    # Get division + compute rank
-    team_row = await session.execute(
-        select(MLBTeam).where(MLBTeam.team_abbr == team_abbr)
-    )
-    team = team_row.scalar_one_or_none()
+    logger.debug("get_team_card_stats: stats found", team=team_abbr, result=result)
 
-    if team and stats and stats.wins is not None:
-        # Find all teams in same league+division, get their latest stats
-        div_teams = await session.execute(
-            select(MLBTeam.team_abbr).where(
-                and_(MLBTeam.league == team.league, MLBTeam.division == team.division)
-            )
+    # Get division + compute rank (separate from core stats so a failure here
+    # doesn't prevent W-L/L10/ATS/O-U from showing)
+    try:
+        team_row = await session.execute(
+            select(MLBTeam).where(MLBTeam.team_abbr == team_abbr)
         )
-        div_abbrs = [r[0] for r in div_teams.fetchall()]
+        team = team_row.scalar_one_or_none()
 
-        # Get latest win_pct for each team in division
-        div_records = []
-        for abbr in div_abbrs:
-            s = await session.execute(
-                select(MLBTeamStats.team_abbr, MLBTeamStats.win_pct).where(
-                    MLBTeamStats.team_abbr == abbr
-                ).order_by(desc(MLBTeamStats.stat_date)).limit(1)
+        if not team:
+            logger.warning("get_team_card_stats: no MLBTeam row — skipping div rank", team=team_abbr)
+            return result
+
+        if stats.wins is not None:
+            div_teams = await session.execute(
+                select(MLBTeam.team_abbr).where(
+                    and_(MLBTeam.league == team.league, MLBTeam.division == team.division)
+                )
             )
-            row = s.first()
-            if row and row[1] is not None:
-                div_records.append((row[0], float(row[1])))
+            div_abbrs = [r[0] for r in div_teams.fetchall()]
 
-        div_records.sort(key=lambda x: x[1], reverse=True)
-        rank = next((i + 1 for i, (a, _) in enumerate(div_records) if a == team_abbr), None)
-        if rank:
-            suffix = {1: "st", 2: "nd", 3: "rd"}.get(rank, "th")
-            result["div_rank"] = f"{rank}{suffix} {team.league} {team.division}"
+            div_records = []
+            for abbr in div_abbrs:
+                s = await session.execute(
+                    select(MLBTeamStats.team_abbr, MLBTeamStats.win_pct).where(
+                        MLBTeamStats.team_abbr == abbr
+                    ).order_by(desc(MLBTeamStats.stat_date)).limit(1)
+                )
+                row = s.first()
+                if row and row[1] is not None:
+                    div_records.append((row[0], float(row[1])))
+
+            div_records.sort(key=lambda x: x[1], reverse=True)
+            rank = next((i + 1 for i, (a, _) in enumerate(div_records) if a == team_abbr), None)
+            if rank:
+                suffix = {1: "st", 2: "nd", 3: "rd"}.get(rank, "th")
+                result["div_rank"] = f"{rank}{suffix} {team.league} {team.division}"
+    except Exception as e:
+        logger.warning("get_team_card_stats: div rank lookup failed", team=team_abbr, error=str(e))
 
     return result
 
