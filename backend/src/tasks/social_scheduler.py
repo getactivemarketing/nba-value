@@ -185,7 +185,10 @@ async def _post_pregame_nrfi_picks_async() -> dict:
         ).order_by(MLBGame.game_time)
         games = list((await session.execute(stmt)).scalars().all())
 
-        # Score each by NRFI% and keep top 5
+        # Score each by NRFI% — only post if >60% confidence, max 3 per day
+        MIN_NRFI_PCT = 0.60  # 60% minimum to post
+        MAX_NRFI_PICKS = 3   # Max picks per day
+
         scored = []
         for g in games:
             home_off, home_def = await _get_team_first_inning_pct(session, g.home_team)
@@ -195,10 +198,16 @@ async def _post_pregame_nrfi_picks_async() -> dict:
             p_away_scores = (away_off + home_def) / 2.0
             p_home_scores = (home_off + away_def) / 2.0
             nrfi = (1.0 - p_away_scores) * (1.0 - p_home_scores)
-            scored.append((nrfi, g, home_off, away_off))
+            if nrfi >= MIN_NRFI_PCT:
+                scored.append((nrfi, g, home_off, away_off))
+            else:
+                log_task(f"NRFI skip: {g.away_team}@{g.home_team} ({nrfi*100:.0f}% < {MIN_NRFI_PCT*100:.0f}% threshold)")
         scored.sort(key=lambda x: x[0], reverse=True)
 
-        for nrfi, game, home_pct, away_pct in scored[:5]:
+        if not scored:
+            log_task("No games met NRFI threshold")
+
+        for nrfi, game, home_pct, away_pct in scored[:MAX_NRFI_PICKS]:
             tweet = await generate_pregame_nrfi_tweet(session, game)
             if not tweet:
                 skipped += 1
