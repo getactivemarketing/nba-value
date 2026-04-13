@@ -265,6 +265,112 @@ async def _get_team_first_inning_pct(
     return off_pct, def_pct
 
 
+async def _get_pitcher_first_inning_record(
+    session: AsyncSession, pitcher_id: int | None
+) -> tuple[int, int] | None:
+    """Return (scoreless_starts, total_starts) for a pitcher's 1st-inning record.
+
+    Checks games where this pitcher was the starter and looks at whether
+    the opposing team scored in the 1st inning.
+    """
+    if not pitcher_id:
+        return None
+
+    result = await session.execute(
+        text("""
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN opp_first = 0 THEN 1 ELSE 0 END) AS scoreless
+            FROM (
+                SELECT COALESCE(away_first_inning_runs, 0) AS opp_first
+                FROM mlb_games
+                WHERE home_starter_id = :pid AND status = 'final'
+                  AND home_first_inning_runs IS NOT NULL
+                UNION ALL
+                SELECT COALESCE(home_first_inning_runs, 0) AS opp_first
+                FROM mlb_games
+                WHERE away_starter_id = :pid AND status = 'final'
+                  AND away_first_inning_runs IS NOT NULL
+            ) t
+        """),
+        {"pid": pitcher_id},
+    )
+    row = result.fetchone()
+    if not row or not row.total or int(row.total) == 0:
+        return None
+    return (int(row.scoreless or 0), int(row.total))
+
+
+async def _get_team_streak(session: AsyncSession, team_abbr: str) -> str | None:
+    """Return current win/loss streak like 'W4' or 'L2'. None if no data."""
+    result = await session.execute(
+        text("""
+            SELECT
+                home_team, away_team, home_score, away_score
+            FROM mlb_games
+            WHERE (home_team = :team OR away_team = :team)
+              AND status = 'final' AND game_type = 'R'
+            ORDER BY game_date DESC, game_time DESC
+            LIMIT 20
+        """),
+        {"team": team_abbr},
+    )
+    rows = result.fetchall()
+    if not rows:
+        return None
+
+    streak_type = None
+    streak_count = 0
+    for row in rows:
+        if row.home_score is None or row.away_score is None:
+            continue
+        is_home = row.home_team == team_abbr
+        won = (is_home and row.home_score > row.away_score) or \
+              (not is_home and row.away_score > row.home_score)
+        current = "W" if won else "L"
+        if streak_type is None:
+            streak_type = current
+            streak_count = 1
+        elif current == streak_type:
+            streak_count += 1
+        else:
+            break
+
+    if streak_type and streak_count >= 2:
+        return f"{streak_type}{streak_count}"
+    return None
+
+
+async def _get_bet_type_summary(
+    session: AsyncSession, days: int = 7
+) -> dict[str, dict[str, int]]:
+    """Return recent bet performance by type. E.g. {'moneyline': {'wins': 3, 'losses': 1}}."""
+    cutoff = date.today() - timedelta(days=days)
+    result = await session.execute(
+        select(MLBPredictionSnapshot).where(
+            and_(
+                MLBPredictionSnapshot.game_date >= cutoff,
+                MLBPredictionSnapshot.best_bet_result.isnot(None),
+            )
+        )
+    )
+    snapshots = list(result.scalars().all())
+
+    summary: dict[str, dict[str, int]] = {}
+    for s in snapshots:
+        bt = (s.best_bet_type or "unknown").lower()
+        if bt not in summary:
+            summary[bt] = {"wins": 0, "losses": 0, "pushes": 0}
+        if s.best_bet_result == "win":
+            summary[bt]["wins"] += 1
+        elif s.best_bet_result == "loss":
+            summary[bt]["losses"] += 1
+        else:
+            summary[bt]["pushes"] += 1
+
+    return summary
+
+
 def _implied_prob_from_decimal(decimal_odds: float) -> float:
     """Raw implied probability from decimal odds (not de-vigged)."""
     if not decimal_odds or decimal_odds <= 1.0:
