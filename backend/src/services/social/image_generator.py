@@ -10,18 +10,18 @@ import structlog
 logger = structlog.get_logger()
 
 
-# Brand colors
-BG = (10, 14, 23)
-SURFACE = (21, 29, 46)
-CARD = (11, 14, 20)
-ACCENT = (164, 230, 255)
-GREEN = (102, 247, 150)
-AMBER = (245, 158, 11)
-RED = (239, 68, 68)
-WHITE = (241, 245, 249)
-MUTED = (148, 163, 184)
-DIM = (100, 116, 139)
-GRID = (15, 25, 35)
+# Brand colors — light theme
+BG = (248, 250, 252)           # slate-50 (base)
+SURFACE = (226, 232, 240)      # slate-200 (outlines)
+CARD = (255, 255, 255)         # pure white (surfaces)
+ACCENT = (37, 99, 235)         # blue-600 (links, labels)
+GREEN = (5, 150, 105)          # emerald-600 (wins, NRFI hit)
+AMBER = (180, 83, 9)           # amber-700 (YRFI, caution)
+RED = (185, 28, 28)            # red-700 (losses)
+WHITE = (15, 23, 42)           # slate-900 (primary text — name kept as "WHITE" for compat)
+MUTED = (71, 85, 105)          # slate-600 (secondary text)
+DIM = (148, 163, 184)          # slate-400 (labels)
+GRID = (226, 232, 240)         # slate-200 (legacy — kept for nba card)
 
 # Team brand colors: (primary_rgb, secondary_rgb)
 MLB_TEAM_COLORS = {
@@ -98,17 +98,95 @@ def _get_team_color(team_abbr: str, sport: str = "mlb") -> tuple[tuple, tuple]:
 
 
 def _draw_gradient_bg_fast(img, W: int, H: int):
-    """Fast gradient background using horizontal bands instead of per-pixel."""
+    """Light gradient: pure white center fading to cool slate-100 at top/bottom edges."""
     from PIL import ImageDraw
     draw = ImageDraw.Draw(img)
     center_y = H // 2
     for y in range(H):
         dy = abs(y - center_y) / center_y  # 0 at center, 1 at edges
-        t = dy * dy  # quadratic falloff
-        r = int(18 - 8 * t)
-        g = int(24 - 10 * t)
-        b = int(42 - 19 * t)
+        t = dy ** 1.5                       # sharper falloff
+        # White (255,255,255) → cool slate (226,232,240)
+        r = int(255 - 29 * t)
+        g = int(255 - 23 * t)
+        b = int(255 - 15 * t)
         draw.line([(0, y), (W, y)], fill=(r, g, b))
+
+
+def _draw_shadow(img, xy, radius=20, shadow_offset=8, shadow_blur=12, shadow_color=(0, 0, 0, 40)):
+    """Draw a soft blurred drop shadow beneath a rounded-rect region.
+
+    Call BEFORE drawing the card surface so the shadow sits underneath.
+    Requires img to be in RGBA mode; caller handles mode conversion.
+    """
+    from PIL import Image, ImageDraw, ImageFilter
+    x0, y0, x1, y1 = xy
+    pad = shadow_blur * 2
+    w = (x1 - x0) + pad * 2
+    h = (y1 - y0) + pad * 2
+    shadow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    sx0, sy0 = pad, pad
+    sx1, sy1 = pad + (x1 - x0), pad + (y1 - y0)
+    sd.rectangle([sx0 + radius, sy0, sx1 - radius, sy1], fill=shadow_color)
+    sd.rectangle([sx0, sy0 + radius, sx1, sy1 - radius], fill=shadow_color)
+    sd.pieslice([sx0, sy0, sx0 + 2 * radius, sy0 + 2 * radius], 180, 270, fill=shadow_color)
+    sd.pieslice([sx1 - 2 * radius, sy0, sx1, sy0 + 2 * radius], 270, 360, fill=shadow_color)
+    sd.pieslice([sx0, sy1 - 2 * radius, sx0 + 2 * radius, sy1], 90, 180, fill=shadow_color)
+    sd.pieslice([sx1 - 2 * radius, sy1 - 2 * radius, sx1, sy1], 0, 90, fill=shadow_color)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(shadow_blur))
+    img.paste(shadow, (x0 - pad, y0 - pad + shadow_offset), shadow)
+
+
+def _fit_font(text: str, max_width: int, size_candidates=(72, 64, 56, 48, 42)):
+    """Return the largest TrueType font that fits `text` within `max_width` pixels."""
+    from PIL import Image, ImageDraw, ImageFont
+    bundled = Path(__file__).resolve().parent.parent.parent.parent / "assets" / "fonts" / "DejaVuSans-Bold.ttf"
+    font_path = str(bundled) if bundled.exists() else None
+    if not font_path:
+        # Fall back to the first candidate with PIL default
+        return ImageFont.load_default()
+    tmp = Image.new("RGB", (10, 10))
+    td = ImageDraw.Draw(tmp)
+    for size in size_candidates:
+        f = ImageFont.truetype(font_path, size)
+        bbox = td.textbbox((0, 0), text, font=f)
+        if (bbox[2] - bbox[0]) <= max_width:
+            return f
+    return ImageFont.truetype(font_path, size_candidates[-1])
+
+
+def _draw_stats_table(draw, x0: int, y0: int, x1: int, y1: int,
+                      away_l10: str | None, home_l10: str | None,
+                      away_ats: str | None, home_ats: str | None,
+                      away_ou: str | None, home_ou: str | None, fonts: dict):
+    """Draw a 3-row stats table: [away_value]  LABEL  [home_value]."""
+    _draw_rounded_rect(draw, [x0, y0, x1, y1], fill=CARD, outline=SURFACE, radius=16, width=1)
+
+    rows = [
+        ("L10", away_l10, home_l10),
+        ("ATS", away_ats, home_ats),
+        ("O/U", away_ou, home_ou),
+    ]
+    rows = [r for r in rows if r[1] or r[2]]
+    if not rows:
+        return
+
+    row_h = (y1 - y0) / len(rows)
+    center_x = (x0 + x1) // 2
+    away_cx = x0 + (x1 - x0) // 4
+    home_cx = x1 - (x1 - x0) // 4
+
+    for i, (label, a_val, h_val) in enumerate(rows):
+        cy = int(y0 + row_h * i + row_h / 2)
+        draw.text((center_x, cy), label, font=fonts["s"], fill=DIM, anchor="mm")
+        if a_val:
+            draw.text((away_cx, cy), a_val, font=fonts["m"], fill=WHITE, anchor="mm")
+        if h_val:
+            draw.text((home_cx, cy), h_val, font=fonts["m"], fill=WHITE, anchor="mm")
+
+    for i in range(1, len(rows)):
+        sy = int(y0 + row_h * i)
+        draw.line([(x0 + 40, sy), (x1 - 40, sy)], fill=SURFACE, width=1)
 
 
 def _draw_team_bars(draw, W: int, H: int, away_team: str, home_team: str, sport: str = "mlb"):
@@ -301,12 +379,18 @@ def generate_nrfi_card(
 
     W, H = 1200, 1200
     img = Image.new("RGB", (W, H), BG)
-    draw = ImageDraw.Draw(img)
-    fonts = _get_fonts()
-
     _draw_gradient_bg_fast(img, W, H)
+
+    # Drop shadows beneath card surfaces — drawn on RGBA then flattened
+    img = img.convert("RGBA")
+    _draw_shadow(img, [350, 430, 850, 650], radius=20, shadow_offset=10, shadow_blur=15)
+    _draw_shadow(img, [50, 680, 1150, 850], radius=16, shadow_offset=8, shadow_blur=12)
+    _draw_shadow(img, [50, 890, 1150, 1110], radius=16, shadow_offset=8, shadow_blur=12)
+    img = img.convert("RGB")
+
     draw = ImageDraw.Draw(img)
     _draw_team_bars(draw, W, H, away_team, home_team)
+    fonts = _get_fonts()
 
     draw.text((60, 30), "NRFI PICK", font=fonts["s"], fill=ACCENT)
     if game_time:
@@ -315,51 +399,50 @@ def generate_nrfi_card(
 
     away_logo = _fetch_logo(away_team)
     home_logo = _fetch_logo(home_team)
-    _paste_logo(img, away_logo, 200, 200, max_size=220)
-    _paste_logo(img, home_logo, 1000, 200, max_size=220)
+    _paste_logo(img, away_logo, 200, 190, max_size=200)
+    _paste_logo(img, home_logo, 1000, 190, max_size=200)
 
     draw = ImageDraw.Draw(img)
-    draw.text((200, 340), away_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
-    draw.text((1000, 340), home_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+    # Auto-fit team names within ~360px (avoids clipping on long names like ATHLETICS, D-BACKS)
+    away_font = _fit_font(away_name.upper(), max_width=360)
+    home_font = _fit_font(home_name.upper(), max_width=360)
+    draw.text((200, 330), away_name.upper(), font=away_font, fill=WHITE, anchor="mm")
+    draw.text((1000, 330), home_name.upper(), font=home_font, fill=WHITE, anchor="mm")
 
     away_sub = _build_team_sub(away_record, away_div_rank)
     home_sub = _build_team_sub(home_record, home_div_rank)
     if away_sub:
-        draw.text((200, 400), away_sub, font=fonts["xs"], fill=MUTED, anchor="mm")
+        away_sub_font = _fit_font(away_sub, max_width=380, size_candidates=(36, 32, 28, 24))
+        draw.text((200, 390), away_sub, font=away_sub_font, fill=MUTED, anchor="mm")
     if home_sub:
-        draw.text((1000, 400), home_sub, font=fonts["xs"], fill=MUTED, anchor="mm")
+        home_sub_font = _fit_font(home_sub, max_width=380, size_candidates=(36, 32, 28, 24))
+        draw.text((1000, 390), home_sub, font=home_sub_font, fill=MUTED, anchor="mm")
 
+    # NRFI % badge
     tier_color, tier_label = _nrfi_tier(nrfi_pct)
-    _draw_rounded_rect(draw, [350, 450, 850, 670], fill=CARD, outline=SURFACE, radius=20, width=2)
-    pct_text = f"{nrfi_pct:.0f}%"
-    draw.text((W // 2, 530), pct_text, font=fonts["huge"], fill=tier_color, anchor="mm")
-    draw.text((W // 2, 625), tier_label, font=fonts["m"], fill=tier_color, anchor="mm")
+    _draw_rounded_rect(draw, [350, 430, 850, 650], fill=CARD, outline=SURFACE, radius=20, width=2)
+    draw.text((W // 2, 510), f"{nrfi_pct:.0f}%", font=fonts["huge"], fill=tier_color, anchor="mm")
+    draw.text((W // 2, 605), tier_label, font=fonts["m"], fill=tier_color, anchor="mm")
 
-    _draw_rounded_rect(draw, [50, 700, W - 50, 870], fill=CARD, outline=SURFACE, radius=16, width=1)
-    draw.text((W // 2, 725), "STARTING PITCHERS", font=fonts["xs"], fill=DIM, anchor="mm")
+    # Pitchers card
+    _draw_rounded_rect(draw, [50, 680, W - 50, 850], fill=CARD, outline=SURFACE, radius=16, width=1)
+    draw.text((W // 2, 705), "STARTING PITCHERS", font=fonts["xs"], fill=DIM, anchor="mm")
 
     if away_pitcher:
-        draw.text((250, 775), away_pitcher, font=fonts["m"], fill=WHITE, anchor="mm")
+        draw.text((250, 755), away_pitcher, font=fonts["m"], fill=WHITE, anchor="mm")
         if away_era is not None:
-            draw.text((250, 830), f"{away_era:.2f} ERA", font=fonts["s"], fill=MUTED, anchor="mm")
+            draw.text((250, 810), f"{away_era:.2f} ERA", font=fonts["s"], fill=MUTED, anchor="mm")
 
-    draw.text((W // 2, 800), "vs", font=fonts["s"], fill=DIM, anchor="mm")
+    draw.text((W // 2, 780), "vs", font=fonts["s"], fill=DIM, anchor="mm")
 
     if home_pitcher:
-        draw.text((950, 775), home_pitcher, font=fonts["m"], fill=WHITE, anchor="mm")
+        draw.text((950, 755), home_pitcher, font=fonts["m"], fill=WHITE, anchor="mm")
         if home_era is not None:
-            draw.text((950, 830), f"{home_era:.2f} ERA", font=fonts["s"], fill=MUTED, anchor="mm")
+            draw.text((950, 810), f"{home_era:.2f} ERA", font=fonts["s"], fill=MUTED, anchor="mm")
 
-    stats_parts = []
-    if away_l10 and home_l10:
-        stats_parts.append(f"L10: {away_l10} / {home_l10}")
-    if away_ats and home_ats:
-        stats_parts.append(f"ATS: {away_ats} / {home_ats}")
-    if away_ou and home_ou:
-        stats_parts.append(f"O/U: {away_ou} / {home_ou}")
-    if stats_parts:
-        stats_line = "    ".join(stats_parts)
-        draw.text((W // 2, 930), stats_line, font=fonts["xs"], fill=MUTED, anchor="mm")
+    # Stats table (3 rows, [away] LABEL [home])
+    _draw_stats_table(draw, 50, 890, W - 50, 1110,
+                      away_l10, home_l10, away_ats, home_ats, away_ou, home_ou, fonts)
 
     draw.text((60, H - 50), "truline.app", font=fonts["footer"], fill=ACCENT)
     draw.text((W - 60, H - 50), "@trulineapp", font=fonts["footer"], fill=ACCENT, anchor="ra")
@@ -388,46 +471,56 @@ def generate_recap_card(
 
     W, H = 1200, 1200
     img = Image.new("RGB", (W, H), BG)
-    draw = ImageDraw.Draw(img)
-    fonts = _get_fonts()
-
     _draw_gradient_bg_fast(img, W, H)
+
+    # Shadow beneath the NRFI/YRFI result badge
+    img = img.convert("RGBA")
+    _draw_shadow(img, [300, 690, 900, 900], radius=20, shadow_offset=10, shadow_blur=15)
+    img = img.convert("RGB")
+
     draw = ImageDraw.Draw(img)
     _draw_team_bars(draw, W, H, away_team, home_team)
+    fonts = _get_fonts()
 
     draw.text((60, 30), "1ST INNING RECAP", font=fonts["s"], fill=ACCENT)
 
     away_logo = _fetch_logo(away_team)
     home_logo = _fetch_logo(home_team)
-    _paste_logo(img, away_logo, 200, 200, max_size=220)
-    _paste_logo(img, home_logo, 1000, 200, max_size=220)
+    _paste_logo(img, away_logo, 200, 190, max_size=200)
+    _paste_logo(img, home_logo, 1000, 190, max_size=200)
 
     draw = ImageDraw.Draw(img)
 
-    draw.text((200, 340), away_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
-    draw.text((1000, 340), home_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+    away_font = _fit_font(away_name.upper(), max_width=360)
+    home_font = _fit_font(home_name.upper(), max_width=360)
+    draw.text((200, 330), away_name.upper(), font=away_font, fill=WHITE, anchor="mm")
+    draw.text((1000, 330), home_name.upper(), font=home_font, fill=WHITE, anchor="mm")
 
     away_sub = _build_team_sub(away_record, away_div_rank)
     home_sub = _build_team_sub(home_record, home_div_rank)
     if away_sub:
-        draw.text((200, 400), away_sub, font=fonts["xs"], fill=MUTED, anchor="mm")
+        away_sub_font = _fit_font(away_sub, max_width=380, size_candidates=(36, 32, 28, 24))
+        draw.text((200, 390), away_sub, font=away_sub_font, fill=MUTED, anchor="mm")
     if home_sub:
-        draw.text((1000, 400), home_sub, font=fonts["xs"], fill=MUTED, anchor="mm")
+        home_sub_font = _fit_font(home_sub, max_width=380, size_candidates=(36, 32, 28, 24))
+        draw.text((1000, 390), home_sub, font=home_sub_font, fill=MUTED, anchor="mm")
 
     score_text = f"{away_first}  —  {home_first}"
-    draw.text((W // 2, 520), score_text, font=fonts["hero"], fill=WHITE, anchor="mm")
-    draw.text((W // 2, 630), "1ST INNING", font=fonts["s"], fill=MUTED, anchor="mm")
+    draw.text((W // 2, 510), score_text, font=fonts["hero"], fill=WHITE, anchor="mm")
+    draw.text((W // 2, 620), "1ST INNING", font=fonts["s"], fill=MUTED, anchor="mm")
 
+    # Result badge
+    _draw_rounded_rect(draw, [300, 690, 900, 900], fill=CARD, outline=SURFACE, radius=20, width=2)
     if is_nrfi:
-        draw.text((W // 2, 740), "NRFI", font=fonts["xl"], fill=GREEN, anchor="mm")
-        draw.text((W // 2, 840), "MODEL CALLED IT", font=fonts["s"], fill=GREEN, anchor="mm")
+        draw.text((W // 2, 760), "NRFI", font=fonts["xl"], fill=GREEN, anchor="mm")
+        draw.text((W // 2, 855), "MODEL CALLED IT", font=fonts["s"], fill=GREEN, anchor="mm")
     else:
-        draw.text((W // 2, 740), "YRFI", font=fonts["xl"], fill=AMBER, anchor="mm")
-        draw.text((W // 2, 840), "RUNS IN THE 1ST", font=fonts["s"], fill=AMBER, anchor="mm")
+        draw.text((W // 2, 760), "YRFI", font=fonts["xl"], fill=AMBER, anchor="mm")
+        draw.text((W // 2, 855), "RUNS IN THE 1ST", font=fonts["s"], fill=AMBER, anchor="mm")
 
     if predicted_nrfi_pct is not None:
         draw.text(
-            (W // 2, 920),
+            (W // 2, 960),
             f"Model predicted {predicted_nrfi_pct:.0f}% NRFI",
             font=fonts["s"],
             fill=MUTED,
@@ -563,24 +656,33 @@ def generate_final_card(
 
     W, H = 1200, 1200
     img = Image.new("RGB", (W, H), BG)
-    draw = ImageDraw.Draw(img)
-    fonts = _get_fonts()
-
     _draw_gradient_bg_fast(img, W, H)
+
+    # Shadow beneath stats table
+    img = img.convert("RGBA")
+    _draw_shadow(img, [50, 870, 1150, 1090], radius=16, shadow_offset=8, shadow_blur=12)
+    # Shadow for pick result if we'll draw one
+    if pick_team and pick_result:
+        _draw_shadow(img, [200, 670, 1000, 745], radius=12, shadow_offset=6, shadow_blur=10)
+    img = img.convert("RGB")
+
     draw = ImageDraw.Draw(img)
     _draw_team_bars(draw, W, H, away_team, home_team)
+    fonts = _get_fonts()
 
     draw.text((60, 30), "FINAL", font=fonts["s"], fill=ACCENT)
 
     away_logo = _fetch_logo(away_team)
     home_logo = _fetch_logo(home_team)
-    _paste_logo(img, away_logo, 200, 190, max_size=220)
-    _paste_logo(img, home_logo, 1000, 190, max_size=220)
+    _paste_logo(img, away_logo, 200, 190, max_size=200)
+    _paste_logo(img, home_logo, 1000, 190, max_size=200)
 
     draw = ImageDraw.Draw(img)
 
-    draw.text((200, 330), away_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
-    draw.text((1000, 330), home_name.upper(), font=fonts["l"], fill=WHITE, anchor="mm")
+    away_font = _fit_font(away_name.upper(), max_width=360)
+    home_font = _fit_font(home_name.upper(), max_width=360)
+    draw.text((200, 330), away_name.upper(), font=away_font, fill=WHITE, anchor="mm")
+    draw.text((1000, 330), home_name.upper(), font=home_font, fill=WHITE, anchor="mm")
 
     if away_record:
         draw.text((200, 385), away_record, font=fonts["xs"], fill=MUTED, anchor="mm")
@@ -597,7 +699,7 @@ def generate_final_card(
         tag_color = GREEN if is_nrfi else AMBER
         fi_text = f"1st Inning: {away_first}-{home_first} ({tag})"
         draw.text((W // 2, y_mid), fi_text, font=fonts["m"], fill=tag_color, anchor="mm")
-        y_mid += 80
+        y_mid = 680
 
     if pick_team and pick_result:
         result_color = GREEN if pick_result == "win" else (RED if pick_result == "loss" else MUTED)
@@ -605,9 +707,9 @@ def generate_final_card(
         pick_label = pick_type.upper() if pick_type else ""
         line_str = f" {pick_line:+g}" if pick_line is not None else ""
         pick_text = f"Our Pick: {pick_team} {pick_label}{line_str} — {result_label}"
-        _draw_rounded_rect(draw, [200, y_mid - 10, 1000, y_mid + 60], fill=CARD, outline=SURFACE, radius=12)
-        draw.text((W // 2, y_mid + 25), pick_text, font=fonts["s"], fill=result_color, anchor="mm")
-        y_mid += 90
+        _draw_rounded_rect(draw, [200, 670, 1000, 745], fill=CARD, outline=SURFACE, radius=12)
+        draw.text((W // 2, 707), pick_text, font=fonts["s"], fill=result_color, anchor="mm")
+        y_mid = 795
 
     if away_score > home_score:
         winner_name = away_name
@@ -616,18 +718,12 @@ def generate_final_card(
     else:
         winner_name = None
     if winner_name:
-        draw.text((W // 2, y_mid + 10), f"{winner_name.upper()} WINS", font=fonts["l"], fill=WHITE, anchor="mm")
+        winner_font = _fit_font(f"{winner_name.upper()} WINS", max_width=1000)
+        draw.text((W // 2, y_mid), f"{winner_name.upper()} WINS", font=winner_font, fill=WHITE, anchor="mm")
 
-    stats_parts = []
-    if away_l10 and home_l10:
-        stats_parts.append(f"L10: {away_l10} / {home_l10}")
-    if away_ats and home_ats:
-        stats_parts.append(f"ATS: {away_ats} / {home_ats}")
-    if away_ou and home_ou:
-        stats_parts.append(f"O/U: {away_ou} / {home_ou}")
-    if stats_parts:
-        stats_line = "    ".join(stats_parts)
-        draw.text((W // 2, H - 110), stats_line, font=fonts["xs"], fill=MUTED, anchor="mm")
+    # Stats table at bottom
+    _draw_stats_table(draw, 50, 870, W - 50, 1090,
+                      away_l10, home_l10, away_ats, home_ats, away_ou, home_ou, fonts)
 
     draw.text((60, H - 50), "truline.app", font=fonts["footer"], fill=ACCENT)
     draw.text((W - 60, H - 50), "@trulineapp", font=fonts["footer"], fill=ACCENT, anchor="ra")
