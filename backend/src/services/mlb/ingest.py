@@ -706,8 +706,89 @@ class MLBDataIngestor:
         # Compute first inning stats from completed games
         await self._update_first_inning_stats(today)
 
+        # Compute season-long ATS / O-U from final games + ingested markets
+        await self._update_betting_records(today)
+
         logger.info("Updated team stats", count=count)
         return count
+
+    async def _update_betting_records(self, today: date) -> None:
+        """Compute season ATS and O/U records from final games + ingested markets.
+
+        For each completed regular-season game we grab the latest runline and
+        total markets, derive each team's ATS/O-U result, and write the running
+        totals back to the team's latest mlb_team_stats row.
+        """
+        from collections import defaultdict
+        from sqlalchemy import text
+
+        result = await self.session.execute(text("""
+            WITH latest_markets AS (
+                SELECT DISTINCT ON (game_id, market_type)
+                    game_id, market_type, line
+                FROM mlb_markets
+                WHERE market_type IN ('runline', 'total')
+                  AND line IS NOT NULL
+                ORDER BY game_id, market_type, updated_at DESC
+            )
+            SELECT
+                g.game_id, g.home_team, g.away_team,
+                g.home_score, g.away_score,
+                MAX(CASE WHEN lm.market_type = 'runline' THEN lm.line END) AS runline,
+                MAX(CASE WHEN lm.market_type = 'total' THEN lm.line END) AS total_line
+            FROM mlb_games g
+            LEFT JOIN latest_markets lm ON lm.game_id = g.game_id
+            WHERE g.status = 'final'
+              AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
+              AND g.game_type = 'R'
+            GROUP BY g.game_id, g.home_team, g.away_team, g.home_score, g.away_score
+        """))
+        rows = result.fetchall()
+
+        ats: dict[str, dict[str, int]] = defaultdict(lambda: {"w": 0, "l": 0, "p": 0})
+        ou: dict[str, dict[str, int]] = defaultdict(lambda: {"o": 0, "u": 0, "p": 0})
+
+        for row in rows:
+            home, away = row.home_team, row.away_team
+            hs, as_ = int(row.home_score), int(row.away_score)
+            if row.runline is not None:
+                home_adjusted = hs + float(row.runline)
+                if home_adjusted > as_:
+                    ats[home]["w"] += 1; ats[away]["l"] += 1
+                elif home_adjusted < as_:
+                    ats[home]["l"] += 1; ats[away]["w"] += 1
+                else:
+                    ats[home]["p"] += 1; ats[away]["p"] += 1
+            if row.total_line is not None:
+                total_runs = hs + as_
+                line = float(row.total_line)
+                if total_runs > line:
+                    ou[home]["o"] += 1; ou[away]["o"] += 1
+                elif total_runs < line:
+                    ou[home]["u"] += 1; ou[away]["u"] += 1
+                else:
+                    ou[home]["p"] += 1; ou[away]["p"] += 1
+
+        all_teams = set(ats.keys()) | set(ou.keys())
+        for team in all_teams:
+            a, o = ats[team], ou[team]
+            await self.session.execute(text("""
+                UPDATE mlb_team_stats
+                SET ats_wins = :aw, ats_losses = :al, ats_pushes = :ap,
+                    ou_overs = :oo, ou_unders = :ou_u, ou_pushes = :op
+                WHERE stat_id = (
+                    SELECT stat_id FROM mlb_team_stats
+                    WHERE team_abbr = :team
+                    ORDER BY stat_date DESC LIMIT 1
+                )
+            """), {
+                "team": team,
+                "aw": a["w"], "al": a["l"], "ap": a["p"],
+                "oo": o["o"], "ou_u": o["u"], "op": o["p"],
+            })
+
+        await self.session.commit()
+        logger.info("Updated betting records", teams=len(all_teams), games=len(rows))
 
     async def _update_first_inning_stats(self, today: date) -> None:
         """Compute first inning scoring stats from completed games."""

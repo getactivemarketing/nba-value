@@ -137,9 +137,10 @@ async def get_team_card_stats(session: AsyncSession, team_abbr: str) -> dict:
         result["l10"] = stats.last_10_record
     elif stats.last_10_wins is not None and stats.last_10_losses is not None:
         result["l10"] = f"{stats.last_10_wins}-{stats.last_10_losses}"
-    # ATS / O-U intentionally not returned — our DB only reflects games we've
-    # graded (1-2 weeks), not the season-long records bettors expect. Re-enable
-    # once we have a reliable full-season betting data source.
+    if stats.ats_wins is not None and stats.ats_losses is not None and (stats.ats_wins + stats.ats_losses) > 0:
+        result["ats"] = f"{stats.ats_wins}-{stats.ats_losses}"
+    if stats.ou_overs is not None and stats.ou_unders is not None and (stats.ou_overs + stats.ou_unders) > 0:
+        result["ou"] = f"{stats.ou_overs}-{stats.ou_unders}"
 
     logger.debug("get_team_card_stats: stats found", team=team_abbr, result=result)
 
