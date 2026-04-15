@@ -402,15 +402,13 @@ class MLBStatsAPIClient:
             for team_record in division.get("teamRecords", []):
                 team = team_record.get("team", {})
 
-                # Look up splitRecords by type code instead of array index —
-                # MLB's splitRecords order is not guaranteed and varies early in
-                # the season when fewer splits exist.
+                # Look up splitRecords by type string instead of array index —
+                # MLB's splitRecords order is not guaranteed (lastTen can appear
+                # at index 2, 8, or anywhere depending on how many splits exist).
+                # Note: `type` is a string ("home", "away", "lastTen", etc),
+                # NOT a dict with a "code" field.
                 splits = team_record.get("records", {}).get("splitRecords", [])
-                splits_by_code = {}
-                for s in splits:
-                    code = s.get("type", {}).get("code")
-                    if code:
-                        splits_by_code[code] = s
+                splits_by_code = {s.get("type"): s for s in splits if s.get("type")}
 
                 def _split(code: str, field: str) -> int:
                     return splits_by_code.get(code, {}).get(field, 0)
