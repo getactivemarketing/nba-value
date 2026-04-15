@@ -401,6 +401,20 @@ class MLBStatsAPIClient:
         for division in data.get("records", []):
             for team_record in division.get("teamRecords", []):
                 team = team_record.get("team", {})
+
+                # Look up splitRecords by type code instead of array index —
+                # MLB's splitRecords order is not guaranteed and varies early in
+                # the season when fewer splits exist.
+                splits = team_record.get("records", {}).get("splitRecords", [])
+                splits_by_code = {}
+                for s in splits:
+                    code = s.get("type", {}).get("code")
+                    if code:
+                        splits_by_code[code] = s
+
+                def _split(code: str, field: str) -> int:
+                    return splits_by_code.get(code, {}).get(field, 0)
+
                 records.append({
                     "team_id": team.get("id"),
                     "team_abbr": MLB_TEAM_ABBR.get(team.get("id")),
@@ -410,12 +424,12 @@ class MLBStatsAPIClient:
                     "runs_scored": team_record.get("runsScored", 0),
                     "runs_allowed": team_record.get("runsAllowed", 0),
                     "run_differential": team_record.get("runDifferential", 0),
-                    "home_wins": team_record.get("records", {}).get("splitRecords", [{}])[0].get("wins", 0),
-                    "home_losses": team_record.get("records", {}).get("splitRecords", [{}])[0].get("losses", 0),
-                    "away_wins": team_record.get("records", {}).get("splitRecords", [{}])[1].get("wins", 0) if len(team_record.get("records", {}).get("splitRecords", [])) > 1 else 0,
-                    "away_losses": team_record.get("records", {}).get("splitRecords", [{}])[1].get("losses", 0) if len(team_record.get("records", {}).get("splitRecords", [])) > 1 else 0,
-                    "last_10_wins": team_record.get("records", {}).get("splitRecords", [{}])[2].get("wins", 0) if len(team_record.get("records", {}).get("splitRecords", [])) > 2 else 0,
-                    "last_10_losses": team_record.get("records", {}).get("splitRecords", [{}])[2].get("losses", 0) if len(team_record.get("records", {}).get("splitRecords", [])) > 2 else 0,
+                    "home_wins": _split("home", "wins"),
+                    "home_losses": _split("home", "losses"),
+                    "away_wins": _split("away", "wins"),
+                    "away_losses": _split("away", "losses"),
+                    "last_10_wins": _split("lastTen", "wins"),
+                    "last_10_losses": _split("lastTen", "losses"),
                     "streak": team_record.get("streak", {}).get("streakCode", ""),
                 })
 

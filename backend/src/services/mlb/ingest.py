@@ -689,9 +689,13 @@ class MLBDataIngestor:
                     "runs_per_game": round(runs_scored / games, 2) if games > 0 else None,
                     "runs_allowed_per_game": round(runs_allowed / games, 2) if games > 0 else None,
                     "run_diff_per_game": round((runs_scored - runs_allowed) / games, 2) if games > 0 else None,
+                    "home_wins": record.get("home_wins"),
+                    "home_losses": record.get("home_losses"),
+                    "away_wins": record.get("away_wins"),
+                    "away_losses": record.get("away_losses"),
                     "last_10_wins": record.get("last_10_wins"),
                     "last_10_losses": record.get("last_10_losses"),
-                    "team_whip": None,
+                    "last_10_record": f"{record.get('last_10_wins', 0)}-{record.get('last_10_losses', 0)}",
                 },
             )
             await self.session.execute(stmt)
