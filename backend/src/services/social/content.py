@@ -137,10 +137,10 @@ async def get_team_card_stats(session: AsyncSession, team_abbr: str) -> dict:
         result["l10"] = stats.last_10_record
     elif stats.last_10_wins is not None and stats.last_10_losses is not None:
         result["l10"] = f"{stats.last_10_wins}-{stats.last_10_losses}"
-    if stats.ats_wins is not None and stats.ats_losses is not None and (stats.ats_wins + stats.ats_losses) > 0:
-        result["ats"] = f"{stats.ats_wins}-{stats.ats_losses}"
-    if stats.ou_overs is not None and stats.ou_unders is not None and (stats.ou_overs + stats.ou_unders) > 0:
-        result["ou"] = f"{stats.ou_overs}-{stats.ou_unders}"
+    # ATS / O-U intentionally hidden — our DB-derived values only reflect games
+    # we've graded (1-2 weeks), which doesn't match the season-long records
+    # bettors expect. Re-enable once the backfill job runs reliably against
+    # all final games + markets from opening day.
 
     logger.debug("get_team_card_stats: stats found", team=team_abbr, result=result)
 
