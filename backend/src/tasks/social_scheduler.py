@@ -291,7 +291,10 @@ async def _post_first_inning_recaps_async() -> dict:
     posted_count = 0
     skipped = 0
 
-    # Only recap games from today (ET) to prevent spamming historical games
+    # Only recap games from today (ET) to prevent spamming historical games.
+    # Filter to games where we already posted a pregame NRFI card so the
+    # recap closes the loop on a prediction we made — keeps volume down to
+    # ~3-5/day rather than 15.
     today = _today_et()
 
     async with _social_session_factory() as session:
@@ -299,6 +302,7 @@ async def _post_first_inning_recaps_async() -> dict:
             and_(
                 MLBGame.game_date == today,
                 MLBGame.first_inning_tweet_posted == False,  # noqa: E712
+                MLBGame.pregame_tweet_posted == True,        # noqa: E712 — only games we predicted
                 MLBGame.home_first_inning_runs.isnot(None),
                 MLBGame.away_first_inning_runs.isnot(None),
                 or_(
@@ -382,11 +386,21 @@ async def _post_final_recaps_async() -> dict:
     posted_count = 0
     skipped = 0
 
-    # Include today and yesterday to catch late West Coast games that finish after midnight ET
+    # Include today and yesterday to catch late West Coast games that finish
+    # after midnight ET. Filter to games where we have a prediction snapshot
+    # with an actual best_bet pick — closes the loop on what we recommended,
+    # avoids posting recaps for the 10+ games we never picked on.
     today = _today_et()
     yesterday = today - timedelta(days=1)
 
     async with _social_session_factory() as session:
+        # Subquery: games where we made a best_bet pick
+        picked_game_ids_subq = (
+            select(MLBPredictionSnapshot.game_id)
+            .where(MLBPredictionSnapshot.best_bet_team.isnot(None))
+            .scalar_subquery()
+        )
+
         stmt = select(MLBGame).where(
             and_(
                 MLBGame.game_date.in_([today, yesterday]),
@@ -394,6 +408,7 @@ async def _post_final_recaps_async() -> dict:
                 MLBGame.final_tweet_posted == False,  # noqa: E712
                 MLBGame.home_score.isnot(None),
                 MLBGame.away_score.isnot(None),
+                MLBGame.game_id.in_(picked_game_ids_subq),
             )
         )
         games = list((await session.execute(stmt)).scalars().all())
