@@ -706,8 +706,10 @@ class MLBDataIngestor:
         # Compute first inning stats from completed games
         await self._update_first_inning_stats(today)
 
-        # Compute season-long ATS / O-U from final games + ingested markets
-        await self._update_betting_records(today)
+        # NOTE: _update_betting_records intentionally NOT called here yet.
+        # Suspected to be hanging the MLB scheduler. Run as a standalone
+        # backfill via scripts/backfill_mlb_betting_records.py until
+        # we can verify it doesn't block other scheduler tasks.
 
         logger.info("Updated team stats", count=count)
         return count
