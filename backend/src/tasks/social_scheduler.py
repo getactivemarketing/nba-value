@@ -504,6 +504,179 @@ async def _post_nba_results_async() -> dict:
     return {"posted": False, "type": "nba_results"}
 
 
+# Underdog ML threshold for celebration posts. American +130 = decimal 2.30.
+# Picks below this aren't surprising enough to celebrate.
+CELEBRATION_MIN_DECIMAL_ODDS = 2.30
+
+
+def _decimal_to_american(decimal_odds: float) -> int:
+    if decimal_odds >= 2.0:
+        return int(round((decimal_odds - 1) * 100))
+    return int(round(-100 / (decimal_odds - 1)))
+
+
+async def _post_celebrations_async() -> dict:
+    """Post celebration tweets for newly-graded winning underdog ML picks.
+
+    Looks at both MLB and NBA prediction snapshots from today/yesterday where:
+      - best_bet_type = 'moneyline'
+      - best_bet_result = 'win'
+      - best_bet_odds >= 2.30 (American +130 or higher)
+      - celebration_tweet_posted = FALSE
+
+    For each, generates a celebration card + tweet, posts via Blotato,
+    and marks the snapshot as posted.
+    """
+    from sqlalchemy import select, and_, text
+    from src.models import MLBPredictionSnapshot, MLBGame
+    from src.models.prediction_snapshot import PredictionSnapshot
+    from src.services.social.content import (
+        generate_celebration_tweet,
+        TEAM_NAMES, NBA_TEAM_NAMES,
+    )
+    from src.services.social.blotato import post_tweet, upload_media
+    from src.services.social.image_generator import generate_celebration_card
+
+    today = _today_et()
+    yesterday = today - timedelta(days=1)
+
+    posted = 0
+    skipped = 0
+
+    async with _social_session_factory() as session:
+        # --- MLB ---
+        mlb_stmt = select(MLBPredictionSnapshot).where(
+            and_(
+                MLBPredictionSnapshot.game_date.in_([today, yesterday]),
+                MLBPredictionSnapshot.best_bet_type == "moneyline",
+                MLBPredictionSnapshot.best_bet_result == "win",
+                MLBPredictionSnapshot.best_bet_odds >= CELEBRATION_MIN_DECIMAL_ODDS,
+                MLBPredictionSnapshot.celebration_tweet_posted == False,  # noqa: E712
+            )
+        )
+        mlb_snaps = list((await session.execute(mlb_stmt)).scalars().all())
+
+        for snap in mlb_snaps:
+            game = (await session.execute(
+                select(MLBGame).where(MLBGame.game_id == snap.game_id)
+            )).scalar_one_or_none()
+            if not game:
+                skipped += 1
+                continue
+
+            winner = snap.best_bet_team
+            loser = game.away_team if winner == game.home_team else game.home_team
+            winner_name = TEAM_NAMES.get(winner, winner)
+            loser_name = TEAM_NAMES.get(loser, loser)
+            odds_dec = float(snap.best_bet_odds)
+            odds_am = _decimal_to_american(odds_dec)
+            profit = float(snap.best_bet_profit or (odds_dec - 1))
+
+            score_text = None
+            if game.home_score is not None and game.away_score is not None:
+                if winner == game.home_team:
+                    score_text = f"{winner_name} {game.home_score}, {loser_name} {game.away_score}"
+                else:
+                    score_text = f"{winner_name} {game.away_score}, {loser_name} {game.home_score}"
+
+            tweet = generate_celebration_tweet(
+                "mlb", winner, winner_name, loser, loser_name,
+                odds_am, profit, score_text,
+            )
+
+            media_urls = None
+            try:
+                png = generate_celebration_card(
+                    winner_team=winner, winner_name=winner_name,
+                    odds_american=odds_am, profit_units=profit,
+                    score_text=score_text, sport="mlb",
+                )
+                public_url = upload_media(png, filename=f"celebrate_mlb_{snap.id}.png")
+                if public_url:
+                    media_urls = [public_url]
+            except Exception as e:
+                log_task(f"Celebration card failed for MLB snap {snap.id}: {e}")
+
+            if post_tweet(tweet, schedule_at="next-free-slot", media_urls=media_urls):
+                await session.execute(
+                    text("UPDATE mlb_prediction_snapshots SET celebration_tweet_posted = TRUE WHERE id = :sid"),
+                    {"sid": snap.id},
+                )
+                posted += 1
+            else:
+                skipped += 1
+
+        # --- NBA ---
+        nba_stmt = select(PredictionSnapshot).where(
+            and_(
+                PredictionSnapshot.game_date.in_([today, yesterday]),
+                PredictionSnapshot.best_bet_type == "moneyline",
+                PredictionSnapshot.best_bet_result == "win",
+                PredictionSnapshot.best_bet_odds >= CELEBRATION_MIN_DECIMAL_ODDS,
+                PredictionSnapshot.celebration_tweet_posted == False,  # noqa: E712
+            )
+        )
+        nba_snaps = list((await session.execute(nba_stmt)).scalars().all())
+
+        for snap in nba_snaps:
+            winner = snap.best_bet_team
+            loser = snap.away_team if winner == snap.home_team else snap.home_team
+            winner_name = NBA_TEAM_NAMES.get(winner, winner)
+            loser_name = NBA_TEAM_NAMES.get(loser, loser)
+            odds_dec = float(snap.best_bet_odds)
+            odds_am = _decimal_to_american(odds_dec)
+            profit = float(snap.best_bet_profit or (odds_dec - 1))
+
+            score_text = None
+            if snap.home_score is not None and snap.away_score is not None:
+                if winner == snap.home_team:
+                    score_text = f"{winner_name} {snap.home_score}, {loser_name} {snap.away_score}"
+                else:
+                    score_text = f"{winner_name} {snap.away_score}, {loser_name} {snap.home_score}"
+
+            tweet = generate_celebration_tweet(
+                "nba", winner, winner_name, loser, loser_name,
+                odds_am, profit, score_text,
+            )
+
+            media_urls = None
+            try:
+                png = generate_celebration_card(
+                    winner_team=winner, winner_name=winner_name,
+                    odds_american=odds_am, profit_units=profit,
+                    score_text=score_text, sport="nba",
+                )
+                public_url = upload_media(png, filename=f"celebrate_nba_{snap.id}.png")
+                if public_url:
+                    media_urls = [public_url]
+            except Exception as e:
+                log_task(f"Celebration card failed for NBA snap {snap.id}: {e}")
+
+            if post_tweet(tweet, schedule_at="next-free-slot", media_urls=media_urls):
+                await session.execute(
+                    text("UPDATE prediction_snapshots SET celebration_tweet_posted = TRUE WHERE id = :sid"),
+                    {"sid": snap.id},
+                )
+                posted += 1
+            else:
+                skipped += 1
+
+        await session.commit()
+
+    return {"posted": posted, "skipped": skipped, "type": "celebration"}
+
+
+def run_post_celebrations():
+    log_task("Posting celebrations for underdog ML wins...")
+    try:
+        result = _run_async(_post_celebrations_async())
+        log_task("Celebrations post complete", **{k: str(v) for k, v in result.items()})
+        return result
+    except Exception as e:
+        log_task(f"Celebrations post FAILED: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
 def run_post_nba_picks():
     log_task("Posting NBA picks...")
     try:
@@ -643,6 +816,8 @@ def start_scheduler():
     social_scheduler.every(10).minutes.do(run_post_first_inning_recaps)
     # Final recaps — runs every 30 min, mostly evening
     social_scheduler.every(30).minutes.do(run_post_final_recaps)
+    # Celebrations for underdog ML wins (≥+130) — runs every 15 min for both MLB and NBA
+    social_scheduler.every(15).minutes.do(run_post_celebrations)
 
     # NBA posts (playoff schedule)
     # Results: 10:30 AM ET = 14:30 UTC
@@ -660,6 +835,7 @@ def start_scheduler():
     log_task("  - Pregame NRFI picks: every 30 min (games within 90 min of start)")
     log_task("  - 1st inning recaps: every 10 min")
     log_task("  - Final recaps: every 30 min")
+    log_task("  - Celebrations (underdog ML wins ≥+130): every 15 min")
 
     while True:
         social_scheduler.run_pending()

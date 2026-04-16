@@ -95,6 +95,9 @@ class MLBPredictionSnapshot(Base):
     best_bet_result: Mapped[str | None] = mapped_column(String(20), nullable=True)
     best_bet_profit: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
 
+    # Social posting tracking
+    celebration_tweet_posted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     # Key factors (JSON array)
     factors: Mapped[str | None] = mapped_column(Text, nullable=True)
 

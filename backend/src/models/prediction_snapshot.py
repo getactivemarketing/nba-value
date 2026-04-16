@@ -51,6 +51,9 @@ class PredictionSnapshot(Base):
     best_bet_result: Mapped[str | None] = mapped_column(String(20), nullable=True)  # win/loss/push
     best_bet_profit: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)  # profit on $100 bet
 
+    # Social posting tracking
+    celebration_tweet_posted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     # Key factors that drove the prediction
     factors: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of factor strings
 

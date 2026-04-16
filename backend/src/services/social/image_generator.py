@@ -731,3 +731,70 @@ def generate_final_card(
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
     return buf.getvalue()
+
+
+def generate_celebration_card(
+    winner_team: str,
+    winner_name: str,
+    odds_american: int,
+    profit_units: float,
+    score_text: str | None = None,
+    sport: str = "mlb",
+) -> bytes:
+    """Celebration card for an underdog moneyline pick that hit (1200x1200).
+
+    Visual hierarchy: green "MODEL HIT" header, huge winner logo, big team name,
+    odds badge with profit, optional final-score line, footer.
+    """
+    from PIL import Image, ImageDraw
+
+    W, H = 1200, 1200
+    img = Image.new("RGB", (W, H), BG)
+    _draw_gradient_bg_fast(img, W, H)
+
+    # Soft shadow under the odds badge
+    img = img.convert("RGBA")
+    _draw_shadow(img, [250, 800, 950, 980], radius=20, shadow_offset=10, shadow_blur=15)
+    img = img.convert("RGB")
+
+    draw = ImageDraw.Draw(img)
+    # Use the winning team color on BOTH bars to make the card feel like
+    # a celebration of THIS team (not a vs matchup card).
+    color = _get_team_color(winner_team, sport)[0]
+    bar_h = 12
+    draw.rectangle([0, 0, W, bar_h], fill=color)
+    draw.rectangle([0, H - bar_h, W, H], fill=color)
+
+    fonts = _get_fonts()
+
+    # Top: "MODEL HIT" headline in green
+    draw.text((W // 2, 80), "MODEL HIT", font=fonts["xl"], fill=GREEN, anchor="mm")
+    draw.text((W // 2, 165), "Underdog cashed", font=fonts["s"], fill=MUTED, anchor="mm")
+
+    # Big winner logo, centered
+    logo = _fetch_logo(winner_team, sport=sport)
+    _paste_logo(img, logo, W // 2, 430, max_size=380)
+
+    draw = ImageDraw.Draw(img)
+
+    # Winner team name
+    name_font = _fit_font(winner_name.upper(), max_width=900)
+    draw.text((W // 2, 690), winner_name.upper(), font=name_font, fill=WHITE, anchor="mm")
+
+    # Odds badge with profit
+    _draw_rounded_rect(draw, [250, 800, 950, 980], fill=CARD, outline=SURFACE, radius=20, width=2)
+    odds_str = f"+{odds_american}" if odds_american > 0 else str(odds_american)
+    draw.text((W // 2, 860), f"{odds_str} WINNER", font=fonts["xl"], fill=GREEN, anchor="mm")
+    profit_str = f"+{profit_units:.2f}u on a unit bet"
+    draw.text((W // 2, 940), profit_str, font=fonts["s"], fill=MUTED, anchor="mm")
+
+    # Final score line, optional
+    if score_text:
+        draw.text((W // 2, 1030), score_text, font=fonts["m"], fill=WHITE, anchor="mm")
+
+    draw.text((60, H - 55), "truline.app", font=fonts["footer"], fill=ACCENT)
+    draw.text((W - 60, H - 55), "@trulineapp", font=fonts["footer"], fill=ACCENT, anchor="ra")
+
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()

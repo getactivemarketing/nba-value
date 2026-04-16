@@ -1309,3 +1309,58 @@ def generate_final_recap_tweet(game: MLBGame) -> str | None:
     if len(tweet) > 280:
         tweet = tweet[:277] + "..."
     return tweet
+
+
+def generate_celebration_tweet(
+    sport: str,
+    winner_team: str,
+    winner_name: str,
+    loser_team: str,
+    loser_name: str,
+    odds_american: int,
+    profit_units: float,
+    score_text: str | None = None,
+) -> str:
+    """Build a tweet for a winning underdog moneyline pick.
+
+    Tone: confident, specific, no emoji prefixes. Mentions the winning team
+    handle for tagging.
+    """
+    if sport == "nba":
+        winner_handle = NBA_TEAM_HANDLES.get(winner_team, f"@{winner_team}")
+        loser_handle = NBA_TEAM_HANDLES.get(loser_team, f"@{loser_team}")
+        league_tag = "#NBA"
+    else:
+        winner_handle = TEAM_HANDLES.get(winner_team, f"@{winner_team}")
+        loser_handle = TEAM_HANDLES.get(loser_team, f"@{loser_team}")
+        league_tag = "#MLB"
+
+    odds_str = f"+{odds_american}" if odds_american > 0 else str(odds_american)
+
+    parts = [f"{winner_name} hit at {odds_str}.", ""]
+    parts.append(f"Model called the {winner_name} ML over the {loser_name}.")
+    if score_text:
+        parts.append(score_text)
+    parts.append("")
+    parts.append(f"+{profit_units:.2f}u on a unit bet.")
+    parts.append("")
+    parts.append(f"{winner_handle} over {loser_handle}")
+    parts.append("")
+    parts.append(f"{league_tag} #SportsBetting")
+
+    tweet = "\n".join(parts)
+    if len(tweet) > 280:
+        # Trim by dropping the score + analytical line
+        parts = [
+            f"{winner_name} hit at {odds_str}.",
+            "",
+            f"+{profit_units:.2f}u on a unit bet.",
+            "",
+            f"{winner_handle} over {loser_handle}",
+            "",
+            f"{league_tag} #SportsBetting",
+        ]
+        tweet = "\n".join(parts)
+    if len(tweet) > 280:
+        tweet = tweet[:277] + "..."
+    return tweet
