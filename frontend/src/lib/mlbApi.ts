@@ -145,6 +145,42 @@ export interface MLBEvaluationSummary {
     win_rate: number | null;
     count: number;
   }>;
+  by_type?: Record<string, {
+    wins: number;
+    losses: number;
+    pushes: number;
+    profit: number;
+    win_rate: number | null;
+    count: number;
+  }>;
+}
+
+export interface NRFIEvaluation {
+  total_picks: number;
+  nrfi_hits: number;
+  accuracy: number | null;
+  recent: {
+    date: string;
+    away_team: string;
+    home_team: string;
+    result: 'hit' | 'miss';
+    first_inning_runs: number;
+  }[];
+}
+
+export interface UnderdogEvaluation {
+  total_picks: number;
+  wins: number;
+  losses: number;
+  profit: number;
+  avg_odds_american: number;
+  biggest_wins: {
+    date: string | null;
+    team: string;
+    odds_american: number;
+    profit: number;
+    score: string | null;
+  }[];
 }
 
 export interface FirstInningStats {
@@ -199,6 +235,16 @@ export const mlbApi = {
 
   async getFirstInningStats(): Promise<FirstInningStats[]> {
     const response = await client.get<FirstInningStats[]>('/mlb/stats/first-inning');
+    return response.data;
+  },
+
+  async getNRFIEvaluation(days: number = 90): Promise<NRFIEvaluation> {
+    const response = await client.get<NRFIEvaluation>(`/mlb/evaluation/nrfi?days=${days}`);
+    return response.data;
+  },
+
+  async getUnderdogEvaluation(days: number = 90): Promise<UnderdogEvaluation> {
+    const response = await client.get<UnderdogEvaluation>(`/mlb/evaluation/underdogs?days=${days}`);
     return response.data;
   },
 };
