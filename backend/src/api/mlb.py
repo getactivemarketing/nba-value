@@ -185,6 +185,7 @@ class EvaluationSummary(BaseModel):
     overall_win_rate: float | None
     total_profit: float
     by_value_tier: dict
+    by_type: dict = {}
 
 
 # Endpoints
@@ -526,6 +527,25 @@ async def get_evaluation_summary() -> EvaluationSummary:
             tier_stats["win_rate"] = round(tier_stats["wins"] / tier_decided, 3) if tier_decided > 0 else None
             tier_stats["count"] = tier_stats["wins"] + tier_stats["losses"] + tier_stats["pushes"]
 
+        # Group by bet type
+        by_type = {}
+        for snap in snapshots:
+            bt = (snap.best_bet_type or "unknown").lower()
+            if bt not in by_type:
+                by_type[bt] = {"wins": 0, "losses": 0, "pushes": 0, "profit": 0.0}
+            if snap.best_bet_result == "win":
+                by_type[bt]["wins"] += 1
+            elif snap.best_bet_result == "loss":
+                by_type[bt]["losses"] += 1
+            else:
+                by_type[bt]["pushes"] += 1
+            by_type[bt]["profit"] += float(snap.best_bet_profit or 0)
+
+        for bt_stats in by_type.values():
+            decided = bt_stats["wins"] + bt_stats["losses"]
+            bt_stats["win_rate"] = round(bt_stats["wins"] / decided, 3) if decided > 0 else None
+            bt_stats["profit"] = round(bt_stats["profit"], 2)
+
         return EvaluationSummary(
             total_predictions=total,
             graded_predictions=total,
@@ -535,6 +555,7 @@ async def get_evaluation_summary() -> EvaluationSummary:
             overall_win_rate=round(win_rate, 3) if win_rate else None,
             total_profit=round(profit, 2),
             by_value_tier=tiers,
+            by_type=by_type,
         )
 
 
@@ -1392,3 +1413,108 @@ def _decimal_to_american(decimal_odds: float) -> int:
         return int((decimal_odds - 1) * 100)
     else:
         return int(-100 / (decimal_odds - 1))
+
+
+@router.get("/evaluation/nrfi")
+async def get_nrfi_evaluation(
+    days: int = Query(90, ge=1, le=365, description="Lookback days"),
+) -> dict:
+    """Get NRFI pick accuracy — how often our pregame NRFI predictions were correct."""
+    from sqlalchemy import text
+
+    async with async_session() as session:
+        cutoff = date.today() - timedelta(days=days)
+
+        result = await session.execute(text("""
+            SELECT
+                game_date, away_team, home_team,
+                away_first_inning_runs, home_first_inning_runs
+            FROM mlb_games
+            WHERE pregame_tweet_posted = TRUE
+              AND status = 'final'
+              AND home_first_inning_runs IS NOT NULL
+              AND game_date >= :cutoff
+            ORDER BY game_date DESC
+        """), {"cutoff": cutoff})
+        rows = result.fetchall()
+
+        total = len(rows)
+        hits = sum(1 for r in rows if (r.away_first_inning_runs or 0) + (r.home_first_inning_runs or 0) == 0)
+
+        recent = []
+        for r in rows[:20]:
+            first_inning_runs = (r.away_first_inning_runs or 0) + (r.home_first_inning_runs or 0)
+            recent.append({
+                "date": r.game_date.isoformat(),
+                "away_team": r.away_team,
+                "home_team": r.home_team,
+                "result": "hit" if first_inning_runs == 0 else "miss",
+                "first_inning_runs": first_inning_runs,
+            })
+
+        return {
+            "total_picks": total,
+            "nrfi_hits": hits,
+            "accuracy": round(hits / total * 100, 1) if total > 0 else None,
+            "recent": recent,
+        }
+
+
+@router.get("/evaluation/underdogs")
+async def get_underdog_evaluation(
+    days: int = Query(90, ge=1, le=365, description="Lookback days"),
+) -> dict:
+    """Get underdog moneyline pick performance — picks at +100 or higher."""
+    async with async_session() as session:
+        cutoff = date.today() - timedelta(days=days)
+
+        stmt = select(MLBPredictionSnapshot).where(
+            and_(
+                MLBPredictionSnapshot.game_date >= cutoff,
+                MLBPredictionSnapshot.best_bet_type == "moneyline",
+                MLBPredictionSnapshot.best_bet_odds >= 2.0,
+                MLBPredictionSnapshot.best_bet_result.isnot(None),
+            )
+        ).order_by(desc(MLBPredictionSnapshot.game_date))
+
+        result = await session.execute(stmt)
+        snapshots = list(result.scalars().all())
+
+        total = len(snapshots)
+        wins = sum(1 for s in snapshots if s.best_bet_result == "win")
+        losses = sum(1 for s in snapshots if s.best_bet_result == "loss")
+        profit = sum(float(s.best_bet_profit or 0) for s in snapshots)
+
+        odds_list = [float(s.best_bet_odds) for s in snapshots if s.best_bet_odds]
+        avg_decimal = sum(odds_list) / len(odds_list) if odds_list else 0
+        avg_american = int(round((avg_decimal - 1) * 100)) if avg_decimal >= 2.0 else 0
+
+        won = sorted(
+            [s for s in snapshots if s.best_bet_result == "win"],
+            key=lambda s: float(s.best_bet_profit or 0),
+            reverse=True,
+        )[:5]
+
+        biggest_wins = []
+        for s in won:
+            odds_dec = float(s.best_bet_odds or 0)
+            odds_am = int(round((odds_dec - 1) * 100)) if odds_dec >= 2.0 else 0
+            score = None
+            if s.home_score is not None and s.away_score is not None:
+                score = f"{s.away_score}-{s.home_score}"
+            biggest_wins.append({
+                "date": s.game_date.isoformat() if s.game_date else None,
+                "team": s.best_bet_team,
+                "odds_american": odds_am,
+                "profit": round(float(s.best_bet_profit or 0), 2),
+                "score": score,
+            })
+
+        return {
+            "total_picks": total,
+            "wins": wins,
+            "losses": losses,
+            "profit": round(profit, 2),
+            "avg_odds_american": avg_american,
+            "biggest_wins": biggest_wins,
+        }
