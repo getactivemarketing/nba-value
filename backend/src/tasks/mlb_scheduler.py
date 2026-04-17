@@ -463,21 +463,28 @@ async def grade_predictions_async() -> dict:
                 else:
                     snapshot.best_ml_profit = -100
 
-            # Grade best runline bet
+            # Grade best runline bet.
+            # best_rl_line is from the BET TEAM's perspective: +1.5 for underdogs,
+            # -1.5 for favorites. The sign already encodes the direction — add it
+            # to the bet team's score and compare to the opponent's score.
             if snapshot.best_rl_team and snapshot.best_rl_line:
-                run_diff = game.home_score - game.away_score
                 if snapshot.best_rl_team == game.home_team:
-                    # Home team needs to cover (win by more than spread)
-                    rl_won = run_diff > abs(float(snapshot.best_rl_line))
+                    bet_score = game.home_score
+                    opp_score = game.away_score
                 else:
-                    # Away team needs to cover
-                    rl_won = -run_diff > abs(float(snapshot.best_rl_line)) or \
-                             run_diff < -abs(float(snapshot.best_rl_line))
+                    bet_score = game.away_score
+                    opp_score = game.home_score
 
-                if rl_won:
+                adjusted = bet_score + float(snapshot.best_rl_line)
+                if adjusted > opp_score:
                     snapshot.best_rl_result = "win"
                     if snapshot.best_rl_odds:
                         snapshot.best_rl_profit = (float(snapshot.best_rl_odds) - 1) * 100
+                    else:
+                        snapshot.best_rl_profit = 0
+                elif adjusted == opp_score:
+                    snapshot.best_rl_result = "push"
+                    snapshot.best_rl_profit = 0
                 else:
                     snapshot.best_rl_result = "loss"
                     snapshot.best_rl_profit = -100
@@ -674,10 +681,50 @@ def run_sync_results():
         return {"status": "failed", "error": str(e)}
 
 
+def _regrade_runline_picks_once():
+    """One-time fix: reset all runline-based grades so they get re-graded.
+
+    Previous grading logic used abs() on the line which broke +1.5 underdog
+    picks (graded as losses when they actually covered). Nulling out the
+    results lets the next run_grading() cycle re-calculate with the fixed logic.
+
+    Safe to run multiple times — only touches snapshots that have runline results.
+    """
+    try:
+        loop = _mlb_loop
+        if loop is None:
+            return
+
+        async def _fix():
+            from sqlalchemy import text
+            async with _mlb_session_factory() as session:
+                result = await session.execute(text("""
+                    UPDATE mlb_prediction_snapshots
+                    SET best_rl_result = NULL,
+                        best_rl_profit = NULL,
+                        best_bet_result = NULL,
+                        best_bet_profit = NULL
+                    WHERE best_bet_type = 'runline'
+                      AND best_bet_result IS NOT NULL
+                    RETURNING id
+                """))
+                count = len(result.fetchall())
+                await session.commit()
+                return count
+
+        count = loop.run_until_complete(_fix())
+        log_task(f"Runline regrade: reset {count} snapshots for re-grading")
+    except Exception as e:
+        log_task(f"Runline regrade failed (non-fatal): {e}")
+
+
 def run_all():
     """Run all MLB tasks once."""
     log_task("=" * 50)
     log_task("Running all MLB scheduled tasks...")
+
+    _regrade_runline_picks_once()
+    time.sleep(2)
 
     run_sync_teams()
     time.sleep(2)
