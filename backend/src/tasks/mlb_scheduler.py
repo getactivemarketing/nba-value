@@ -698,14 +698,24 @@ def _regrade_runline_picks_once():
         async def _fix():
             from sqlalchemy import text
             async with _mlb_session_factory() as session:
+                # Must null out actual_winner too — the grading query filters
+                # on actual_winner IS NULL to find snapshots that need grading.
                 result = await session.execute(text("""
                     UPDATE mlb_prediction_snapshots
-                    SET best_rl_result = NULL,
+                    SET actual_winner = NULL,
+                        winner_correct = NULL,
+                        home_score = NULL,
+                        away_score = NULL,
+                        best_ml_result = NULL,
+                        best_ml_profit = NULL,
+                        best_rl_result = NULL,
                         best_rl_profit = NULL,
+                        best_total_result = NULL,
+                        best_total_profit = NULL,
                         best_bet_result = NULL,
                         best_bet_profit = NULL
                     WHERE best_bet_type = 'runline'
-                      AND best_bet_result IS NOT NULL
+                      AND actual_winner IS NOT NULL
                     RETURNING id
                 """))
                 count = len(result.fetchall())
