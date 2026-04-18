@@ -3,10 +3,12 @@ import {
   AbsoluteFill,
   Sequence,
   Img,
+  Audio,
   interpolate,
   spring,
   useCurrentFrame,
   useVideoConfig,
+  staticFile,
 } from 'remotion';
 import { COLORS, FONTS, seconds, espnLogoUrl } from '../constants';
 
@@ -18,9 +20,13 @@ export interface ModelHitProps {
   scoreText: string;
   sport: 'mlb' | 'nba';
   teamColor: string;
+  musicFile?: string;  // e.g. "music.mp3" in public/ dir — omit for no music
 }
 
-const AnimatedText: React.FC<{
+/**
+ * Snappy animated text — higher stiffness = faster pop-in.
+ */
+const Pop: React.FC<{
   children: string;
   delay?: number;
   size?: number;
@@ -37,10 +43,10 @@ const AnimatedText: React.FC<{
   const progress = spring({
     frame: local,
     fps,
-    config: { damping: 14, stiffness: 100, mass: 0.8 },
+    config: { damping: 18, stiffness: 220, mass: 0.5 },
   });
 
-  const scale = interpolate(progress, [0, 1], [0.6, 1]);
+  const scale = interpolate(progress, [0, 1], [0.4, 1]);
   const opacity = interpolate(progress, [0, 1], [0, 1]);
 
   return (
@@ -65,6 +71,9 @@ const AnimatedText: React.FC<{
   );
 };
 
+/**
+ * Animated profit counter that ticks up from 0 to target.
+ */
 const ProfitCounter: React.FC<{
   target: number;
   delay?: number;
@@ -74,14 +83,10 @@ const ProfitCounter: React.FC<{
   const local = frame - delay;
   if (local < 0) return null;
 
-  const progress = spring({
-    frame: local,
-    fps,
-    config: { damping: 20, stiffness: 80, mass: 1 },
-  });
-
-  const value = interpolate(progress, [0, 1], [0, target]);
-  const opacity = interpolate(progress, [0, 1], [0, 1]);
+  // Fast count-up over ~15 frames (0.5 sec)
+  const progress = Math.min(local / 15, 1);
+  const value = target * progress;
+  const opacity = Math.min(local / 5, 1);
 
   return (
     <div
@@ -99,6 +104,17 @@ const ProfitCounter: React.FC<{
   );
 };
 
+/**
+ * MODEL HIT — 8-second celebration video (1080x1920 vertical).
+ *
+ * Timeline (30fps = 240 frames total):
+ *   0.0-1.5s (0-44):   "MODEL HIT" + "Underdog cashed" slam in
+ *   1.5-4.0s (45-119):  Team logo scales up with glow + team name
+ *   4.0-6.0s (120-179): Odds badge + "UNDERDOG CASHED" + profit counter
+ *   6.0-8.0s (180-239): Score + truline.app CTA (holds for screenshot)
+ *
+ * Audio: if public/music.mp3 exists, plays from frame 0.
+ */
 export const ModelHit: React.FC<ModelHitProps> = ({
   winnerTeam,
   winnerName,
@@ -107,14 +123,16 @@ export const ModelHit: React.FC<ModelHitProps> = ({
   scoreText,
   sport,
   teamColor,
+  musicFile,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
+  // Faster glow pulse (full cycle every 20 frames = 0.67s)
   const glowPulse = interpolate(
-    frame % 60,
-    [0, 30, 60],
-    [0.15, 0.25, 0.15],
+    frame % 20,
+    [0, 10, 20],
+    [0.15, 0.3, 0.15],
   );
 
   const logoUrl = espnLogoUrl(winnerTeam, sport);
@@ -122,14 +140,19 @@ export const ModelHit: React.FC<ModelHitProps> = ({
 
   return (
     <AbsoluteFill style={{ backgroundColor: COLORS.bg }}>
-      {/* Team color radial glow */}
+      {/* Background music — drop an mp3 in public/ and pass musicFile="filename.mp3" */}
+      {musicFile && (
+        <Audio src={staticFile(musicFile)} volume={0.5} />
+      )}
+
+      {/* Team color radial glow — pulsing */}
       <div
         style={{
           position: 'absolute',
           top: '30%',
           left: '50%',
-          width: 800,
-          height: 800,
+          width: 900,
+          height: 900,
           transform: 'translate(-50%, -50%)',
           borderRadius: '50%',
           background: `radial-gradient(circle, ${teamColor} 0%, transparent 70%)`,
@@ -138,29 +161,29 @@ export const ModelHit: React.FC<ModelHitProps> = ({
         }}
       />
 
-      {/* Phase 1: 0-3s — MODEL HIT title (persists) */}
-      <Sequence from={0} durationInFrames={seconds(15)}>
-        <AnimatedText size={140} color={COLORS.green} weight={900} y={280} delay={5}>
+      {/* Phase 1: 0-1.5s — "MODEL HIT" slam (persists entire video) */}
+      <Sequence from={0} durationInFrames={seconds(8)}>
+        <Pop size={150} color={COLORS.green} weight={900} y={250} delay={2}>
           MODEL HIT
-        </AnimatedText>
-        <AnimatedText size={56} color={COLORS.muted} weight={500} y={440} delay={15}>
+        </Pop>
+        <Pop size={56} color={COLORS.muted} weight={500} y={420} delay={8}>
           Underdog cashed
-        </AnimatedText>
+        </Pop>
       </Sequence>
 
-      {/* Phase 2: 3-7s — Team logo + name */}
-      <Sequence from={seconds(3)} durationInFrames={seconds(12)}>
+      {/* Phase 2: 1.5-4s — Team logo + name */}
+      <Sequence from={seconds(1.5)} durationInFrames={seconds(6.5)}>
         {(() => {
-          const localFrame = frame - seconds(3);
+          const localFrame = frame - seconds(1.5);
           if (localFrame < 0) return null;
 
           const logoProgress = spring({
             frame: localFrame,
             fps,
-            config: { damping: 12, stiffness: 80, mass: 1 },
+            config: { damping: 16, stiffness: 180, mass: 0.6 },
           });
 
-          const logoScale = interpolate(logoProgress, [0, 1], [0.3, 1]);
+          const logoScale = interpolate(logoProgress, [0, 1], [0.2, 1]);
           const logoOpacity = interpolate(logoProgress, [0, 1], [0, 1]);
 
           return (
@@ -168,47 +191,47 @@ export const ModelHit: React.FC<ModelHitProps> = ({
               <div
                 style={{
                   position: 'absolute',
-                  top: 580,
+                  top: 550,
                   left: '50%',
                   transform: `translateX(-50%) scale(${logoScale})`,
                   opacity: logoOpacity,
-                  filter: `drop-shadow(0 0 60px ${teamColor})`,
+                  filter: `drop-shadow(0 0 80px ${teamColor})`,
                 }}
               >
                 <Img src={logoUrl} width={380} height={380} />
               </div>
-              <AnimatedText size={96} color={COLORS.text} weight={800} y={1000} delay={seconds(3) + 15}>
+              <Pop size={96} color={COLORS.text} weight={800} y={980} delay={seconds(1.5) + 8}>
                 {winnerName.toUpperCase()}
-              </AnimatedText>
+              </Pop>
             </>
           );
         })()}
       </Sequence>
 
-      {/* Phase 3: 7-11s — Odds + profit */}
-      <Sequence from={seconds(7)} durationInFrames={seconds(8)}>
-        <AnimatedText size={160} color={COLORS.accent} font={FONTS.mono} weight={900} y={1160} delay={seconds(7)}>
+      {/* Phase 3: 4-6s — Odds + profit */}
+      <Sequence from={seconds(4)} durationInFrames={seconds(4)}>
+        <Pop size={160} color={COLORS.accent} font={FONTS.mono} weight={900} y={1120} delay={seconds(4)}>
           {oddsStr}
-        </AnimatedText>
-        <AnimatedText size={48} color={COLORS.muted} weight={600} y={1340} delay={seconds(7) + 10}>
+        </Pop>
+        <Pop size={48} color={COLORS.muted} weight={600} y={1300} delay={seconds(4) + 5}>
           UNDERDOG CASHED
-        </AnimatedText>
-        <div style={{ position: 'absolute', top: 1420, left: 0, right: 0 }}>
-          <ProfitCounter target={profitUnits} delay={seconds(7) + 20} />
+        </Pop>
+        <div style={{ position: 'absolute', top: 1380, left: 0, right: 0 }}>
+          <ProfitCounter target={profitUnits} delay={seconds(4) + 10} />
         </div>
       </Sequence>
 
-      {/* Phase 4: 11-15s — CTA */}
-      <Sequence from={seconds(11)} durationInFrames={seconds(4)}>
-        <AnimatedText size={42} color={COLORS.muted} weight={500} y={1560} delay={seconds(11)}>
+      {/* Phase 4: 6-8s — Score + CTA (holds for screenshots) */}
+      <Sequence from={seconds(6)} durationInFrames={seconds(2)}>
+        <Pop size={42} color={COLORS.muted} weight={500} y={1520} delay={seconds(6)}>
           {scoreText}
-        </AnimatedText>
-        <AnimatedText size={56} color={COLORS.accent} weight={700} y={1680} delay={seconds(11) + 10}>
+        </Pop>
+        <Pop size={56} color={COLORS.accent} weight={700} y={1640} delay={seconds(6) + 4}>
           truline.app
-        </AnimatedText>
-        <AnimatedText size={40} color={COLORS.muted} weight={500} y={1760} delay={seconds(11) + 15}>
+        </Pop>
+        <Pop size={40} color={COLORS.muted} weight={500} y={1730} delay={seconds(6) + 8}>
           Follow for daily picks
-        </AnimatedText>
+        </Pop>
       </Sequence>
     </AbsoluteFill>
   );

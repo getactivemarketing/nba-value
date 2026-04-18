@@ -18,7 +18,7 @@ export const Root: React.FC = () => {
     <Composition
       id="model-hit"
       component={ModelHit as unknown as React.ComponentType<Record<string, unknown>>}
-      durationInFrames={seconds(15)}
+      durationInFrames={seconds(8)}
       fps={FPS}
       width={WIDTH}
       height={HEIGHT}
