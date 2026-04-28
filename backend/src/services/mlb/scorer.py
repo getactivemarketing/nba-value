@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
 from src.models import MLBGame, MLBMarket, MLBPrediction, MLBPredictionSnapshot
 from src.services.mlb.features import MLBFeatureCalculator, MLBGameFeatures
 from src.services.mlb.value_calculator import MLBValueCalculator, MLBValueResult
@@ -405,38 +406,47 @@ class MLBScorer:
 
             elif market.market_type == "runline":
                 if market.home_odds and market.away_odds:
+                    home_odds = float(market.home_odds)
+                    away_odds = float(market.away_odds)
                     home_prob, away_prob = MLBValueCalculator.devig_odds(
-                        float(market.home_odds), float(market.away_odds)
+                        home_odds, away_odds
                     )
 
-                    # Home runline value
-                    home_value = MLBValueCalculator.calculate_value(
-                        market_type="runline",
-                        bet_type="home_rl",
-                        model_prob=prediction.p_home_cover,
-                        market_prob=home_prob,
-                        odds_decimal=float(market.home_odds),
-                        team=game.home_team,
-                        line=float(market.line) if market.line else -1.5,
-                    )
-                    all_values.append(home_value)
+                    rl_values: list[MLBValueResult] = []
 
-                    # Away runline value
-                    away_value = MLBValueCalculator.calculate_value(
-                        market_type="runline",
-                        bet_type="away_rl",
-                        model_prob=prediction.p_away_cover,
-                        market_prob=away_prob,
-                        odds_decimal=float(market.away_odds),
-                        team=game.away_team,
-                        line=abs(float(market.line)) if market.line else 1.5,
-                    )
-                    all_values.append(away_value)
+                    # Home runline value (filter mid-dog odds — see MAX_RUNLINE_ODDS)
+                    if home_odds <= MLBValueCalculator.MAX_RUNLINE_ODDS:
+                        home_value = MLBValueCalculator.calculate_value(
+                            market_type="runline",
+                            bet_type="home_rl",
+                            model_prob=prediction.p_home_cover,
+                            market_prob=home_prob,
+                            odds_decimal=home_odds,
+                            team=game.home_team,
+                            line=float(market.line) if market.line else -1.5,
+                        )
+                        all_values.append(home_value)
+                        rl_values.append(home_value)
 
-                    rl_values = [home_value, away_value]
-                    prediction.best_rl = MLBValueCalculator.find_best_value(rl_values)
+                    if away_odds <= MLBValueCalculator.MAX_RUNLINE_ODDS:
+                        away_value = MLBValueCalculator.calculate_value(
+                            market_type="runline",
+                            bet_type="away_rl",
+                            model_prob=prediction.p_away_cover,
+                            market_prob=away_prob,
+                            odds_decimal=away_odds,
+                            team=game.away_team,
+                            line=abs(float(market.line)) if market.line else 1.5,
+                        )
+                        all_values.append(away_value)
+                        rl_values.append(away_value)
+
+                    if rl_values:
+                        prediction.best_rl = MLBValueCalculator.find_best_value(rl_values)
 
             elif market.market_type == "total":
+                if settings.suppress_totals:
+                    continue
                 if market.over_odds and market.under_odds and market.line:
                     line = float(market.line)
                     over_prob, under_prob = MLBValueCalculator.devig_odds(

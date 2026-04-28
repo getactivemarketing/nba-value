@@ -53,8 +53,15 @@ class MLBValueCalculator:
     - <55: Low/no value
     """
 
-    # Minimum edge required to consider a bet
-    MIN_EDGE = 0.02  # 2%
+    # Minimum edge required to consider a bet.
+    # Tightened from 0.02 → 0.10 on 2026-04-28 after backtest showed bets with
+    # raw_edge < 0.10 had a 20% win rate over 15 graded bets.
+    MIN_EDGE = 0.10
+
+    # Maximum decimal odds for a runline pick. Backtest (Apr 3-27) showed RL bets
+    # with odds in 2.5-3.0 had 40% win rate over 35 bets (-2.5u). Filter applied
+    # in scorer._calculate_market_values.
+    MAX_RUNLINE_ODDS = 2.5
 
     # Value score thresholds
     STRONG_VALUE_THRESHOLD = 65
