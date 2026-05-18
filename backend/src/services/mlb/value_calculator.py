@@ -54,21 +54,36 @@ class MLBValueCalculator:
     """
 
     # Minimum edge required to consider a bet.
-    # Tightened from 0.02 → 0.10 on 2026-04-28 after backtest showed bets with
-    # raw_edge < 0.10 had a 20% win rate over 15 graded bets.
-    MIN_EDGE = 0.10
+    # 0.02 -> 0.10 on 2026-04-28 (15 bets at <10% edge hit 20% WR).
+    # 0.10 -> 0.12 on 2026-05-18 (110 bets at 10-15% hit 45.9%, ~breakeven).
+    MIN_EDGE = 0.12
+
+    # Sanity cap on edge_pct. Real sports-betting edges rarely exceed ~20%;
+    # anything above ~80% implies the model is wildly miscalibrated for that
+    # game. Above this, treat as "model blowup" and skip the bet.
+    MAX_EDGE_PCT = 80.0
 
     # Maximum decimal odds for a runline pick. Backtest (Apr 3-27) showed RL bets
     # with odds in 2.5-3.0 had 40% win rate over 35 bets (-2.5u). Filter applied
     # in scorer._calculate_market_values.
     MAX_RUNLINE_ODDS = 2.5
 
+    # Pull model probability toward devigged market probability to dampen
+    # overconfidence. Mirrors NBA Mar 12 fix (spread + ML market regression).
+    # 0.50 = 50/50 blend. MLB model is noisier than the raw value calc assumes;
+    # blending halves the magnitude of edges without destroying the signal.
+    # Set to 0.0 to disable.
+    MARKET_REGRESSION_WEIGHT = 0.50
+
     # Value score thresholds
     STRONG_VALUE_THRESHOLD = 65
     MODERATE_VALUE_THRESHOLD = 55
 
-    # Edge to value score scaling
-    EDGE_SCALE_FACTOR = 400  # Multiply edge_pct to get base score
+    # Edge to value score scaling — base_score = blended_edge_pct * SCALE.
+    # Kept at 4.0; saturation now triggers only on genuinely strong signals
+    # because the regression has cut blended edge_pct roughly in half vs the
+    # raw edge_pct it used to consume. UI thresholds (65/70/80) remain valid.
+    EDGE_SCALE_FACTOR = 4.0
 
     @classmethod
     def calculate_value(
@@ -98,35 +113,44 @@ class MLBValueCalculator:
         Returns:
             MLBValueResult with value score and recommendation
         """
-        # Calculate raw edge
+        # Raw edge = the model's claim before any regression.
+        # Used as the filter signal (MIN_EDGE / MAX_EDGE_PCT) because that's
+        # where the model is making its actual prediction.
         raw_edge = model_prob - market_prob
+        raw_edge_pct = (raw_edge / market_prob * 100) if market_prob > 0 else 0.0
 
-        # Calculate edge percentage
-        if market_prob > 0:
-            edge_pct = (raw_edge / market_prob) * 100
-        else:
-            edge_pct = 0.0
+        # Market regression: blend model toward devigged market.
+        # Dampens the saturated 60-100%+ edge_pct outputs the raw model produces.
+        # The blended edge is what we actually score and bet on.
+        adjusted_model_prob = (
+            (1.0 - cls.MARKET_REGRESSION_WEIGHT) * model_prob
+            + cls.MARKET_REGRESSION_WEIGHT * market_prob
+        )
+        adjusted_edge = adjusted_model_prob - market_prob
+        edge_pct = (adjusted_edge / market_prob * 100) if market_prob > 0 else 0.0
 
-        # Base value score from edge
-        # 5% edge = 20 points, 10% edge = 40 points, 15% edge = 60 points
-        base_score = edge_pct * 4.0
+        # Base value score from blended edge_pct, scaled so 40% ≈ 100 (saturated)
+        base_score = edge_pct * cls.EDGE_SCALE_FACTOR
 
         # Confidence multiplier (0.8 - 1.2)
         confidence_multiplier = 0.8 + (model_confidence * 0.4)
 
         # Market type adjustment
-        # Moneylines have slightly higher variance, so reduce score
+        # Runline (1.0) is the only market with sustained edge — ML & totals are penalized.
+        # ML penalty raised 0.95 -> 0.80 after last-7d ML hit 33% vs RL 53.8%.
+        # Totals stay penalized; suppression also enforced in mlb_scheduler.
         market_multiplier = 1.0
         if market_type == "moneyline":
-            market_multiplier = 0.95
+            market_multiplier = 0.80
         elif market_type == "total":
-            market_multiplier = 0.90  # Totals are harder to predict
+            market_multiplier = 0.85
 
         # Calculate final value score
         value_score = base_score * confidence_multiplier * market_multiplier
 
-        # Add bonus for strong favorites with edge (less variance)
-        if model_prob > 0.65 and raw_edge > 0.03:
+        # Add bonus for strong favorites with edge (less variance).
+        # Use blended prob so the bonus tracks the actual edge we'll bet on.
+        if adjusted_model_prob > 0.65 and raw_edge > 0.03:
             value_score += 5
 
         # Clamp to 0-100
@@ -141,7 +165,14 @@ class MLBValueCalculator:
             confidence = "low"
 
         # Is it a value bet?
-        is_value = value_score >= cls.MODERATE_VALUE_THRESHOLD and raw_edge >= cls.MIN_EDGE
+        # MIN_EDGE / MAX_EDGE_PCT are filters on the raw model signal:
+        # MIN_EDGE rejects weak signals; MAX_EDGE_PCT rejects blowups where
+        # the model is wildly miscalibrated for that specific game.
+        is_value = (
+            value_score >= cls.MODERATE_VALUE_THRESHOLD
+            and raw_edge >= cls.MIN_EDGE
+            and raw_edge_pct <= cls.MAX_EDGE_PCT
+        )
 
         # Convert to American odds
         odds_american = cls.decimal_to_american(odds_decimal)
@@ -151,7 +182,7 @@ class MLBValueCalculator:
             bet_type=bet_type,
             team=team,
             line=line,
-            model_prob=model_prob,
+            model_prob=adjusted_model_prob,
             market_prob=market_prob,
             raw_edge=raw_edge,
             edge_pct=edge_pct,
