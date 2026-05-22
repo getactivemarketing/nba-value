@@ -374,27 +374,13 @@ async def snapshot_predictions_async(hours_ahead: float = 1.0) -> dict:
                     snapshot.best_total_value_score = int(prediction.best_total.value_score)
                     snapshot.best_total_edge = prediction.best_total.raw_edge
 
-                # If totals are suppressed but the scorer still picked a total
-                # as overall best, fall back to the better of ML/RL. Defense-in-depth
-                # so the snapshot record stays clean even if env flips suppress_totals.
-                best_bet = prediction.best_bet
-                if (
-                    settings.suppress_totals
-                    and best_bet
-                    and best_bet.market_type == "total"
-                ):
-                    candidates = [
-                        c for c in (prediction.best_ml, prediction.best_rl) if c is not None
-                    ]
-                    best_bet = max(candidates, key=lambda c: c.value_score) if candidates else None
-
-                if best_bet:
-                    snapshot.best_bet_type = best_bet.market_type
-                    snapshot.best_bet_team = best_bet.team
-                    snapshot.best_bet_line = best_bet.line
-                    snapshot.best_bet_odds = best_bet.odds_decimal
-                    snapshot.best_bet_value_score = int(best_bet.value_score)
-                    snapshot.best_bet_edge = best_bet.raw_edge
+                if prediction.best_bet:
+                    snapshot.best_bet_type = prediction.best_bet.market_type
+                    snapshot.best_bet_team = prediction.best_bet.team
+                    snapshot.best_bet_line = prediction.best_bet.line
+                    snapshot.best_bet_odds = prediction.best_bet.odds_decimal
+                    snapshot.best_bet_value_score = int(prediction.best_bet.value_score)
+                    snapshot.best_bet_edge = prediction.best_bet.raw_edge
 
                 session.add(snapshot)
                 await session.flush()
