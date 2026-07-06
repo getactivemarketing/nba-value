@@ -25,12 +25,15 @@ Findings that drive this design:
 
 ## Phase 1 — Value-layer retune
 
+**Revision 2026-07-06 (approved):** a clean replay of the 586 qualifying graded picks overturned two details of the first draft: the ML 0.80 penalty costs profit (+150.0u at 0.80 vs +157.8u at 1.0), and market regression cannot change candidate ranking (a uniform 50% blend rescales every candidate identically) — its only legitimate role is display. The revised mechanics below keep the proven pick set and fix the two real defects: score saturation (65% of picks score exactly 100) and the resulting tie-break bias where `max()` silently prefers ML because it is added to the candidate list first.
+
 ### `src/services/mlb/value_calculator.py`
-1. **`MARKET_REGRESSION_WEIGHT = 0.50`** — blend `model_prob` 50/50 toward `market_prob` before computing the edge used for `value_score`. The raw (unblended) edge remains the MIN_EDGE / MAX_EDGE_PCT filter signal. Port the implementation from `b004564` (`git show b004564 -- backend/src/services/mlb/value_calculator.py`).
-2. **`MAX_EDGE_PCT = 80.0`** — if raw `edge_pct` exceeds 80, the bet is marked `is_value_bet = False` (model blowup).
-3. **Market multipliers** — moneyline 0.95 → 0.80; total 0.90 → 0.85.
-4. **`MIN_EDGE` stays 0.10** — update its comment: as of 2026-07-06 the 10-15% edge bucket is the best performer since May 23 (56.9% WR, +17.9u over 72 bets); do not raise to 0.12.
-5. **Cleanup** — `EDGE_SCALE_FACTOR = 400` is dead code; the formula hardcodes `edge_pct * 4.0`. Set the constant to 4.0 and use it in the formula.
+1. **Gate unchanged + blowup cap** — a bet qualifies (`is_value_bet`) exactly as today (raw-edge score `raw_edge_pct * 4.0 >= 55` and `raw_edge >= MIN_EDGE`), **plus** new **`MAX_EDGE_PCT = 80.0`**: raw `edge_pct` above 80 marks the bet `is_value_bet = False` (model blowup). This preserves the +160u season pick set.
+2. **Selection metric** — new field `sort_score` on `MLBValueResult`: unclamped `edge_pct * market_multiplier`. `find_best_value` ranks by `sort_score`, not the clamped display score. Fixes the ML tie bias.
+3. **Display score** — `value_score = min(100, 100 * tanh(blended_edge_pct / 20) * market_multiplier + favorite_bonus)` where `blended_edge_pct = edge_pct * (1 - MARKET_REGRESSION_WEIGHT)` with `MARKET_REGRESSION_WEIGHT = 0.50`. Backtest distribution: 0% saturation, min 33 / median 77 / max 96. UI thresholds (65/70/80) remain meaningful.
+4. **Market multipliers unchanged** — moneyline 0.95, total 0.90 (the 0.80 ML penalty is explicitly rejected; comment this in code).
+5. **`MIN_EDGE` stays 0.10** — the 0.10-0.15 absolute-edge bucket is the best performer since May 23 (56.9% WR, +17.9u over 72 bets); do not raise to 0.12.
+6. **Cleanup** — `EDGE_SCALE_FACTOR = 400` is dead code (formula hardcodes `* 4.0`); set it to 4.0 and use it in the gate formula.
 
 ### `src/config.py`
 6. New setting **`totals_in_best_bet: bool = False`** (env-overridable like `suppress_totals`). Independent of `suppress_totals`, which controls whether totals are scored at all.
@@ -42,10 +45,11 @@ Findings that drive this design:
 8. Defense-in-depth (port from `b004564`): in `snapshot_predictions_async`, if the chosen best bet is a total while `totals_in_best_bet` is false, fall back to the better-scored of `best_ml` / `best_rl` before writing snapshot `best_bet_*` fields.
 
 ### Validation (before deploy)
-Offline re-simulation script (scratchpad, not committed):
-- Replay graded season snapshots through the new scoring. Reconstruct `market_prob = 1/odds` and `model_prob = market_prob + edge` from stored fields for each of `best_ml` / `best_rl` / `best_total`.
-- Assert: (a) no totals in simulated best_bet; (b) share of picks scoring exactly 100 drops below 30% (currently 65%); (c) simulated P&L on the surviving pick set is not materially worse than actuals (target: ≥ +160u equivalent on the same window).
+Offline re-simulation script (scratchpad, not committed) replaying graded season snapshots through the actual new code (`market_prob = 1/odds`, `model_prob = market_prob + stored raw_edge`, confidence 0.5):
+- Assert: (a) no totals in simulated best_bet; (b) zero picks score exactly 100; (c) simulated P&L ≥ +150u on the season window (clean-sim baseline +157.8u vs +160u actual).
 - If simulation shows degradation, stop and reassess before deploying.
+
+Planning-phase sims already run (2026-07-06, basis for the revision): linear-scale sweep contaminated by a profit tie-break leak and discarded; clean unclamped-selection sim +157.8u (ML mult 1.0) / +150.0u (0.80); tanh display distribution min 33 / med 77 / max 96, 0% saturation. The deploy-gate sim re-runs against the real implementation as a regression check.
 
 ### Non-goals / unaffected
 - NRFI pipeline (separate content + grading path) — untouched.
