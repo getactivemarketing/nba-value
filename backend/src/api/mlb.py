@@ -317,7 +317,18 @@ async def get_game(
 
 @router.get("/picks/top", response_model=TopPicksResponse)
 async def get_top_picks(
-    min_value_score: float = Query(65, ge=0, le=100, description="Minimum value score"),
+    # 2026-07-06: value_score display formula changed from min(100, edge_pct*4)
+    # to 100*tanh(edge_pct*0.5/20), so scores no longer pile up at 100 (they
+    # now spread ~30-97). The old 65 threshold corresponded to edge_pct ~16.25,
+    # which now displays as ~40 under the new scale. Lowering the default to
+    # 40 keeps the same underlying picks visible; qualification logic is
+    # unchanged. Do not raise this back to 65 without redoing the conversion.
+    min_value_score: float = Query(
+        40,
+        ge=0,
+        le=100,
+        description="Minimum value score (display-scale; 40 ≈ pre-2026-07-06 threshold of 65)",
+    ),
     limit: int = Query(20, ge=1, le=50, description="Maximum picks to return"),
     game_date: str | None = Query(None, description="Date in YYYY-MM-DD format"),
 ) -> TopPicksResponse:
@@ -364,6 +375,9 @@ async def get_top_picks(
                     odds_american=_decimal_to_american(float(snap.best_bet_odds) if snap.best_bet_odds else 2.0),
                     value_score=float(snap.best_bet_value_score),
                     edge=float(snap.best_bet_edge) if snap.best_bet_edge else 0,
+                    # NOTE: value_score is the display-score scale, which changed
+                    # 2026-07-06 (tanh compression). This >= 70 label is not
+                    # comparable across that date and may need recalibration.
                     confidence="high" if snap.best_bet_value_score >= 70 else "medium",
                     predicted_run_diff=float(snap.predicted_run_diff) if snap.predicted_run_diff else None,
                 ))
@@ -503,6 +517,9 @@ async def get_evaluation_summary() -> EvaluationSummary:
             vs = snap.best_bet_value_score or 0
             if vs >= 80:
                 tier = "80+"
+            # NOTE: these buckets are on the display-score scale, which changed
+            # 2026-07-06 (tanh compression). Buckets from before/after that date
+            # are not comparable and may need recalibration.
             elif vs >= 70:
                 tier = "70-79"
             elif vs >= 65:
@@ -728,6 +745,9 @@ def _build_game_response_fast(
                 model_prob=0.5, market_prob=0.5,
                 edge=float(snapshot.best_ml_edge) if snapshot.best_ml_edge else 0,
                 value_score=float(snapshot.best_ml_value_score),
+                # NOTE: value_score is the display-score scale, which changed
+                # 2026-07-06 (tanh compression). This >= 70 label is not
+                # comparable across that date and may need recalibration.
                 confidence="high" if snapshot.best_ml_value_score >= 70 else "medium",
             )
 

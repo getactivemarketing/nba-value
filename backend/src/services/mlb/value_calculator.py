@@ -45,17 +45,21 @@ class MLBValueCalculator:
     """
     Calculate value scores for MLB betting markets.
 
-    Value score formula (similar to NBA):
-    1. Calculate edge = model_prob - market_prob
-    2. Calculate edge_pct = (edge / market_prob) * 100
-    3. Apply confidence multiplier based on model certainty
-    4. Apply market quality factor
-    5. Scale to 0-100
+    Computes three distinct metrics per bet, all derived from
+    edge_pct = (model_prob - market_prob) / market_prob * 100:
 
-    Thresholds:
-    - 65+: Strong value bet (recommended)
-    - 55-64: Moderate value
-    - <55: Low/no value
+    - gate_score: qualification gate. Legacy formula preserved verbatim
+      (edge_pct * EDGE_SCALE_FACTOR(4.0) * confidence_mult * market_mult
+      [+5 favorite bonus], clamped to 0-100) so the proven historical pick
+      set is unchanged. A bet qualifies (is_value_bet) when gate_score >=
+      MODERATE_VALUE_THRESHOLD (55) and raw_edge >= MIN_EDGE and
+      edge_pct <= MAX_EDGE_PCT.
+    - sort_score: unclamped selection metric (edge_pct * confidence_mult *
+      market_mult) used only to rank/choose among candidate bets.
+    - value_score: display-only score. Market-regresses edge_pct 50% toward
+      the market, then compresses with tanh so scores spread ~30-97 instead
+      of piling up at 100 (as the old clamped formula did). Not used for
+      qualification or selection.
     """
 
     # Minimum edge required to consider a bet.
@@ -164,6 +168,10 @@ class MLBValueCalculator:
         adjusted_model_prob = market_prob + raw_edge * (1.0 - cls.MARKET_REGRESSION_WEIGHT)
         if adjusted_model_prob > 0.65 and raw_edge > 0.03:
             value_score += 5
+        # The tanh compression keeps value_score well under 100 for typical
+        # edges, but the +5 favorite bonus can still push it to exactly 100
+        # when edge_pct lands ~73-80 (just under MAX_EDGE_PCT) — rare, but a
+        # "zero picks at 100" monitor can occasionally false-alarm.
         value_score = max(0, min(100, value_score))
 
         # Determine confidence level

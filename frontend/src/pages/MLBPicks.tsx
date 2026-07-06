@@ -161,7 +161,8 @@ export function MLBPicks() {
     isLoading: picksLoading,
   } = useQuery({
     queryKey: ['mlb-top-picks', dateParam],
-    queryFn: () => mlbApi.getTopPicks(65, dateParam),
+    // 2026-07-06: display-score rescale (tanh) means old 65 ≈ new 40 — see mlb.py get_top_picks.
+    queryFn: () => mlbApi.getTopPicks(40, dateParam),
     enabled: !isPast,
   });
 
