@@ -1,0 +1,41 @@
+What It Is
+TruLine is a free AI-powered sports betting intelligence platform for MLB and NBA. It uses machine learning to analyze 28+ features per game (pitcher stats, team batting, park factors, weather), compares model predictions against odds from 11+ sportsbooks, and surfaces value bets with a transparent 0-100 Value Score. It specializes in NRFI (No Run First Inning) tracking for MLB.
+
+The Brand
+- Name: TruLine (a play on "true line" — the real line/edge vs. what the market shows)
+- Tagline options: "Find the edge." / "AI finds the value. Data keeps the score." / "Every pick tracked. Every result shown."
+- URL: truline.app
+- Twitter: @trulineapp
+
+Brand Personality
+- Data-driven, not hype-driven. The anti-"LOCK OF THE DAY" picks account
+- Transparent. Shows losses just as prominently as wins
+- Confident but understated. Let the numbers speak
+- Modern/technical. AI + ML + data visualization, not old-school tout energy
+- Accessible. Sharp enough for analytical bettors, simple enough for casual ones
+
+Target Audience
+- Casual sports bettors (25-45, mostly male, mobile-first, follow picks on Twitter/Instagram)
+- Sharp/analytical bettors who want a data-driven second opinion
+- NRFI bettors specifically (growing niche in MLB betting)
+
+Color Direction
+Think: dark mode dashboard, data visualization, sports analytics. Avoid: casino/gambling red-and-gold aesthetic.
+Suggested palette ideas:
+- Dark navy + electric blue + white — clean, analytical, trustworthy (think Bloomberg terminal meets sports)
+- Dark charcoal + green accent — "money green" but subtle, data-forward
+- Deep purple/indigo + cyan — modern, AI/tech feel, stands out from typical sports blue/red
+
+Logo Ideas
+Concept 1: The Line (Stylized line chart forming 'T')
+Concept 2: The Edge (Sharp cut through wordmark)
+Concept 3: The Crosshair (Precision/targeting)
+Concept 4: The Score Bar (Integrated 0-100 bar)
+Concept 5: Abstract "TL" Mark (Geometric monogram)
+
+Key UI elements:
+- Game cards with team matchups, pitcher info, weather/park context
+- Value Score badges (green 70+, yellow 60-69, gray below)
+- Win probability bar (colored split showing away/home %)
+- NRFI tags on completed games showing first inning results
+- Date picker for browsing past/future games

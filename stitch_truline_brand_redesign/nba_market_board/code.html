@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TruLine NBA Market Board</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-surface-variant": "#bbc9cf",
+                        "on-error-container": "#ffdad6",
+                        "secondary-fixed": "#d3e4fe",
+                        "on-tertiary": "#003919",
+                        "primary-container": "#00d1ff",
+                        "on-tertiary-fixed-variant": "#005227",
+                        "on-secondary-container": "#a9bad3",
+                        "inverse-primary": "#00677f",
+                        "surface-container-high": "#272a31",
+                        "inverse-on-surface": "#2e3037",
+                        "tertiary": "#66f796",
+                        "primary-fixed-dim": "#4cd6ff",
+                        "on-secondary-fixed-variant": "#38485d",
+                        "surface-container": "#1d2026",
+                        "on-surface": "#e1e2eb",
+                        "on-primary": "#003543",
+                        "background": "#10131a",
+                        "error-container": "#93000a",
+                        "secondary": "#b7c8e1",
+                        "secondary-container": "#3a4a5f",
+                        "on-primary-container": "#00566a",
+                        "on-error": "#690005",
+                        "primary-fixed": "#b7eaff",
+                        "on-tertiary-container": "#005b2c",
+                        "surface-container-lowest": "#0b0e14",
+                        "on-primary-fixed-variant": "#004e60",
+                        "on-primary-fixed": "#001f28",
+                        "on-secondary": "#213145",
+                        "on-tertiary-fixed": "#00210c",
+                        "outline": "#859399",
+                        "primary": "#a4e6ff",
+                        "surface-tint": "#4cd6ff",
+                        "surface": "#10131a",
+                        "inverse-surface": "#e1e2eb",
+                        "tertiary-container": "#45da7d",
+                        "surface-dim": "#10131a",
+                        "secondary-fixed-dim": "#b7c8e1",
+                        "surface-bright": "#363940",
+                        "surface-container-low": "#191c22",
+                        "tertiary-fixed": "#6dfe9c",
+                        "error": "#ffb4ab",
+                        "outline-variant": "#3c494e",
+                        "on-background": "#e1e2eb",
+                        "on-secondary-fixed": "#0b1c30",
+                        "tertiary-fixed-dim": "#4de082",
+                        "surface-variant": "#32353c",
+                        "surface-container-highest": "#32353c"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "fontFamily": {
+                        "headline": ["Space Grotesk"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-headline { font-family: 'Space Grotesk', sans-serif; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .glass-panel { background: rgba(29, 32, 38, 0.7); backdrop-filter: blur(20px); }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-surface antialiased pb-24">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-4 h-14 bg-[#10131a] border-b border-[#1d2026]">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[#a4e6ff]">terminal</span>
+<span class="text-[#a4e6ff] font-['Space_Grotesk'] font-extrabold italic tracking-tighter text-lg">TruLine</span>
+</div>
+<div class="flex items-center gap-3">
+<button class="text-slate-500 hover:bg-[#1d2026] transition-colors p-2 rounded-lg active:scale-95 duration-100">
+<span class="material-symbols-outlined">search</span>
+</button>
+<button class="text-[#a4e6ff] hover:bg-[#1d2026] transition-colors p-2 rounded-lg active:scale-95 duration-100">
+<span class="material-symbols-outlined">calendar_today</span>
+</button>
+</div>
+</header>
+<main class="mt-14 pt-4 px-4 space-y-6">
+<!-- Horizontal Date Picker -->
+<section class="overflow-x-auto hide-scrollbar -mx-4 px-4">
+<div class="flex gap-3 whitespace-nowrap">
+<div class="flex flex-col items-center justify-center min-w-[56px] py-3 rounded-xl bg-surface-container-low text-slate-500 border border-white/5">
+<span class="text-[10px] font-bold uppercase tracking-wider mb-1">MON</span>
+<span class="text-base font-headline font-bold">20</span>
+</div>
+<div class="flex flex-col items-center justify-center min-w-[56px] py-3 rounded-xl bg-surface-container-low text-slate-500 border border-white/5">
+<span class="text-[10px] font-bold uppercase tracking-wider mb-1">TUE</span>
+<span class="text-base font-headline font-bold">21</span>
+</div>
+<div class="flex flex-col items-center justify-center min-w-[56px] py-3 rounded-xl bg-primary/10 text-primary border border-primary/20 ring-1 ring-primary/30">
+<span class="text-[10px] font-bold uppercase tracking-wider mb-1">WED</span>
+<span class="text-base font-headline font-bold">22</span>
+</div>
+<div class="flex flex-col items-center justify-center min-w-[56px] py-3 rounded-xl bg-surface-container-low text-slate-500 border border-white/5">
+<span class="text-[10px] font-bold uppercase tracking-wider mb-1">THU</span>
+<span class="text-base font-headline font-bold">23</span>
+</div>
+<div class="flex flex-col items-center justify-center min-w-[56px] py-3 rounded-xl bg-surface-container-low text-slate-500 border border-white/5">
+<span class="text-[10px] font-bold uppercase tracking-wider mb-1">FRI</span>
+<span class="text-base font-headline font-bold">24</span>
+</div>
+<div class="flex flex-col items-center justify-center min-w-[56px] py-3 rounded-xl bg-surface-container-low text-slate-500 border border-white/5">
+<span class="text-[10px] font-bold uppercase tracking-wider mb-1">SAT</span>
+<span class="text-base font-headline font-bold">25</span>
+</div>
+</div>
+</section>
+<!-- Value Score Legend -->
+<section class="bg-surface-container-lowest rounded-xl p-4 border-l-2 border-primary">
+<h2 class="text-[10px] font-bold uppercase tracking-[0.2em] text-primary mb-3">The Precision Edge Legend</h2>
+<div class="grid grid-cols-4 gap-2">
+<div class="space-y-1">
+<div class="h-1 rounded-full bg-tertiary"></div>
+<span class="block text-[9px] font-bold text-on-surface">ELITE (75+)</span>
+</div>
+<div class="space-y-1">
+<div class="h-1 rounded-full bg-tertiary-container opacity-80"></div>
+<span class="block text-[9px] font-bold text-on-surface">STRONG</span>
+</div>
+<div class="space-y-1">
+<div class="h-1 rounded-full bg-primary opacity-50"></div>
+<span class="block text-[9px] font-bold text-on-surface">MODERATE</span>
+</div>
+<div class="space-y-1">
+<div class="h-1 rounded-full bg-surface-container-highest"></div>
+<span class="block text-[9px] font-bold text-on-surface">LOW</span>
+</div>
+</div>
+</section>
+<!-- Market Feed -->
+<div class="space-y-4">
+<!-- Game Card 1: LAL vs GSW -->
+<article class="relative bg-surface-container rounded-xl overflow-hidden shadow-2xl">
+<div class="absolute left-0 top-0 bottom-0 w-[2px] bg-tertiary"></div>
+<div class="p-4">
+<!-- Header: Teams & Score Badge -->
+<div class="flex justify-between items-start mb-6">
+<div class="flex gap-4">
+<div class="flex flex-col items-center">
+<div class="w-12 h-12 bg-surface-container-highest rounded-full flex items-center justify-center p-1.5 mb-1">
+<img class="w-8 h-8 opacity-40 grayscale" data-alt="professional golden state warriors team logo icon with high contrast blue and gold colors" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDBGR_-RtKCXRV9QburL4IJkvnsFmxV2sK-jIEnTYEyYFWWLfvsKBsvDHwObok_OybfhKRdVQEdPv2n6GPIGF0Izu1AuY4xcgxA_i1AahedZGDEeorG7ggjgqEA-DQxgtgvTHg_YH1n2DTqaInDU9qsVyrd4rRXsHXherRgN7weXMWGisna02XtAFapyDg7wyIpcnVt6UpX6xkSkhhVhJC3QSBsl8lzbtftdySq_nQrG8Ee8GFZAgus1QoQGBx_QM7mynHcwnd-P5g"/>
+</div>
+<span class="text-[10px] font-bold tracking-tighter uppercase opacity-60">GSW</span>
+</div>
+<div class="flex flex-col items-center justify-center">
+<span class="text-xs font-headline font-bold opacity-30">VS</span>
+</div>
+<div class="flex flex-col items-center">
+<div class="w-12 h-12 bg-surface-container-highest rounded-full flex items-center justify-center p-1.5 mb-1">
+<img class="w-8 h-8 opacity-40 grayscale" data-alt="professional los angeles lakers team logo icon with high contrast purple and gold colors" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBYXBIzABLyP83qtdqrgUgjpQ2G0cjxMW4iWhbkd9lPSV6adUQ-SFSiY4QrIw1uGC71ryY2uMk39nC41ZxBtOA2ABq8nFasDco_06j4bCHQN1R7MfxLTfgjRpzyA18-4C2FqBZKu7cRW87qhrWgKogx9eOy-zqKOxO-VnwRDm17Phy8jvimZJGlDKh4PQ8moJK5szku62ctuj0KJPWj83mdNK7v4AWHdI0MeaRexHs1jscg7iBmZAFk6ITh-l1TA4WsZo86uOJXyQ4"/>
+</div>
+<span class="text-[10px] font-bold tracking-tighter uppercase opacity-60">LAL</span>
+</div>
+</div>
+<div class="flex flex-col items-end">
+<div class="bg-tertiary-container text-on-tertiary-fixed rounded-full px-3 py-1 mb-1 shadow-[0_0_15px_rgba(102,247,150,0.3)]">
+<span class="text-sm font-headline font-extrabold tracking-tight">82.4</span>
+</div>
+<span class="text-[9px] font-bold uppercase tracking-widest text-tertiary">Elite Edge</span>
+</div>
+</div>
+<!-- Odds Terminal -->
+<div class="bg-surface-container-lowest/50 rounded-lg p-3 grid grid-cols-3 gap-2 border border-white/5 mb-4">
+<div class="text-center space-y-1">
+<span class="block text-[8px] font-bold uppercase opacity-40">Spread</span>
+<span class="block text-xs font-bold text-primary">-4.5</span>
+</div>
+<div class="text-center space-y-1 border-x border-white/5">
+<span class="block text-[8px] font-bold uppercase opacity-40">Moneyline</span>
+<span class="block text-xs font-bold text-on-surface">-180</span>
+</div>
+<div class="text-center space-y-1">
+<span class="block text-[8px] font-bold uppercase opacity-40">O/U 228.5</span>
+<span class="block text-xs font-bold text-on-surface">u -110</span>
+</div>
+</div>
+<!-- Probability Bar -->
+<div class="space-y-1.5">
+<div class="flex justify-between text-[9px] font-bold uppercase tracking-widest opacity-60">
+<span>GSW (Home)</span>
+<span>LAL (Away)</span>
+</div>
+<div class="flex h-1.5 w-full rounded-full overflow-hidden bg-surface-container-highest">
+<div class="h-full bg-primary" style="width: 64%"></div>
+<div class="h-full bg-slate-700" style="width: 36%"></div>
+</div>
+<div class="flex justify-between text-[11px] font-headline font-bold">
+<span class="text-primary">64%</span>
+<span class="opacity-40">36%</span>
+</div>
+</div>
+</div>
+</article>
+<!-- Game Card 2: PHX vs DAL -->
+<article class="relative bg-surface-container rounded-xl overflow-hidden">
+<div class="absolute left-0 top-0 bottom-0 w-[2px] bg-primary opacity-50"></div>
+<div class="p-4">
+<div class="flex justify-between items-start mb-6">
+<div class="flex gap-4">
+<div class="flex flex-col items-center">
+<div class="w-12 h-12 bg-surface-container-highest rounded-full flex items-center justify-center p-1.5 mb-1">
+<img class="w-8 h-8 opacity-40 grayscale" data-alt="nba phoenix suns team logo minimalist icon" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCtcLPp8zb8BlYxMxJhYjeCY5QZ-e2hNNtx_nbWJp_pN--XzErIPEv5tj2KMSWBSmEqIwnfBq6GJQ80X7pmDm8Xzos1RWgBYwd688qdi8VWBHcFkuoZX_0U5EIzPjD9LgHmKOOKhp6shhIomREReVEdDoBrJUbTqDzs0zc3nCNxVx_saDGkYnUL9GtljVKhCMeOb36CDu9ibm7lkF3ElyThVulLrLOFwpYAiv39pjbMuCUOonv_wjBNLzXL1LQq9bbCwduEVAINIcA"/>
+</div>
+<span class="text-[10px] font-bold tracking-tighter uppercase opacity-60">PHX</span>
+</div>
+<div class="flex flex-col items-center justify-center">
+<span class="text-xs font-headline font-bold opacity-30">VS</span>
+</div>
+<div class="flex flex-col items-center">
+<div class="w-12 h-12 bg-surface-container-highest rounded-full flex items-center justify-center p-1.5 mb-1">
+<img class="w-8 h-8 opacity-40 grayscale" data-alt="nba dallas mavericks team logo minimalist icon" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBRVRAV7qfQOG3wI1mPEZ_7VJbjh20YIfMNcimbaoeZDYkqQ6PBGdsbO2t33JsaKet4XDHRbPeWNPieiCmVr3_2dT237igJ1spPhGchyNt2NZCrQU1CgCs3mMAylL11NsRYOfwmyIWET3b_UFFinUBuuPc3p65ebmQn20D8dTwUt15MQA0ibU_ZsaVjeGA5DetTyLCgci5pJST9rSFsoizzFliqb1VhBAAchyW5WRn3MN7bo5jQQGSkE005iZpvTg3FtkfUOG6Wz2c"/>
+</div>
+<span class="text-[10px] font-bold tracking-tighter uppercase opacity-60">DAL</span>
+</div>
+</div>
+<div class="flex flex-col items-end">
+<div class="bg-primary/20 text-primary border border-primary/30 rounded-full px-3 py-1 mb-1">
+<span class="text-sm font-headline font-extrabold tracking-tight">68.1</span>
+</div>
+<span class="text-[9px] font-bold uppercase tracking-widest text-slate-500">Moderate</span>
+</div>
+</div>
+<div class="bg-surface-container-lowest/50 rounded-lg p-3 grid grid-cols-3 gap-2 border border-white/5 mb-4">
+<div class="text-center space-y-1">
+<span class="block text-[8px] font-bold uppercase opacity-40">Spread</span>
+<span class="block text-xs font-bold text-on-surface">+2.5</span>
+</div>
+<div class="text-center space-y-1 border-x border-white/5">
+<span class="block text-[8px] font-bold uppercase opacity-40">Moneyline</span>
+<span class="block text-xs font-bold text-on-surface">+125</span>
+</div>
+<div class="text-center space-y-1">
+<span class="block text-[8px] font-bold uppercase opacity-40">O/U 234.0</span>
+<span class="block text-xs font-bold text-on-surface">o -110</span>
+</div>
+</div>
+<div class="space-y-1.5">
+<div class="flex justify-between text-[9px] font-bold uppercase tracking-widest opacity-60">
+<span>PHX (Home)</span>
+<span>DAL (Away)</span>
+</div>
+<div class="flex h-1.5 w-full rounded-full overflow-hidden bg-surface-container-highest">
+<div class="h-full bg-primary" style="width: 48%"></div>
+<div class="h-full bg-slate-700" style="width: 52%"></div>
+</div>
+<div class="flex justify-between text-[11px] font-headline font-bold">
+<span class="opacity-40">48%</span>
+<span class="text-primary">52%</span>
+</div>
+</div>
+</div>
+</article>
+<!-- Game Card 3: MIA vs BOS -->
+<article class="relative bg-surface-container rounded-xl overflow-hidden shadow-lg border border-tertiary-container/20">
+<div class="absolute left-0 top-0 bottom-0 w-[2px] bg-tertiary-container"></div>
+<div class="p-4">
+<div class="flex justify-between items-start mb-6">
+<div class="flex gap-4">
+<div class="flex flex-col items-center">
+<div class="w-12 h-12 bg-surface-container-highest rounded-full flex items-center justify-center p-1.5 mb-1">
+<img class="w-8 h-8 opacity-40 grayscale" data-alt="nba miami heat logo icon" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8T-RsZb2Rn7i_oL05En3oJwXp9GX--zrxl621SJ1lIo8e7UKA2xar7O0-CHAZN08MywedhyhIuWNw3TNcRr-SjDOLbwwQXN5QvOrL-aXPUPiZpJ8B7UmM7gmqPQfwcSWBywtoh-4wGYN9PUuL_IeBNuQqaEGq5A36b2D3dC9F4H9cdE1klUG1DZicFh0sIFmZlVaFKXfOV5unyNS5KPX0rCwDPVllehQ56LQJgbpiKAqTlnijND60jBdT1YY7NjN_ytSY5iH__pA"/>
+</div>
+<span class="text-[10px] font-bold tracking-tighter uppercase opacity-60">MIA</span>
+</div>
+<div class="flex flex-col items-center justify-center">
+<span class="text-xs font-headline font-bold opacity-30">VS</span>
+</div>
+<div class="flex flex-col items-center">
+<div class="w-12 h-12 bg-surface-container-highest rounded-full flex items-center justify-center p-1.5 mb-1">
+<img class="w-8 h-8 opacity-40 grayscale" data-alt="nba boston celtics logo icon" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCy7sGZ2-xOBDCVZP4AXPMHelh3HdckkMZbyqa0H90HyeorPTFgcxwE4Tots65d3qwo00ukRLt5eVNgcY4C2OHwRCHzjCo082rrkhxfuzqAlwD3G0UlGkvzLkmmImHr13mfwvAKFiRx2HRLJEbIffzPOTYbgpvPA20AJnzc4O2mLnt0wPKIw6-17ZDDUHWX85ojl0PrdAvax7VogWqXCdJ_ab3YBCbBuxJG60NhsDgAy1sTKal8bgnka6vjZpBeEIyQHzbMGG6KaZw"/>
+</div>
+<span class="text-[10px] font-bold tracking-tighter uppercase opacity-60">BOS</span>
+</div>
+</div>
+<div class="flex flex-col items-end">
+<div class="bg-tertiary-container/10 border border-tertiary-container/30 text-tertiary-container rounded-full px-3 py-1 mb-1">
+<span class="text-sm font-headline font-extrabold tracking-tight">74.2</span>
+</div>
+<span class="text-[9px] font-bold uppercase tracking-widest text-tertiary-container">Strong Edge</span>
+</div>
+</div>
+<div class="bg-surface-container-lowest/50 rounded-lg p-3 grid grid-cols-3 gap-2 border border-white/5 mb-4">
+<div class="text-center space-y-1">
+<span class="block text-[8px] font-bold uppercase opacity-40">Spread</span>
+<span class="block text-xs font-bold text-on-surface">+8.5</span>
+</div>
+<div class="text-center space-y-1 border-x border-white/5">
+<span class="block text-[8px] font-bold uppercase opacity-40">Moneyline</span>
+<span class="block text-xs font-bold text-on-surface">+280</span>
+</div>
+<div class="text-center space-y-1">
+<span class="block text-[8px] font-bold uppercase opacity-40">O/U 212.5</span>
+<span class="block text-xs font-bold text-tertiary">u -110</span>
+</div>
+</div>
+<div class="space-y-1.5">
+<div class="flex justify-between text-[9px] font-bold uppercase tracking-widest opacity-60">
+<span>MIA (Home)</span>
+<span>BOS (Away)</span>
+</div>
+<div class="flex h-1.5 w-full rounded-full overflow-hidden bg-surface-container-highest">
+<div class="h-full bg-slate-700" style="width: 22%"></div>
+<div class="h-full bg-primary" style="width: 78%"></div>
+</div>
+<div class="flex justify-between text-[11px] font-headline font-bold">
+<span class="opacity-40">22%</span>
+<span class="text-primary">78%</span>
+</div>
+</div>
+</div>
+</article>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 w-full z-50 flex justify-around items-center px-2 pb-6 pt-2 bg-[#10131a]/90 backdrop-blur-xl border-t border-white/5 shadow-[0_-12px_32px_rgba(0,0,0,0.4)]">
+<a class="flex flex-col items-center justify-center text-[#a4e6ff] bg-[#1d2026] rounded-xl px-3 py-1 active:scale-90 duration-200 transition-all" href="#">
+<span class="material-symbols-outlined mb-0.5">leaderboard</span>
+<span class="font-['Inter'] text-[10px] font-semibold uppercase tracking-widest">Board</span>
+</a>
+<a class="flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 active:scale-90 duration-200 transition-all" href="#">
+<span class="material-symbols-outlined mb-0.5">sports_baseball</span>
+<span class="font-['Inter'] text-[10px] font-semibold uppercase tracking-widest">MLB</span>
+</a>
+<a class="flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 active:scale-90 duration-200 transition-all" href="#">
+<span class="material-symbols-outlined mb-0.5">analytics</span>
+<span class="font-['Inter'] text-[10px] font-semibold uppercase tracking-widest">Eval</span>
+</a>
+<a class="flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 active:scale-90 duration-200 transition-all" href="#">
+<span class="material-symbols-outlined mb-0.5">trending_up</span>
+<span class="font-['Inter'] text-[10px] font-semibold uppercase tracking-widest">Trends</span>
+</a>
+</nav>
+<!-- Floating Action Intelligence Trigger (Optional FAB) -->
+<button class="fixed bottom-24 right-4 w-12 h-12 rounded-full bg-primary text-on-primary flex items-center justify-center shadow-[0_4px_24px_rgba(164,230,255,0.4)] border border-primary-fixed-dim">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">bolt</span>
+</button>
+</body></html>

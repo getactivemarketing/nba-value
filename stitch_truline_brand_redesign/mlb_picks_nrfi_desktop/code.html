@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TruLine | The Analytical Edge - MLB NRFI Terminal</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800;900&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-tertiary-fixed": "#00210c",
+                    "on-primary-container": "#00566a",
+                    "inverse-primary": "#00677f",
+                    "background": "#10131a",
+                    "on-primary": "#003543",
+                    "on-secondary-fixed": "#0b1c30",
+                    "secondary-container": "#3a4a5f",
+                    "primary": "#a4e6ff",
+                    "secondary-fixed-dim": "#b7c8e1",
+                    "surface-bright": "#363940",
+                    "surface-container-highest": "#32353c",
+                    "surface-container": "#1d2026",
+                    "tertiary-container": "#45da7d",
+                    "on-primary-fixed-variant": "#004e60",
+                    "error-container": "#93000a",
+                    "on-error": "#690005",
+                    "surface": "#10131a",
+                    "on-error-container": "#ffdad6",
+                    "outline": "#859399",
+                    "on-surface": "#e1e2eb",
+                    "surface-container-high": "#272a31",
+                    "primary-fixed": "#b7eaff",
+                    "on-tertiary-container": "#005b2c",
+                    "surface-tint": "#4cd6ff",
+                    "primary-fixed-dim": "#4cd6ff",
+                    "inverse-surface": "#e1e2eb",
+                    "error": "#ffb4ab",
+                    "surface-variant": "#32353c",
+                    "surface-container-low": "#191c22",
+                    "on-primary-fixed": "#001f28",
+                    "on-background": "#e1e2eb",
+                    "tertiary-fixed-dim": "#4de082",
+                    "tertiary": "#66f796",
+                    "primary-container": "#00d1ff",
+                    "on-tertiary-fixed-variant": "#005227",
+                    "on-secondary-fixed-variant": "#38485d",
+                    "on-surface-variant": "#bbc9cf",
+                    "on-secondary": "#213145",
+                    "on-tertiary": "#003919",
+                    "on-secondary-container": "#a9bad3",
+                    "tertiary-fixed": "#6dfe9c",
+                    "secondary": "#b7c8e1",
+                    "surface-container-lowest": "#0b0e14",
+                    "surface-dim": "#10131a",
+                    "secondary-fixed": "#d3e4fe",
+                    "outline-variant": "#3c494e",
+                    "inverse-on-surface": "#2e3037"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "fontFamily": {
+                    "headline": ["Space Grotesk"],
+                    "body": ["Inter"],
+                    "label": ["Inter"]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+      .glass-panel {
+        background: rgba(29, 32, 38, 0.6);
+        backdrop-filter: blur(20px);
+      }
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: #10131a;
+        color: #e1e2eb;
+      }
+      .font-headline {
+        font-family: 'Space Grotesk', sans-serif;
+      }
+    </style>
+</head>
+<body class="bg-background text-on-background antialiased overflow-x-hidden">
+<!-- TopNavBar -->
+<header class="fixed top-0 w-full z-50 h-16 bg-[#10131a] dark:bg-[#10131a]/80 backdrop-blur-xl border-b border-[#a4e6ff]/10 shadow-[0px_12px_32px_rgba(0,0,0,0.4)] flex justify-between items-center px-6">
+<div class="flex items-center gap-8">
+<span class="text-2xl font-black italic tracking-tighter text-[#a4e6ff] font-['Space_Grotesk']">TruLine</span>
+<nav class="hidden md:flex gap-6 items-center">
+<a class="text-slate-400 font-medium font-['Space_Grotesk'] tracking-tight hover:bg-[#1d2026] hover:text-[#a4e6ff] transition-colors px-3 py-1 rounded" href="#">Calendar</a>
+<a class="text-slate-400 font-medium font-['Space_Grotesk'] tracking-tight hover:bg-[#1d2026] hover:text-[#a4e6ff] transition-colors px-3 py-1 rounded" href="#">Live</a>
+<a class="text-slate-400 font-medium font-['Space_Grotesk'] tracking-tight hover:bg-[#1d2026] hover:text-[#a4e6ff] transition-colors px-3 py-1 rounded" href="#">Updates</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative hidden lg:block">
+<span class="absolute left-3 top-1/2 -translate-y-1/2 material-symbols-outlined text-slate-500 text-sm">search</span>
+<input class="bg-surface-container-highest border-none rounded-sm pl-9 pr-4 py-1.5 text-xs w-64 focus:ring-1 focus:ring-primary transition-all" placeholder="Search markets..." type="text"/>
+</div>
+<button class="material-symbols-outlined text-slate-400 hover:text-primary transition-colors p-2">notifications</button>
+<button class="material-symbols-outlined text-slate-400 hover:text-primary transition-colors p-2">settings</button>
+<button class="bg-gradient-to-br from-primary to-primary-container text-on-primary px-4 py-1.5 rounded-md font-bold text-sm scale-95 active:scale-90 transition-transform">Connect Wallet</button>
+</div>
+</header>
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-16 h-[calc(100vh-64px)] w-64 bg-[#10131a] flex flex-col py-4 border-r border-[#a4e6ff]/5 font-['Inter'] text-sm antialiased">
+<div class="flex flex-col gap-1 px-3">
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 hover:text-slate-300 hover:bg-[#1d2026] transition-all duration-200 translate-x-1 active:scale-98 rounded" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span>Board</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-[#a4e6ff] font-bold bg-[#1d2026] border-l-4 border-[#a4e6ff] transition-all duration-200 translate-x-1 active:scale-98" href="#">
+<span class="material-symbols-outlined">sports_baseball</span>
+<span>MLB</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 hover:text-slate-300 hover:bg-[#1d2026] transition-all duration-200 translate-x-1 active:scale-98 rounded" href="#">
+<span class="material-symbols-outlined">analytics</span>
+<span>Eval</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 hover:text-slate-300 hover:bg-[#1d2026] transition-all duration-200 translate-x-1 active:scale-98 rounded" href="#">
+<span class="material-symbols-outlined">trending_up</span>
+<span>Trends</span>
+</a>
+</div>
+<div class="mt-auto px-6 mb-8">
+<button class="w-full bg-[#1d2026] text-primary border border-primary/20 py-3 rounded hover:bg-primary/10 transition-colors font-bold uppercase tracking-widest text-[10px]">Quick Bet</button>
+</div>
+<div class="px-3 border-t border-[#a4e6ff]/5 pt-4">
+<a class="flex items-center gap-3 px-4 py-2 text-slate-500 hover:text-slate-300 text-xs transition-colors" href="#">
+<span class="material-symbols-outlined text-sm">help</span>
+<span>Support</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-2 text-slate-500 hover:text-slate-300 text-xs transition-colors" href="#">
+<span class="material-symbols-outlined text-sm">code</span>
+<span>API</span>
+</a>
+</div>
+<div class="px-7 py-4">
+<div class="text-[10px] text-slate-600 font-mono tracking-tighter">v2.4.0-Stable</div>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 mt-16 p-8 min-h-screen">
+<div class="max-w-[1440px] mx-auto">
+<!-- Header Section -->
+<div class="flex justify-between items-end mb-8">
+<div>
+<h1 class="text-4xl font-black font-headline tracking-tighter text-on-surface mb-2">MLB TERMINAL <span class="text-primary">NRFI</span></h1>
+<p class="text-slate-500 max-w-md font-body text-sm leading-relaxed">High-density first inning probability intelligence. Powered by Precision Terminal v2.4.</p>
+</div>
+<div class="flex gap-4">
+<div class="bg-surface-container-low px-4 py-2 rounded-lg flex flex-col items-end">
+<span class="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Live Feed</span>
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 bg-tertiary rounded-full animate-pulse"></span>
+<span class="text-sm font-mono text-tertiary tracking-tighter">NYY @ BOS (0-0) T1</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Bento Grid Layout -->
+<div class="grid grid-cols-12 gap-6">
+<!-- Main Board (Left Column) -->
+<div class="col-span-12 lg:col-span-8 space-y-6">
+<!-- Game Card 1 -->
+<div class="bg-surface-container-low rounded-xl relative overflow-hidden group">
+<div class="absolute left-0 top-0 bottom-0 w-1 bg-primary"></div>
+<div class="p-6">
+<div class="flex justify-between items-start mb-6">
+<div class="flex items-center gap-6">
+<div class="flex flex-col">
+<div class="flex items-center gap-3 mb-1">
+<div class="w-8 h-8 bg-surface-container-highest rounded-full flex items-center justify-center font-bold text-xs">LAD</div>
+<span class="text-lg font-headline font-bold">Dodgers</span>
+<span class="text-slate-500 font-mono text-xs">-145</span>
+</div>
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-surface-container-highest rounded-full flex items-center justify-center font-bold text-xs">SFG</div>
+<span class="text-lg font-headline font-bold">Giants</span>
+<span class="text-slate-500 font-mono text-xs">+125</span>
+</div>
+</div>
+<div class="h-10 w-px bg-outline-variant/20 mx-4"></div>
+<div class="grid grid-cols-2 gap-x-8 gap-y-2">
+<div class="flex flex-col">
+<span class="text-[10px] text-slate-500 uppercase font-bold">Park Factor</span>
+<span class="text-sm font-mono">Neutral (102)</span>
+</div>
+<div class="flex flex-col">
+<span class="text-[10px] text-slate-500 uppercase font-bold">Weather</span>
+<span class="text-sm font-mono">68°F, W 12mph Out</span>
+</div>
+</div>
+</div>
+<div class="flex flex-col items-end">
+<span class="text-[10px] text-slate-500 uppercase font-bold mb-2">NRFI Edge Score</span>
+<div class="bg-tertiary-container/10 border border-tertiary/30 px-3 py-1 rounded-full flex items-center gap-2">
+<span class="text-tertiary font-black font-mono text-lg">84.2</span>
+<span class="text-[10px] text-tertiary font-bold">STRONG</span>
+</div>
+</div>
+</div>
+<!-- Matchup Probability Bar -->
+<div class="mb-8">
+<div class="flex justify-between text-[10px] text-slate-500 font-bold uppercase mb-2">
+<span>NRFI Prob: 68%</span>
+<span>YRFI Prob: 32%</span>
+</div>
+<div class="h-2 w-full bg-surface-container-highest rounded-full overflow-hidden flex">
+<div class="h-full bg-gradient-to-r from-primary to-primary-container" style="width: 68%;"></div>
+<div class="h-full bg-surface-variant" style="width: 32%;"></div>
+</div>
+</div>
+<!-- Pitcher Comparison Table -->
+<div class="grid grid-cols-2 gap-4">
+<div class="bg-surface-container-lowest p-4 rounded-lg">
+<div class="flex items-center justify-between mb-3">
+<span class="text-xs font-bold text-slate-400">RHP Tyler Glasnow</span>
+<span class="text-[10px] font-mono text-primary px-2 py-0.5 bg-primary/10 rounded">LAA</span>
+</div>
+<div class="grid grid-cols-3 gap-2">
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">ERA</div>
+<div class="text-sm font-mono font-bold">2.88</div>
+</div>
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">WHIP</div>
+<div class="text-sm font-mono font-bold">0.91</div>
+</div>
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">K%</div>
+<div class="text-sm font-mono font-bold">34.2</div>
+</div>
+</div>
+</div>
+<div class="bg-surface-container-lowest p-4 rounded-lg">
+<div class="flex items-center justify-between mb-3">
+<span class="text-xs font-bold text-slate-400">LHP Kyle Harrison</span>
+<span class="text-[10px] font-mono text-primary px-2 py-0.5 bg-primary/10 rounded">SFG</span>
+</div>
+<div class="grid grid-cols-3 gap-2">
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">ERA</div>
+<div class="text-sm font-mono font-bold">4.12</div>
+</div>
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">WHIP</div>
+<div class="text-sm font-mono font-bold">1.28</div>
+</div>
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">K%</div>
+<div class="text-sm font-mono font-bold">24.5</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Game Card 2 -->
+<div class="bg-surface-container-low rounded-xl relative overflow-hidden group">
+<div class="p-6">
+<div class="flex justify-between items-start mb-6">
+<div class="flex items-center gap-6">
+<div class="flex flex-col">
+<div class="flex items-center gap-3 mb-1">
+<div class="w-8 h-8 bg-surface-container-highest rounded-full flex items-center justify-center font-bold text-xs">NYY</div>
+<span class="text-lg font-headline font-bold">Yankees</span>
+<span class="text-slate-500 font-mono text-xs">-110</span>
+</div>
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-surface-container-highest rounded-full flex items-center justify-center font-bold text-xs">BOS</div>
+<span class="text-lg font-headline font-bold">Red Sox</span>
+<span class="text-slate-500 font-mono text-xs">+100</span>
+</div>
+</div>
+<div class="h-10 w-px bg-outline-variant/20 mx-4"></div>
+<div class="grid grid-cols-2 gap-x-8 gap-y-2">
+<div class="flex flex-col">
+<span class="text-[10px] text-slate-500 uppercase font-bold">Park Factor</span>
+<span class="text-sm font-mono">High (115)</span>
+</div>
+<div class="flex flex-col">
+<span class="text-[10px] text-slate-500 uppercase font-bold">Weather</span>
+<span class="text-sm font-mono">54°F, W 5mph In</span>
+</div>
+</div>
+</div>
+<div class="flex flex-col items-end">
+<span class="text-[10px] text-slate-500 uppercase font-bold mb-2">NRFI Edge Score</span>
+<div class="bg-surface-container-highest px-3 py-1 rounded-full flex items-center gap-2">
+<span class="text-on-surface font-black font-mono text-lg">52.1</span>
+<span class="text-[10px] text-slate-400 font-bold">MODERATE</span>
+</div>
+</div>
+</div>
+<div class="mb-8">
+<div class="flex justify-between text-[10px] text-slate-500 font-bold uppercase mb-2">
+<span>NRFI Prob: 48%</span>
+<span>YRFI Prob: 52%</span>
+</div>
+<div class="h-2 w-full bg-surface-container-highest rounded-full overflow-hidden flex">
+<div class="h-full bg-primary/40" style="width: 48%;"></div>
+<div class="h-full bg-error" style="width: 52%;"></div>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-4">
+<div class="bg-surface-container-lowest p-4 rounded-lg">
+<div class="flex items-center justify-between mb-3">
+<span class="text-xs font-bold text-slate-400">RHP Gerrit Cole</span>
+<span class="text-[10px] font-mono text-primary px-2 py-0.5 bg-primary/10 rounded">NYY</span>
+</div>
+<div class="grid grid-cols-3 gap-2">
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">ERA</div>
+<div class="text-sm font-mono font-bold">2.63</div>
+</div>
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">WHIP</div>
+<div class="text-sm font-mono font-bold">0.98</div>
+</div>
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">K%</div>
+<div class="text-sm font-mono font-bold">28.9</div>
+</div>
+</div>
+</div>
+<div class="bg-surface-container-lowest p-4 rounded-lg">
+<div class="flex items-center justify-between mb-3">
+<span class="text-xs font-bold text-slate-400">RHP Nick Pivetta</span>
+<span class="text-[10px] font-mono text-primary px-2 py-0.5 bg-primary/10 rounded">BOS</span>
+</div>
+<div class="grid grid-cols-3 gap-2">
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">ERA</div>
+<div class="text-sm font-mono font-bold">4.04</div>
+</div>
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">WHIP</div>
+<div class="text-sm font-mono font-bold">1.22</div>
+</div>
+<div class="text-center">
+<div class="text-[10px] text-slate-500 font-bold uppercase">K%</div>
+<div class="text-sm font-mono font-bold">26.1</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Pitching Deep Dive Sidebar (Right Column) -->
+<div class="col-span-12 lg:col-span-4 space-y-6">
+<div class="bg-surface-container p-6 rounded-xl border border-[#a4e6ff]/5">
+<div class="flex items-center gap-3 mb-6">
+<span class="material-symbols-outlined text-primary">analytics</span>
+<h2 class="text-xl font-headline font-bold">Pitching Deep Dive</h2>
+</div>
+<div class="space-y-6">
+<!-- Advanced Stat Block 1 -->
+<div>
+<div class="flex justify-between items-center mb-3">
+<span class="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Leaguewide xFIP Leaderboard</span>
+<span class="text-[10px] text-primary font-mono cursor-pointer hover:underline">View All</span>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between items-center bg-surface-container-low p-2 rounded border-l-2 border-tertiary">
+<div class="flex items-center gap-2">
+<span class="text-[10px] font-mono text-slate-500">01</span>
+<span class="text-xs font-medium">T. Glasnow (LAD)</span>
+</div>
+<span class="text-xs font-mono font-bold text-tertiary">2.41</span>
+</div>
+<div class="flex justify-between items-center bg-surface-container-low p-2 rounded">
+<div class="flex items-center gap-2">
+<span class="text-[10px] font-mono text-slate-500">02</span>
+<span class="text-xs font-medium">C. Sale (ATL)</span>
+</div>
+<span class="text-xs font-mono font-bold">2.55</span>
+</div>
+<div class="flex justify-between items-center bg-surface-container-low p-2 rounded">
+<div class="flex items-center gap-2">
+<span class="text-[10px] font-mono text-slate-500">03</span>
+<span class="text-xs font-medium">Z. Wheeler (PHI)</span>
+</div>
+<span class="text-xs font-mono font-bold">2.71</span>
+</div>
+</div>
+</div>
+<!-- Correlation Heatmap Mockup -->
+<div class="bg-surface-container-lowest rounded-lg p-4">
+<h3 class="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-4 text-center">NRFI Multi-Factor Correlation</h3>
+<div class="flex flex-col gap-1">
+<div class="flex gap-1 h-8">
+<div class="flex-1 bg-tertiary-container/80 rounded-sm"></div>
+<div class="flex-1 bg-tertiary-container/40 rounded-sm"></div>
+<div class="flex-1 bg-surface-container-highest rounded-sm"></div>
+<div class="flex-1 bg-primary/20 rounded-sm"></div>
+</div>
+<div class="flex gap-1 h-8">
+<div class="flex-1 bg-tertiary-container/60 rounded-sm"></div>
+<div class="flex-1 bg-tertiary-container/90 rounded-sm"></div>
+<div class="flex-1 bg-primary/10 rounded-sm"></div>
+<div class="flex-1 bg-surface-container-highest rounded-sm"></div>
+</div>
+<div class="flex gap-1 h-8">
+<div class="flex-1 bg-surface-container-highest rounded-sm"></div>
+<div class="flex-1 bg-primary/30 rounded-sm"></div>
+<div class="flex-1 bg-error-container/40 rounded-sm"></div>
+<div class="flex-1 bg-error-container/70 rounded-sm"></div>
+</div>
+</div>
+<div class="flex justify-between mt-2 text-[8px] font-mono text-slate-500">
+<span>PITCHER SKILL</span>
+<span>PARK EFFECT</span>
+<span>TEMP</span>
+<span>UMPIRE</span>
+</div>
+</div>
+<!-- Market Shift -->
+<div class="bg-primary/5 p-4 rounded-lg border border-primary/10">
+<h3 class="text-[10px] text-primary uppercase font-bold tracking-widest mb-3">Live Line Alerts</h3>
+<ul class="space-y-3">
+<li class="flex items-start gap-2">
+<span class="material-symbols-outlined text-primary text-sm mt-0.5">trending_down</span>
+<div class="flex flex-col">
+<span class="text-xs font-bold">LAA @ SFG (NRFI)</span>
+<span class="text-[10px] text-slate-500">Line moved from -135 to -150 (Heavy Action)</span>
+</div>
+</li>
+<li class="flex items-start gap-2">
+<span class="material-symbols-outlined text-error text-sm mt-0.5">warning</span>
+<div class="flex flex-col">
+<span class="text-xs font-bold">Weather Warning: BAL @ TOR</span>
+<span class="text-[10px] text-slate-500">Wind gusting to 20mph OUT. YRFI favored.</span>
+</div>
+</li>
+</ul>
+</div>
+<!-- Featured Pitching Detail -->
+<div class="pt-4 border-t border-outline-variant/10">
+<div class="flex items-center gap-4 mb-4">
+<img class="w-12 h-12 rounded-full object-cover border border-primary/20" data-alt="professional baseball player portrait in uniform stadium lights background cinematic blue tones" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBc9Ru2Nhp0es8Cw6ZzbZCv8NjINVxQpytBZEIgeZqzF9y2R5OnvX1NdI36wqHSdClAflIisMlaw2qfEDLL8i4pV-zLNnVv5Ubt2a6IE0xjvbA4CdPsJqoNQHi5XkW0XsMjlsjumGT1OC_Z69Ke4DTj7vDV8Z9Ldw_udYI19RPbtZOQcsvMRO0hPYB0xovqzw32Sc_n7-H4I-w3T22XeX_RaYj6dsb5-suUgn8IgqocgV2ufF-8YmooeBLu3-yGKz6RwT0Ro7UnEUw"/>
+<div>
+<div class="text-xs font-bold">Featured Matchup Insight</div>
+<div class="text-[10px] text-slate-400">Tyler Glasnow vs NL West</div>
+</div>
+</div>
+<p class="text-xs text-slate-500 leading-relaxed italic">
+                                    "Glasnow's 1st inning whiff rate is 12% higher against division opponents in nighttime home starts over the last 24 months."
+                                </p>
+</div>
+</div>
+</div>
+<!-- Bottom CTA Card -->
+<div class="bg-gradient-to-br from-secondary-container to-[#10131a] p-6 rounded-xl border border-primary/10 relative overflow-hidden group">
+<div class="absolute -right-4 -bottom-4 opacity-10 group-hover:opacity-20 transition-opacity">
+<span class="material-symbols-outlined text-9xl">terminal</span>
+</div>
+<h3 class="text-lg font-headline font-bold mb-2">Precision API</h3>
+<p class="text-xs text-slate-400 mb-4 leading-relaxed">Access real-time probability endpoints for your own models.</p>
+<button class="w-full bg-primary text-on-primary font-bold py-2 rounded text-xs transition-transform active:scale-95">REQUEST KEY</button>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Contextual FAB (Only on specific screens) -->
+<button class="fixed bottom-8 right-8 bg-tertiary text-on-tertiary-fixed w-14 h-14 rounded-full shadow-[0px_12px_32px_rgba(0,0,0,0.4)] flex items-center justify-center hover:scale-105 active:scale-90 transition-all z-[60]">
+<span class="material-symbols-outlined font-bold">bolt</span>
+</button>
+</body></html>

@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>The Analytical Edge | Evaluation Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+            "on-tertiary-fixed": "#00210c",
+            "on-primary-container": "#00566a",
+            "inverse-primary": "#00677f",
+            "background": "#10131a",
+            "on-primary": "#003543",
+            "on-secondary-fixed": "#0b1c30",
+            "secondary-container": "#3a4a5f",
+            "primary": "#a4e6ff",
+            "secondary-fixed-dim": "#b7c8e1",
+            "surface-bright": "#363940",
+            "surface-container-highest": "#32353c",
+            "surface-container": "#1d2026",
+            "tertiary-container": "#45da7d",
+            "on-primary-fixed-variant": "#004e60",
+            "error-container": "#93000a",
+            "on-error": "#690005",
+            "surface": "#10131a",
+            "on-error-container": "#ffdad6",
+            "outline": "#859399",
+            "on-surface": "#e1e2eb",
+            "surface-container-high": "#272a31",
+            "primary-fixed": "#b7eaff",
+            "on-tertiary-container": "#005b2c",
+            "surface-tint": "#4cd6ff",
+            "primary-fixed-dim": "#4cd6ff",
+            "inverse-surface": "#e1e2eb",
+            "error": "#ffb4ab",
+            "surface-variant": "#32353c",
+            "surface-container-low": "#191c22",
+            "on-primary-fixed": "#001f28",
+            "on-background": "#e1e2eb",
+            "tertiary-fixed-dim": "#4de082",
+            "tertiary": "#66f796",
+            "primary-container": "#00d1ff",
+            "on-tertiary-fixed-variant": "#005227",
+            "on-secondary-fixed-variant": "#38485d",
+            "on-surface-variant": "#bbc9cf",
+            "on-secondary": "#213145",
+            "on-tertiary": "#003919",
+            "on-secondary-container": "#a9bad3",
+            "tertiary-fixed": "#6dfe9c",
+            "secondary": "#b7c8e1",
+            "surface-container-lowest": "#0b0e14",
+            "surface-dim": "#10131a",
+            "secondary-fixed": "#d3e4fe",
+            "outline-variant": "#3c494e",
+            "inverse-on-surface": "#2e3037"
+          },
+          "borderRadius": {
+            "DEFAULT": "0.125rem",
+            "lg": "0.25rem",
+            "xl": "0.5rem",
+            "full": "0.75rem"
+          },
+          "fontFamily": {
+            "headline": ["Space Grotesk"],
+            "body": ["Inter"],
+            "label": ["Inter"]
+          }
+        },
+      },
+    }
+  </script>
+<style>
+    body { font-family: 'Inter', sans-serif; }
+    .headline-font { font-family: 'Space Grotesk', sans-serif; }
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    }
+    .glass-panel {
+      background: rgba(30, 34, 45, 0.4);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #3c494e; border-radius: 10px; }
+  </style>
+</head>
+<body class="bg-background text-on-surface min-h-screen">
+<!-- TopNavBar Implementation -->
+<header class="fixed top-0 w-full z-50 h-16 bg-[#10131a] dark:bg-[#10131a]/80 backdrop-blur-xl border-b border-[#a4e6ff]/10 shadow-[0px_12px_32px_rgba(0,0,0,0.4)] flex justify-between items-center px-6 w-full">
+<div class="flex items-center gap-8">
+<span class="text-2xl font-black italic tracking-tighter text-[#a4e6ff] headline-font">TruLine</span>
+<nav class="hidden md:flex gap-6 items-center h-full">
+<a class="text-slate-400 font-medium hover:bg-[#1d2026] hover:text-[#a4e6ff] transition-colors" href="#">Calendar</a>
+<a class="text-slate-400 font-medium hover:bg-[#1d2026] hover:text-[#a4e6ff] transition-colors" href="#">Live</a>
+<a class="text-slate-400 font-medium hover:bg-[#1d2026] hover:text-[#a4e6ff] transition-colors" href="#">Updates</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="hidden lg:flex items-center bg-surface-container-highest rounded-sm px-3 py-1.5 gap-2 border-b border-transparent focus-within:border-primary transition-all">
+<span class="material-symbols-outlined text-outline text-sm" data-icon="search">search</span>
+<input class="bg-transparent border-none text-xs focus:ring-0 w-48 text-on-surface p-0 placeholder:text-outline" placeholder="Search Markets..." type="text"/>
+</div>
+<div class="flex items-center gap-3">
+<button class="material-symbols-outlined text-slate-400 hover:text-[#a4e6ff] transition-colors" data-icon="notifications">notifications</button>
+<button class="material-symbols-outlined text-slate-400 hover:text-[#a4e6ff] transition-colors" data-icon="settings">settings</button>
+<button class="bg-gradient-to-br from-primary to-primary-container text-on-primary font-bold px-4 py-1.5 rounded-md text-sm scale-95 active:scale-90 transition-transform">Connect Wallet</button>
+</div>
+</div>
+</header>
+<!-- SideNavBar Implementation -->
+<aside class="fixed left-0 top-16 h-[calc(100vh-64px)] w-64 bg-[#10131a] flex flex-col py-4 h-full border-r border-[#a4e6ff]/5 z-40">
+<div class="px-6 mb-8">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined text-primary text-xl" data-icon="analytics">analytics</span>
+</div>
+<div>
+<h3 class="text-on-surface font-bold text-sm tracking-tight">The Analytical Edge</h3>
+<p class="text-outline text-[10px] uppercase tracking-widest font-bold">v2.4.0-Stable</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-4 px-6 py-3 text-slate-500 hover:text-slate-300 hover:bg-[#1d2026] transition-all duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="font-medium">Board</span>
+</a>
+<a class="flex items-center gap-4 px-6 py-3 text-slate-500 hover:text-slate-300 hover:bg-[#1d2026] transition-all duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="sports_baseball">sports_baseball</span>
+<span class="font-medium">MLB</span>
+</a>
+<!-- Active State Logic Applied to Eval -->
+<a class="flex items-center gap-4 px-6 py-3 text-[#a4e6ff] font-bold bg-[#1d2026] border-l-4 border-[#a4e6ff] translate-x-1 active:scale-98" href="#">
+<span class="material-symbols-outlined" data-icon="analytics">analytics</span>
+<span class="font-medium">Eval</span>
+</a>
+<a class="flex items-center gap-4 px-6 py-3 text-slate-500 hover:text-slate-300 hover:bg-[#1d2026] transition-all duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="trending_up">trending_up</span>
+<span class="font-medium">Trends</span>
+</a>
+</nav>
+<div class="px-6 mt-auto">
+<button class="w-full bg-surface-container-high hover:bg-surface-container-highest text-primary border border-primary/20 py-2 rounded-md font-bold text-xs transition-colors mb-6">
+        Quick Bet
+      </button>
+<div class="space-y-2 pb-4">
+<a class="flex items-center gap-4 text-slate-500 hover:text-slate-300 text-sm" href="#">
+<span class="material-symbols-outlined text-sm" data-icon="help">help</span>
+<span>Support</span>
+</a>
+<a class="flex items-center gap-4 text-slate-500 hover:text-slate-300 text-sm" href="#">
+<span class="material-symbols-outlined text-sm" data-icon="code">code</span>
+<span>API</span>
+</a>
+</div>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 pt-24 px-8 pb-12 min-h-screen">
+<!-- Hero Stats / Bento Header -->
+<div class="grid grid-cols-12 gap-6 mb-8">
+<!-- Primary Metric: Total Model Win Rate -->
+<div class="col-span-12 lg:col-span-4 p-8 rounded-xl bg-surface-container-low flex flex-col justify-between border-l-2 border-primary overflow-hidden relative">
+<div class="absolute top-0 right-0 p-4 opacity-5">
+<span class="material-symbols-outlined text-8xl" data-icon="monitoring">monitoring</span>
+</div>
+<div>
+<h2 class="text-outline text-sm font-bold uppercase tracking-widest mb-2">Aggregate Model Performance</h2>
+<div class="flex items-baseline gap-3">
+<span class="text-6xl font-bold headline-font text-tertiary">68.4%</span>
+<span class="text-tertiary-fixed-dim text-sm font-medium flex items-center">
+<span class="material-symbols-outlined text-xs mr-1" data-icon="arrow_upward">arrow_upward</span> 2.1%
+            </span>
+</div>
+</div>
+<div class="mt-8 space-y-2">
+<div class="flex justify-between text-[10px] text-outline font-bold uppercase">
+<span>Confidence Interval</span>
+<span>95% CL</span>
+</div>
+<div class="h-1 w-full bg-surface-container rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[68%]"></div>
+</div>
+</div>
+</div>
+<!-- Secondary Metrics: Value Tiers -->
+<div class="col-span-12 lg:col-span-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+<!-- Elite Tier -->
+<div class="bg-surface-container rounded-lg p-6 flex flex-col justify-between group hover:bg-surface-container-high transition-colors">
+<div class="flex justify-between items-start">
+<span class="bg-tertiary/10 text-tertiary px-2 py-1 rounded text-[10px] font-bold uppercase">Elite Value</span>
+<span class="material-symbols-outlined text-tertiary text-lg" data-icon="verified" data-weight="fill">verified</span>
+</div>
+<div class="mt-4">
+<span class="text-3xl font-bold headline-font text-on-surface">74.2%</span>
+<p class="text-outline text-xs">Win Rate (Score 85+)</p>
+</div>
+</div>
+<!-- Strong Tier -->
+<div class="bg-surface-container rounded-lg p-6 flex flex-col justify-between group hover:bg-surface-container-high transition-colors">
+<div class="flex justify-between items-start">
+<span class="bg-primary/10 text-primary px-2 py-1 rounded text-[10px] font-bold uppercase">Strong Value</span>
+<span class="material-symbols-outlined text-primary text-lg" data-icon="shield">shield</span>
+</div>
+<div class="mt-4">
+<span class="text-3xl font-bold headline-font text-on-surface">62.8%</span>
+<p class="text-outline text-xs">Win Rate (Score 70-84)</p>
+</div>
+</div>
+<!-- Moderate Tier -->
+<div class="bg-surface-container rounded-lg p-6 flex flex-col justify-between group hover:bg-surface-container-high transition-colors">
+<div class="flex justify-between items-start">
+<span class="bg-on-surface-variant/10 text-on-surface-variant px-2 py-1 rounded text-[10px] font-bold uppercase">Moderate Value</span>
+<span class="material-symbols-outlined text-on-surface-variant text-lg" data-icon="info">info</span>
+</div>
+<div class="mt-4">
+<span class="text-3xl font-bold headline-font text-on-surface">54.1%</span>
+<p class="text-outline text-xs">Win Rate (Score 55-69)</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Main Chart Section -->
+<div class="grid grid-cols-12 gap-6">
+<!-- Historical Performance Bar Chart -->
+<div class="col-span-12 xl:col-span-8 bg-surface-container-low rounded-xl p-8 relative overflow-hidden">
+<div class="flex justify-between items-center mb-10">
+<div>
+<h3 class="headline-font text-xl font-bold">Historical Accuracy Timeline</h3>
+<p class="text-outline text-sm">Monthly win rate variance against closing line</p>
+</div>
+<div class="flex gap-2">
+<button class="bg-surface-container-highest text-on-surface px-3 py-1 rounded text-xs font-bold border border-outline-variant">30D</button>
+<button class="bg-surface-container text-outline px-3 py-1 rounded text-xs font-bold hover:text-on-surface transition-colors">90D</button>
+<button class="bg-surface-container text-outline px-3 py-1 rounded text-xs font-bold hover:text-on-surface transition-colors">ALL</button>
+</div>
+</div>
+<!-- Custom Simulated Bar Chart -->
+<div class="h-64 flex items-end justify-between gap-2 px-4 relative">
+<!-- Grid Lines -->
+<div class="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-10">
+<div class="border-t border-outline w-full"></div>
+<div class="border-t border-outline w-full"></div>
+<div class="border-t border-outline w-full"></div>
+<div class="border-t border-outline w-full"></div>
+<div class="border-t border-outline w-full"></div>
+</div>
+<!-- Bars -->
+<div class="flex-1 bg-surface-container-highest group relative cursor-pointer h-[45%] hover:bg-primary transition-colors rounded-t-sm" title="Jan: 45%">
+<div class="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity">45%</div>
+</div>
+<div class="flex-1 bg-surface-container-highest group relative cursor-pointer h-[55%] hover:bg-primary transition-colors rounded-t-sm"></div>
+<div class="flex-1 bg-tertiary/60 group relative cursor-pointer h-[72%] hover:bg-tertiary transition-colors rounded-t-sm"></div>
+<div class="flex-1 bg-surface-container-highest group relative cursor-pointer h-[60%] hover:bg-primary transition-colors rounded-t-sm"></div>
+<div class="flex-1 bg-surface-container-highest group relative cursor-pointer h-[68%] hover:bg-primary transition-colors rounded-t-sm"></div>
+<div class="flex-1 bg-tertiary/60 group relative cursor-pointer h-[80%] hover:bg-tertiary transition-colors rounded-t-sm"></div>
+<div class="flex-1 bg-surface-container-highest group relative cursor-pointer h-[52%] hover:bg-primary transition-colors rounded-t-sm"></div>
+<div class="flex-1 bg-surface-container-highest group relative cursor-pointer h-[58%] hover:bg-primary transition-colors rounded-t-sm"></div>
+<div class="flex-1 bg-tertiary/60 group relative cursor-pointer h-[75%] hover:bg-tertiary transition-colors rounded-t-sm"></div>
+<div class="flex-1 bg-surface-container-highest group relative cursor-pointer h-[62%] hover:bg-primary transition-colors rounded-t-sm"></div>
+<div class="flex-1 bg-surface-container-highest group relative cursor-pointer h-[65%] hover:bg-primary transition-colors rounded-t-sm"></div>
+<div class="flex-1 bg-primary group relative cursor-pointer h-[68.4%] rounded-t-sm">
+<div class="absolute -top-8 left-1/2 -translate-x-1/2 bg-primary text-on-primary px-2 py-1 rounded text-[10px] font-black headline-font">CURRENT</div>
+</div>
+</div>
+<div class="flex justify-between px-4 mt-6 text-[10px] text-outline font-bold uppercase tracking-tighter">
+<span>JAN 23</span>
+<span>MAR 23</span>
+<span>MAY 23</span>
+<span>JUL 23</span>
+<span>SEP 23</span>
+<span>NOV 23</span>
+<span>JAN 24</span>
+</div>
+</div>
+<!-- Live Trends Feed -->
+<div class="col-span-12 xl:col-span-4 flex flex-col gap-4">
+<h3 class="headline-font text-lg font-bold flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-tertiary animate-pulse"></span>
+          Live Pattern Intelligence
+        </h3>
+<!-- Trend Card 1 -->
+<div class="glass-panel p-5 rounded-xl border-l-2 border-primary/40 flex flex-col gap-4 group hover:border-primary transition-all">
+<div class="flex justify-between items-start">
+<div>
+<h4 class="font-bold text-sm text-on-surface">Underdogs in Division Games</h4>
+<p class="text-[10px] text-outline uppercase tracking-wider">NFL | MLB | NBA</p>
+</div>
+<div class="bg-tertiary-container/20 text-tertiary px-2 py-1 rounded-full text-[10px] font-bold">
+              +14.2% ROI
+            </div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex-1">
+<div class="flex justify-between text-[10px] mb-1">
+<span class="text-outline">Success Rate</span>
+<span class="text-on-surface">62/100</span>
+</div>
+<div class="h-1 w-full bg-surface-container rounded-full overflow-hidden">
+<div class="h-full bg-tertiary w-[62%]"></div>
+</div>
+</div>
+<button class="material-symbols-outlined text-outline group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</button>
+</div>
+</div>
+<!-- Trend Card 2 -->
+<div class="glass-panel p-5 rounded-xl border-l-2 border-outline-variant flex flex-col gap-4 group hover:border-primary transition-all">
+<div class="flex justify-between items-start">
+<div>
+<h4 class="font-bold text-sm text-on-surface">Post-Loss Bounce Back</h4>
+<p class="text-[10px] text-outline uppercase tracking-wider">Top 5 Seed Teams</p>
+</div>
+<div class="bg-primary/20 text-primary px-2 py-1 rounded-full text-[10px] font-bold">
+              +8.5% ROI
+            </div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex-1">
+<div class="flex justify-between text-[10px] mb-1">
+<span class="text-outline">Success Rate</span>
+<span class="text-on-surface">54/100</span>
+</div>
+<div class="h-1 w-full bg-surface-container rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[54%]"></div>
+</div>
+</div>
+<button class="material-symbols-outlined text-outline group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</button>
+</div>
+</div>
+<!-- Trend Card 3 -->
+<div class="glass-panel p-5 rounded-xl border-l-2 border-outline-variant flex flex-col gap-4 group hover:border-primary transition-all">
+<div class="flex justify-between items-start">
+<div>
+<h4 class="font-bold text-sm text-on-surface">High Volume Total Over</h4>
+<p class="text-[10px] text-outline uppercase tracking-wider">Inter-League Play</p>
+</div>
+<div class="bg-error/10 text-error px-2 py-1 rounded-full text-[10px] font-bold">
+              -2.1% ROI
+            </div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex-1">
+<div class="flex justify-between text-[10px] mb-1">
+<span class="text-outline">Success Rate</span>
+<span class="text-on-surface">48/100</span>
+</div>
+<div class="h-1 w-full bg-surface-container rounded-full overflow-hidden">
+<div class="h-full bg-error w-[48%]"></div>
+</div>
+</div>
+<button class="material-symbols-outlined text-outline group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Bottom Data Grid: Performance by Segment -->
+<section class="mt-12">
+<div class="flex items-center justify-between mb-6">
+<h3 class="headline-font text-xl font-bold">Model Efficiency Matrix</h3>
+<div class="flex gap-4">
+<div class="flex items-center gap-2 text-xs text-outline">
+<span class="w-3 h-3 rounded-sm bg-tertiary"></span> Outperforming
+          </div>
+<div class="flex items-center gap-2 text-xs text-outline">
+<span class="w-3 h-3 rounded-sm bg-primary"></span> On Target
+          </div>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+<!-- Data Tile -->
+<div class="bg-surface-container-lowest p-6 rounded-lg border border-outline-variant/10">
+<p class="text-[10px] text-outline uppercase font-bold tracking-widest mb-1">Avg Edge Found</p>
+<p class="text-2xl font-bold headline-font text-on-surface">4.12%</p>
+<div class="flex items-center gap-1 text-[10px] text-tertiary mt-2">
+<span class="material-symbols-outlined text-xs" data-icon="trending_up">trending_up</span> 0.5% vs Last Period
+          </div>
+</div>
+<!-- Data Tile -->
+<div class="bg-surface-container-lowest p-6 rounded-lg border border-outline-variant/10">
+<p class="text-[10px] text-outline uppercase font-bold tracking-widest mb-1">Closing Line Value</p>
+<p class="text-2xl font-bold headline-font text-on-surface">+124</p>
+<div class="flex items-center gap-1 text-[10px] text-tertiary mt-2">
+<span class="material-symbols-outlined text-xs" data-icon="check_circle">check_circle</span> Superior Efficiency
+          </div>
+</div>
+<!-- Data Tile -->
+<div class="bg-surface-container-lowest p-6 rounded-lg border border-outline-variant/10">
+<p class="text-[10px] text-outline uppercase font-bold tracking-widest mb-1">Drawdown Max</p>
+<p class="text-2xl font-bold headline-font text-error">8.4%</p>
+<div class="flex items-center gap-1 text-[10px] text-outline mt-2">
+<span class="material-symbols-outlined text-xs" data-icon="warning">warning</span> Within Safety Threshold
+          </div>
+</div>
+<!-- Data Tile -->
+<div class="bg-surface-container-lowest p-6 rounded-lg border border-outline-variant/10">
+<p class="text-[10px] text-outline uppercase font-bold tracking-widest mb-1">Data Points / Day</p>
+<p class="text-2xl font-bold headline-font text-primary">142K</p>
+<div class="flex items-center gap-1 text-[10px] text-outline mt-2">
+             Latency: <span class="text-on-surface">12ms</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Technical Analysis Context Area -->
+<div class="mt-8 p-6 bg-surface-container rounded-xl border border-primary/5 grid grid-cols-1 lg:grid-cols-3 gap-8">
+<div class="lg:col-span-2">
+<h4 class="text-xs font-bold text-primary uppercase tracking-widest mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-sm" data-icon="terminal">terminal</span> Engineer's Notes
+        </h4>
+<p class="text-sm text-on-surface-variant leading-relaxed font-mono">
+          Model v2.4.0 is showing significant alpha in MLB moneyline variants during high-wind velocity environments. Recommendation: Increase weighting on 'Strong Value' tier when park factors exceed 1.15x volatility index. Outlier detection in NBA totals remains active to mitigate high-variance scoring runs in the final 2 minutes of Q4.
+        </p>
+</div>
+<div class="flex flex-col justify-center">
+<img class="h-16 w-full object-cover rounded opacity-40 mix-blend-screen" data-alt="a digital waveform visualization showing blue and green technical data streams with high precision lines on a dark background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBaT4OSJfYak4-q2dRa2QDS2kMhtLM0Vduu_qdJZxzZQVvhvXScIJPsZeSHHUPjq9Tyy9RQLvIPO5-O0fTP5-ec4qS4V--orRDTFpNROCVFRjauk-DxK6fatVfV2r_lY65jsQfDj2n3paaFkkDWlpV-nc1SjlOq_HXjxOprJPQvwmA2Q-JaMIXnHs0QswtwbrbPmuIEFSWtwCmUcVBRfKBa4_wmMTSzVthdOM0-tkCl1vYejgBfNJJ0SREbFS-Y6r-mZVy8DQRXyc4"/>
+<div class="mt-4 flex justify-between items-center text-[10px] font-bold text-outline">
+<span>SYSTEM LOAD: 42%</span>
+<span>UPTIME: 99.998%</span>
+</div>
+</div>
+</div>
+</main>
+<!-- Mobile Navigation Placeholder (Suppressed on Web per Rules) -->
+<div class="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-background border-t border-primary/10 flex justify-around items-center px-4 z-50">
+<button class="flex flex-col items-center gap-1 text-primary">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="text-[10px] font-bold uppercase">Board</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-outline">
+<span class="material-symbols-outlined" data-icon="sports_baseball">sports_baseball</span>
+<span class="text-[10px] font-bold uppercase">MLB</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-outline">
+<span class="material-symbols-outlined" data-icon="analytics">analytics</span>
+<span class="text-[10px] font-bold uppercase">Eval</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-outline">
+<span class="material-symbols-outlined" data-icon="trending_up">trending_up</span>
+<span class="text-[10px] font-bold uppercase">Trends</span>
+</button>
+</div>
+</body></html>

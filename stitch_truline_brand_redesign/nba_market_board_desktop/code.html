@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-tertiary-fixed": "#00210c",
+                    "on-primary-container": "#00566a",
+                    "inverse-primary": "#00677f",
+                    "background": "#10131a",
+                    "on-primary": "#003543",
+                    "on-secondary-fixed": "#0b1c30",
+                    "secondary-container": "#3a4a5f",
+                    "primary": "#a4e6ff",
+                    "secondary-fixed-dim": "#b7c8e1",
+                    "surface-bright": "#363940",
+                    "surface-container-highest": "#32353c",
+                    "surface-container": "#1d2026",
+                    "tertiary-container": "#45da7d",
+                    "on-primary-fixed-variant": "#004e60",
+                    "error-container": "#93000a",
+                    "on-error": "#690005",
+                    "surface": "#10131a",
+                    "on-error-container": "#ffdad6",
+                    "outline": "#859399",
+                    "on-surface": "#e1e2eb",
+                    "surface-container-high": "#272a31",
+                    "primary-fixed": "#b7eaff",
+                    "on-tertiary-container": "#005b2c",
+                    "surface-tint": "#4cd6ff",
+                    "primary-fixed-dim": "#4cd6ff",
+                    "inverse-surface": "#e1e2eb",
+                    "error": "#ffb4ab",
+                    "surface-variant": "#32353c",
+                    "surface-container-low": "#191c22",
+                    "on-primary-fixed": "#001f28",
+                    "on-background": "#e1e2eb",
+                    "tertiary-fixed-dim": "#4de082",
+                    "tertiary": "#66f796",
+                    "primary-container": "#00d1ff",
+                    "on-tertiary-fixed-variant": "#005227",
+                    "on-secondary-fixed-variant": "#38485d",
+                    "on-surface-variant": "#bbc9cf",
+                    "on-secondary": "#213145",
+                    "on-tertiary": "#003919",
+                    "on-secondary-container": "#a9bad3",
+                    "tertiary-fixed": "#6dfe9c",
+                    "secondary": "#b7c8e1",
+                    "surface-container-lowest": "#0b0e14",
+                    "surface-dim": "#10131a",
+                    "secondary-fixed": "#d3e4fe",
+                    "outline-variant": "#3c494e",
+                    "inverse-on-surface": "#2e3037"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "fontFamily": {
+                    "headline": ["Space Grotesk"],
+                    "body": ["Inter"],
+                    "label": ["Inter"]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: #10131a;
+        color: #e1e2eb;
+      }
+      .glass-panel {
+        background: rgba(30, 32, 38, 0.7);
+        backdrop-filter: blur(20px);
+      }
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+    </style>
+</head>
+<body class="bg-background text-on-background selection:bg-primary/30">
+<!-- TopNavBar -->
+<header class="fixed top-0 w-full z-50 h-16 bg-[#10131a] dark:bg-[#10131a]/80 backdrop-blur-xl border-b border-[#a4e6ff]/10 shadow-[0px_12px_32px_rgba(0,0,0,0.4)] flex justify-between items-center px-6">
+<div class="flex items-center gap-8">
+<span class="text-2xl font-black italic tracking-tighter text-[#a4e6ff] font-['Space_Grotesk']">TruLine</span>
+<nav class="hidden md:flex gap-6 items-center">
+<a class="text-slate-400 font-medium font-['Space_Grotesk'] tracking-tight hover:bg-[#1d2026] hover:text-[#a4e6ff] transition-colors px-2 py-1 rounded" href="#">Calendar</a>
+<a class="text-[#a4e6ff] border-b-2 border-[#a4e6ff] pb-1 font-['Space_Grotesk'] tracking-tight" href="#">Live</a>
+<a class="text-slate-400 font-medium font-['Space_Grotesk'] tracking-tight hover:bg-[#1d2026] hover:text-[#a4e6ff] transition-colors px-2 py-1 rounded" href="#">Updates</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="hidden lg:flex items-center bg-surface-container-highest rounded-sm px-3 py-1.5 border-b border-transparent focus-within:border-primary transition-all">
+<span class="material-symbols-outlined text-outline text-sm mr-2">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-sm w-48 placeholder:text-outline/50" placeholder="Search markets..." type="text"/>
+</div>
+<div class="flex items-center gap-2">
+<button class="p-2 text-slate-400 hover:text-primary transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="p-2 text-slate-400 hover:text-primary transition-colors">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+<button class="bg-gradient-to-br from-primary to-primary-container text-on-primary px-4 py-1.5 rounded-md font-bold text-sm tracking-tight scale-95 active:scale-90 transition-transform">
+                Connect Wallet
+            </button>
+</div>
+</header>
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-16 h-[calc(100vh-64px)] w-64 bg-[#10131a] border-r border-[#a4e6ff]/5 flex flex-col py-4 font-['Inter'] text-sm antialiased">
+<div class="px-6 mb-8">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-primary/20 flex items-center justify-center border border-primary/30">
+<span class="material-symbols-outlined text-primary text-xl" data-weight="fill">terminal</span>
+</div>
+<div>
+<h3 class="font-bold text-on-surface leading-tight">The Analytical Edge</h3>
+<p class="text-[10px] text-slate-500 font-mono">v2.4.0-Stable</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-3 px-6 py-3 text-slate-500 hover:text-slate-300 hover:bg-[#1d2026] transition-all duration-200" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span>Board</span>
+</a>
+<a class="flex items-center gap-3 px-6 py-3 text-[#a4e6ff] font-bold bg-[#1d2026] border-l-4 border-[#a4e6ff] translate-x-1 active:scale-98" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">sports_basketball</span>
+<span>NBA Market</span>
+</a>
+<a class="flex items-center gap-3 px-6 py-3 text-slate-500 hover:text-slate-300 hover:bg-[#1d2026] transition-all duration-200" href="#">
+<span class="material-symbols-outlined">sports_baseball</span>
+<span>MLB</span>
+</a>
+<a class="flex items-center gap-3 px-6 py-3 text-slate-500 hover:text-slate-300 hover:bg-[#1d2026] transition-all duration-200" href="#">
+<span class="material-symbols-outlined">analytics</span>
+<span>Eval</span>
+</a>
+<a class="flex items-center gap-3 px-6 py-3 text-slate-500 hover:text-slate-300 hover:bg-[#1d2026] transition-all duration-200" href="#">
+<span class="material-symbols-outlined">trending_up</span>
+<span>Trends</span>
+</a>
+</nav>
+<div class="px-4 mt-auto space-y-4">
+<button class="w-full bg-primary-container/10 border border-primary/20 text-primary py-2.5 rounded-md font-bold hover:bg-primary/20 transition-colors flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">bolt</span>
+                Quick Bet
+            </button>
+<div class="pt-4 border-t border-primary/5 space-y-1">
+<a class="flex items-center gap-3 px-2 py-2 text-slate-500 hover:text-slate-300 transition-colors text-xs" href="#">
+<span class="material-symbols-outlined text-sm">help</span>
+                    Support
+                </a>
+<a class="flex items-center gap-3 px-2 py-2 text-slate-500 hover:text-slate-300 transition-colors text-xs" href="#">
+<span class="material-symbols-outlined text-sm">code</span>
+                    API Reference
+                </a>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="ml-64 mt-16 p-8 min-h-screen">
+<!-- Dashboard Header & Filters -->
+<div class="flex flex-col gap-6 mb-8">
+<div class="flex justify-between items-end">
+<div>
+<h1 class="text-4xl font-black font-headline tracking-tighter text-on-surface mb-1">NBA MARKET BOARD</h1>
+<p class="text-outline font-medium">Real-time terminal intelligence for point spreads and total projections.</p>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex items-center bg-surface-container-low rounded-lg p-1 border border-outline-variant/20">
+<button class="px-4 py-2 text-sm font-bold bg-surface-container-highest text-primary rounded shadow-sm">Main Lines</button>
+<button class="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-300 transition-colors">Player Props</button>
+<button class="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-300 transition-colors">Futures</button>
+</div>
+</div>
+</div>
+<!-- Date Picker / Schedule -->
+<div class="flex items-center gap-4 overflow-x-auto no-scrollbar pb-2">
+<div class="flex-shrink-0 flex items-center gap-2 px-3 py-2 bg-surface-container-highest/50 border-l-2 border-primary rounded-sm">
+<span class="material-symbols-outlined text-primary text-lg">calendar_today</span>
+<span class="font-bold text-sm tracking-tight font-headline">TODAY, NOV 14</span>
+</div>
+<div class="flex gap-2">
+<button class="px-4 py-2 bg-surface-container-low hover:bg-surface-container transition-colors rounded-sm text-sm font-medium text-slate-400">FRI 15</button>
+<button class="px-4 py-2 bg-surface-container-low hover:bg-surface-container transition-colors rounded-sm text-sm font-medium text-slate-400">SAT 16</button>
+<button class="px-4 py-2 bg-surface-container-low hover:bg-surface-container transition-colors rounded-sm text-sm font-medium text-slate-400">SUN 17</button>
+<button class="px-4 py-2 bg-surface-container-low hover:bg-surface-container transition-colors rounded-sm text-sm font-medium text-slate-400">MON 18</button>
+<button class="px-4 py-2 bg-surface-container-low hover:bg-surface-container transition-colors rounded-sm text-sm font-medium text-slate-400">TUE 19</button>
+</div>
+<div class="ml-auto flex items-center gap-4 text-xs font-mono text-outline/60">
+<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-tertiary"></span> System Optimal</span>
+<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span> Live Feeds Active</span>
+</div>
+</div>
+</div>
+<!-- Market Grid (Bento Style) -->
+<div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6">
+<!-- Game Card 1: Elite Value -->
+<div class="group relative bg-surface-container-low rounded-xl overflow-hidden transition-all duration-300 hover:bg-surface-container border-l-2 border-tertiary">
+<div class="absolute top-0 right-0 p-4">
+<div class="px-3 py-1 bg-tertiary-container text-on-tertiary-fixed rounded-full text-[10px] font-black tracking-widest uppercase flex items-center gap-1 shadow-lg shadow-tertiary/20">
+<span class="material-symbols-outlined text-xs" style="font-variation-settings: 'FILL' 1;">star</span>
+                        Elite Value
+                    </div>
+</div>
+<div class="p-6">
+<div class="flex justify-between items-start mb-6">
+<div class="space-y-4 w-full">
+<!-- Away Team -->
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-[#10131a] p-1.5 flex items-center justify-center border border-outline-variant/10">
+<img alt="Lakers" class="w-full h-full object-contain" data-alt="professional sports team logo for Los Angeles Lakers with iconic purple and gold colors on a dark background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAbC6YxJgkFN85YxpyJKRvUN5XeL25mZBIdS98dX5gfA9_gRaWdthgS04xgV8ZlEHcWpCFDBYJrlcw9grqPxdd6TdQeVVCYUVDuskYKyKtwUyiOnAQhABnNbtfPZZfSCwDkvRHoUrg5QX62lDOTvgfDkWFUl1u2SwmgZ43FNulVmhKeDlAuzQdu2OHnPnRQ4JZfVz0evEBLK23nXioBzoittXpdfE-9ChPM5dgU2CuTxsiYzWvm6n_xFIvP43BTpyLqRQsRIreJcJY"/>
+</div>
+<div>
+<h4 class="font-bold text-lg font-headline">LA LAKERS</h4>
+<p class="text-[10px] text-slate-500 font-mono tracking-tighter">7-4 • 3-2 AWAY</p>
+</div>
+</div>
+<span class="text-2xl font-black font-headline text-on-surface">104</span>
+</div>
+<!-- Home Team -->
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-[#10131a] p-1.5 flex items-center justify-center border border-outline-variant/10">
+<img alt="Celtics" class="w-full h-full object-contain" data-alt="professional sports team logo for Boston Celtics with iconic green and white colors on a dark background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCFotcD-qRJcRz3RZBNC6o60vz-E4TP3pqOQMW2DlCryjTZHZT6t6MI0SkSqYVMBBerlaAiws4RsAb-hqga30_4ea3htGTmYXRHvmhvLVUNN85AZKcqQokomCS77KPkjHenRIrzfcEWOpgc5sHuXL1P5dVPN8EittTbUD6IDxu4lVAKE14HQOfPhC6FsnACGHxM8tFfJZBANR9sA-OJjPtfnhMyvbmFS20VZj0OFKdEENUfPxmB6TVFUYA1leNU4UGV77eTAi32L28"/>
+</div>
+<div>
+<h4 class="font-bold text-lg font-headline">BOSTON CELTICS</h4>
+<p class="text-[10px] text-slate-500 font-mono tracking-tighter">9-2 • 5-0 HOME</p>
+</div>
+</div>
+<span class="text-2xl font-black font-headline text-on-surface">112</span>
+</div>
+</div>
+</div>
+<!-- Odds Grid -->
+<div class="grid grid-cols-3 gap-2 py-4 border-t border-white/5">
+<div class="text-center p-2 bg-surface-container-lowest rounded-sm">
+<p class="text-[10px] text-outline font-bold uppercase mb-1">Spread</p>
+<p class="text-sm font-black font-mono">+6.5 <span class="text-primary/60 text-[10px]">-110</span></p>
+</div>
+<div class="text-center p-2 bg-surface-container-lowest rounded-sm">
+<p class="text-[10px] text-outline font-bold uppercase mb-1">Moneyline</p>
+<p class="text-sm font-black font-mono text-primary">+210</p>
+</div>
+<div class="text-center p-2 bg-surface-container-lowest rounded-sm">
+<p class="text-[10px] text-outline font-bold uppercase mb-1">Total O/U</p>
+<p class="text-sm font-black font-mono">U 224.5 <span class="text-primary/60 text-[10px]">-105</span></p>
+</div>
+</div>
+<!-- Intelligence Footer -->
+<div class="mt-4 flex items-center justify-between">
+<div class="flex flex-col">
+<span class="text-[10px] font-bold text-outline tracking-wider uppercase">Edge Probability</span>
+<div class="flex items-end gap-1">
+<span class="text-2xl font-black font-headline text-tertiary leading-none">88.4</span>
+<span class="text-[10px] text-tertiary/60 font-bold mb-0.5">SCORE</span>
+</div>
+</div>
+<button class="bg-primary/10 hover:bg-primary text-primary hover:text-on-primary border border-primary/20 px-4 py-2 rounded-md transition-all font-bold text-xs">
+                            View Analysis
+                        </button>
+</div>
+</div>
+</div>
+<!-- Game Card 2: Strong Value -->
+<div class="group relative bg-surface-container-low rounded-xl overflow-hidden transition-all duration-300 hover:bg-surface-container border-l-2 border-primary">
+<div class="absolute top-0 right-0 p-4">
+<div class="px-3 py-1 bg-primary/20 text-primary border border-primary/30 rounded-full text-[10px] font-black tracking-widest uppercase flex items-center gap-1 shadow-lg">
+<span class="material-symbols-outlined text-xs" style="font-variation-settings: 'FILL' 1;">trending_up</span>
+                        Strong Value
+                    </div>
+</div>
+<div class="p-6">
+<div class="flex justify-between items-start mb-6">
+<div class="space-y-4 w-full">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-[#10131a] p-1.5 flex items-center justify-center border border-outline-variant/10">
+<img alt="Warriors" class="w-full h-full object-contain" data-alt="Golden State Warriors logo minimalist icon on deep dark circular background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCSKBc_3OY_FXSDxbdhm_t-KlVcxp1fhsQvzKUr6Fi2yM4bQFn_oc3MnBpxWyo88Kl_lGP3Z1cSyK3fGvjSLA2wp-8nP-MSQ8PAgDCmbsMbtSWUWnUGOY4cMatBc5VCJGyRvcrKTCZVswuUfc2AqPWq5tuEuH6jc0Au6-TaR775rYnyvqvrJkh0SziHymR7H68OJwA0uFBrUKKNs-_yZqhF_jiubqmoMSKLuo7QzvrU6Lyn-I54v1sBOogtvSuKVPoDczxARs4IRfc"/>
+</div>
+<div>
+<h4 class="font-bold text-lg font-headline uppercase">Golden State</h4>
+<p class="text-[10px] text-slate-500 font-mono tracking-tighter">8-2 • 4-1 AWAY</p>
+</div>
+</div>
+<span class="text-2xl font-black font-headline text-on-surface">--</span>
+</div>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-[#10131a] p-1.5 flex items-center justify-center border border-outline-variant/10">
+<img alt="Nuggets" class="w-full h-full object-contain" data-alt="Denver Nuggets logo sports emblem centered in a dark modern UI circle" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAZ862XLAo5k7qkBkA6ybiZo7kRsqlYyLHR870Cb3sGk-nbpoS5xowqW7UGg_WnphJrvYMhcTREJM99-GL0QHNVO1h_ndalGWV3O8WumxWr1we2Rhz-rQEaw0q4-E0-xX_ErOOhcw59aCbs3VtOXllWvxx7u1mfsVoAPP3uW0usde5GquIIaZBImD8LNLLeGeHQVv1OStS-jw00TY2IMmUy0-sCZZ63xwSqn8czHSCDFbq2VE3AbJ-D6HIZ-5PyuWrWSsRawjW9rVM"/>
+</div>
+<div>
+<h4 class="font-bold text-lg font-headline uppercase">Denver Nuggets</h4>
+<p class="text-[10px] text-slate-500 font-mono tracking-tighter">7-3 • 6-0 HOME</p>
+</div>
+</div>
+<span class="text-2xl font-black font-headline text-on-surface">--</span>
+</div>
+</div>
+</div>
+<!-- Odds Grid -->
+<div class="grid grid-cols-3 gap-2 py-4 border-t border-white/5">
+<div class="text-center p-2 bg-surface-container-lowest rounded-sm">
+<p class="text-[10px] text-outline font-bold uppercase mb-1">Spread</p>
+<p class="text-sm font-black font-mono">-4.0 <span class="text-primary/60 text-[10px]">-110</span></p>
+</div>
+<div class="text-center p-2 bg-surface-container-lowest rounded-sm">
+<p class="text-[10px] text-outline font-bold uppercase mb-1">Moneyline</p>
+<p class="text-sm font-black font-mono text-primary">-185</p>
+</div>
+<div class="text-center p-2 bg-surface-container-lowest rounded-sm">
+<p class="text-[10px] text-outline font-bold uppercase mb-1">Total O/U</p>
+<p class="text-sm font-black font-mono">O 231.5 <span class="text-primary/60 text-[10px]">-110</span></p>
+</div>
+</div>
+<!-- Intelligence Footer -->
+<div class="mt-4 flex items-center justify-between">
+<div class="flex flex-col">
+<span class="text-[10px] font-bold text-outline tracking-wider uppercase">Edge Probability</span>
+<div class="flex items-end gap-1">
+<span class="text-2xl font-black font-headline text-primary leading-none">74.2</span>
+<span class="text-[10px] text-primary/60 font-bold mb-0.5">SCORE</span>
+</div>
+</div>
+<button class="bg-primary/10 hover:bg-primary text-primary hover:text-on-primary border border-primary/20 px-4 py-2 rounded-md transition-all font-bold text-xs">
+                            View Analysis
+                        </button>
+</div>
+</div>
+</div>
+<!-- Game Card 3: Moderate Value -->
+<div class="group relative bg-surface-container-low rounded-xl overflow-hidden transition-all duration-300 hover:bg-surface-container border-l-2 border-slate-700">
+<div class="absolute top-0 right-0 p-4">
+<div class="px-3 py-1 bg-surface-container-highest text-slate-400 rounded-full text-[10px] font-black tracking-widest uppercase flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">info</span>
+                        Moderate
+                    </div>
+</div>
+<div class="p-6">
+<div class="flex justify-between items-start mb-6">
+<div class="space-y-4 w-full">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-[#10131a] p-1.5 flex items-center justify-center border border-outline-variant/10">
+<img alt="Mavericks" class="w-full h-full object-contain" data-alt="Dallas Mavericks logo with blue and silver shield aesthetic in a dark circle" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBGKt9LyXyKw3rzERpkwZapEerzMHofRn_X_beT35J2Xr-7Jetm6iMutSPjn0MneDLxAi84dVobMwqdF23YAZNLlOK82tWznjFZeL29ypJWqnc_-dzxzreHS5veSq3RzY2YRB-gvor9h5JapiredVj1pN9WvUB8DO3jZAUWvzcLVx3v3zUHN-mBxvlmT6gjkrg9iXLpBqASTy0Lt_0ZCkF4t6ZotggTlnNH94FSTyNwYSDor3-FxAiFXPHz_l-7ygWZNf06stIZX84"/>
+</div>
+<div>
+<h4 class="font-bold text-lg font-headline uppercase">Dallas Mavs</h4>
+<p class="text-[10px] text-slate-500 font-mono tracking-tighter">6-5 • 2-3 AWAY</p>
+</div>
+</div>
+<span class="text-2xl font-black font-headline text-on-surface">--</span>
+</div>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-[#10131a] p-1.5 flex items-center justify-center border border-outline-variant/10">
+<img alt="Suns" class="w-full h-full object-contain" data-alt="Phoenix Suns basketball logo with orange sunburst on a modern dark interface element" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAK4LnBiJKKI__4u1mZNOWoLJiMZOHRRSvSGfolL_Gk6l80jfYuO7uMUfCzX1zJtuw5CULJq_Ks24WdG0o0w1g6bGyvW2lvBPLSfOyc6khBGL2ApiqghrC6_HBrjRz-bbgy9AeVC7mLXsa9VKIRQGFHYDbtsEpXLg5agRFvYHPnPUgxbsHDmee0yJPx496RvQyjpppYTZYaUc7aV3g_i_DxsLydGqgTri4f3GL5ArJYPF7_M8lMp4zWkonau-Atsm1ZuAtHfjMddc8"/>
+</div>
+<div>
+<h4 class="font-bold text-lg font-headline uppercase">Phoenix Suns</h4>
+<p class="text-[10px] text-slate-500 font-mono tracking-tighter">8-3 • 4-1 HOME</p>
+</div>
+</div>
+<span class="text-2xl font-black font-headline text-on-surface">--</span>
+</div>
+</div>
+</div>
+<!-- Odds Grid -->
+<div class="grid grid-cols-3 gap-2 py-4 border-t border-white/5">
+<div class="text-center p-2 bg-surface-container-lowest rounded-sm">
+<p class="text-[10px] text-outline font-bold uppercase mb-1">Spread</p>
+<p class="text-sm font-black font-mono">-1.5 <span class="text-primary/60 text-[10px]">-115</span></p>
+</div>
+<div class="text-center p-2 bg-surface-container-lowest rounded-sm">
+<p class="text-[10px] text-outline font-bold uppercase mb-1">Moneyline</p>
+<p class="text-sm font-black font-mono text-primary">-120</p>
+</div>
+<div class="text-center p-2 bg-surface-container-lowest rounded-sm">
+<p class="text-[10px] text-outline font-bold uppercase mb-1">Total O/U</p>
+<p class="text-sm font-black font-mono">O 229.0 <span class="text-primary/60 text-[10px]">-110</span></p>
+</div>
+</div>
+<!-- Intelligence Footer -->
+<div class="mt-4 flex items-center justify-between">
+<div class="flex flex-col">
+<span class="text-[10px] font-bold text-outline tracking-wider uppercase">Edge Probability</span>
+<div class="flex items-end gap-1">
+<span class="text-2xl font-black font-headline text-slate-400 leading-none">62.1</span>
+<span class="text-[10px] text-slate-500 font-bold mb-0.5">SCORE</span>
+</div>
+</div>
+<button class="bg-surface-container-highest hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-md transition-all font-bold text-xs">
+                            View Analysis
+                        </button>
+</div>
+</div>
+</div>
+<!-- More game cards would follow here... -->
+</div>
+<!-- Sidebar / Secondary Data (Asymmetric Layout) -->
+<div class="mt-12 grid grid-cols-1 lg:grid-cols-12 gap-8">
+<div class="lg:col-span-8">
+<div class="glass-panel p-6 rounded-xl border border-primary/10">
+<h3 class="text-xl font-bold font-headline mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">auto_graph</span>
+                        PROJECTION ENGINE TRENDS
+                    </h3>
+<div class="space-y-4">
+<div class="flex items-center justify-between p-4 bg-surface-container-lowest rounded-sm border-l-2 border-primary">
+<div>
+<h5 class="font-bold text-sm tracking-tight">Sharp Money Flow: Celtics Spread</h5>
+<p class="text-xs text-outline">High volume detected in last 30 mins from institutional accounts.</p>
+</div>
+<div class="text-right">
+<span class="text-tertiary font-bold font-mono">+12.5%</span>
+<p class="text-[10px] text-outline uppercase font-bold tracking-tighter">Volume Delta</p>
+</div>
+</div>
+<div class="flex items-center justify-between p-4 bg-surface-container-lowest rounded-sm border-l-2 border-outline-variant">
+<div>
+<h5 class="font-bold text-sm tracking-tight">Weather Impact: None (Indoor)</h5>
+<p class="text-xs text-outline">Climate controlled stadiums. Zero atmospheric variance detected.</p>
+</div>
+<div class="text-right">
+<span class="text-slate-400 font-bold font-mono">0.0%</span>
+<p class="text-[10px] text-outline uppercase font-bold tracking-tighter">Variance</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="lg:col-span-4">
+<div class="bg-surface-container-high p-6 rounded-xl relative overflow-hidden">
+<div class="absolute -right-4 -top-4 w-24 h-24 bg-primary/10 blur-3xl rounded-full"></div>
+<h3 class="text-lg font-bold font-headline mb-6">AI BET CALCULATOR</h3>
+<div class="space-y-4">
+<div>
+<label class="block text-[10px] font-bold text-outline uppercase tracking-widest mb-2">Stake Amount</label>
+<div class="flex items-center bg-surface-container-lowest p-3 rounded border border-outline-variant/20 focus-within:border-primary transition-all">
+<span class="text-primary font-bold mr-2">$</span>
+<input class="bg-transparent border-none p-0 text-xl font-black font-mono focus:ring-0 w-full" type="number" value="100"/>
+</div>
+</div>
+<div class="p-4 bg-surface-container-lowest/50 rounded-lg border border-primary/5">
+<div class="flex justify-between mb-2">
+<span class="text-xs text-outline">Est. Potential Return</span>
+<span class="text-sm font-bold text-tertiary font-mono">$210.00</span>
+</div>
+<div class="flex justify-between">
+<span class="text-xs text-outline">Edge Adjusted Yield</span>
+<span class="text-sm font-bold text-primary font-mono">+14.2%</span>
+</div>
+</div>
+<button class="w-full bg-gradient-to-r from-primary to-primary-container text-on-primary py-3 rounded font-black tracking-widest uppercase text-sm shadow-xl shadow-primary/20 hover:brightness-110 transition-all">
+                            Review Prediction
+                        </button>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Floating Action Button (FAB) -->
+<div class="fixed bottom-8 right-8 z-50">
+<button class="w-16 h-16 bg-primary rounded-full shadow-[0px_12px_32px_rgba(0,0,0,0.6)] flex items-center justify-center text-on-primary group hover:scale-110 transition-transform active:scale-95">
+<span class="material-symbols-outlined text-3xl" style="font-variation-settings: 'FILL' 1;">add</span>
+<span class="absolute right-20 bg-surface-container-high text-on-surface px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">Create Custom Ticket</span>
+</button>
+</div>
+</body></html>

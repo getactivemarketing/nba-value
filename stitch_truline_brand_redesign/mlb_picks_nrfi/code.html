@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TruLine MLB Picks | The Precision Terminal</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-surface-variant": "#bbc9cf",
+                        "on-error-container": "#ffdad6",
+                        "secondary-fixed": "#d3e4fe",
+                        "on-tertiary": "#003919",
+                        "primary-container": "#00d1ff",
+                        "on-tertiary-fixed-variant": "#005227",
+                        "on-secondary-container": "#a9bad3",
+                        "inverse-primary": "#00677f",
+                        "surface-container-high": "#272a31",
+                        "inverse-on-surface": "#2e3037",
+                        "tertiary": "#66f796",
+                        "primary-fixed-dim": "#4cd6ff",
+                        "on-secondary-fixed-variant": "#38485d",
+                        "surface-container": "#1d2026",
+                        "on-surface": "#e1e2eb",
+                        "on-primary": "#003543",
+                        "background": "#10131a",
+                        "error-container": "#93000a",
+                        "secondary": "#b7c8e1",
+                        "secondary-container": "#3a4a5f",
+                        "on-primary-container": "#00566a",
+                        "on-error": "#690005",
+                        "primary-fixed": "#b7eaff",
+                        "on-tertiary-container": "#005b2c",
+                        "surface-container-lowest": "#0b0e14",
+                        "on-primary-fixed-variant": "#004e60",
+                        "on-primary-fixed": "#001f28",
+                        "on-secondary": "#213145",
+                        "on-tertiary-fixed": "#00210c",
+                        "outline": "#859399",
+                        "primary": "#a4e6ff",
+                        "surface-tint": "#4cd6ff",
+                        "surface": "#10131a",
+                        "inverse-surface": "#e1e2eb",
+                        "tertiary-container": "#45da7d",
+                        "surface-dim": "#10131a",
+                        "secondary-fixed-dim": "#b7c8e1",
+                        "surface-bright": "#363940",
+                        "surface-container-low": "#191c22",
+                        "tertiary-fixed": "#6dfe9c",
+                        "error": "#ffb4ab",
+                        "outline-variant": "#3c494e",
+                        "on-background": "#e1e2eb",
+                        "on-secondary-fixed": "#0b1c30",
+                        "tertiary-fixed-dim": "#4de082",
+                        "surface-variant": "#32353c",
+                        "surface-container-highest": "#32353c"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "fontFamily": {
+                        "headline": ["Space Grotesk"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            background-color: #10131a;
+            font-family: 'Inter', sans-serif;
+        }
+        .glass-panel {
+            background: rgba(31, 35, 42, 0.6);
+            backdrop-filter: blur(20px);
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .data-hero {
+            font-family: 'Space Grotesk', sans-serif;
+            letter-spacing: -0.05em;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="text-on-surface select-none">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-4 h-14 bg-[#10131a] dark:bg-[#10131a] border-b border-[#1d2026]">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#a4e6ff]" data-icon="terminal">terminal</span>
+<h1 class="text-[#a4e6ff] font-['Space_Grotesk'] font-extrabold italic tracking-tighter text-lg">TruLine</h1>
+</div>
+<div class="flex items-center gap-2">
+<div class="bg-surface-container px-3 py-1.5 rounded-sm flex items-center gap-2 text-xs font-semibold hover:bg-[#1d2026] transition-colors active:scale-95 duration-100 cursor-pointer">
+<span class="material-symbols-outlined text-sm text-primary" data-icon="calendar_today">calendar_today</span>
+<span class="font-body uppercase tracking-wider">OCT 24</span>
+</div>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="pt-20 pb-28 px-4 max-w-md mx-auto space-y-6">
+<!-- Header Section -->
+<section class="space-y-1">
+<h2 class="text-on-surface-variant font-label text-[10px] uppercase tracking-[0.2em] font-bold">Market Intelligence</h2>
+<div class="flex justify-between items-end">
+<h3 class="text-2xl font-headline font-bold leading-none">MLB Board</h3>
+<span class="text-tertiary font-label text-xs flex items-center gap-1">
+<span class="material-symbols-outlined text-xs" data-icon="sensors">sensors</span>
+                    LIVE EDGE DATA
+                </span>
+</div>
+</section>
+<!-- Game Card 1: Yankees vs Red Sox -->
+<div class="relative bg-surface-container-low rounded-xl overflow-hidden border-l-2 border-primary group">
+<!-- Header: Matchup & Value Score -->
+<div class="p-4 bg-surface-container-highest/30 flex justify-between items-start">
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="text-on-surface-variant text-[10px] font-bold tracking-widest uppercase">AL EAST • 19:05 ET</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="text-lg font-headline font-bold tracking-tight">NYY</span>
+<span class="text-outline text-xs">@</span>
+<span class="text-lg font-headline font-bold tracking-tight">BOS</span>
+</div>
+</div>
+<!-- Value Score Badge -->
+<div class="bg-tertiary-container/20 px-3 py-1.5 rounded-full flex flex-col items-end">
+<span class="text-[10px] font-bold text-tertiary uppercase leading-none mb-0.5">Edge Score</span>
+<span class="text-lg font-headline font-extrabold text-tertiary leading-none tracking-tighter">84.2</span>
+</div>
+</div>
+<!-- Pitcher Matchup Grid -->
+<div class="px-4 py-3 grid grid-cols-2 gap-4 bg-surface-container-lowest/40">
+<div class="space-y-1">
+<div class="flex items-center gap-2">
+<img alt="Pitcher Avatar" class="w-6 h-6 rounded-full bg-surface-variant" data-alt="close-up portrait of a professional baseball pitcher in a pinstripe jersey looking focused" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAGvl0GMR8u8No4oKwSA2NYOPfUke5YWIwq4WdF5v9XgW8XKsMFJMhEPC580Vm5D1GG2vkW8aZ5cgANV7gvn8wXSi9bukkgI3CdJdd_Gld6v-wrR5MRBc4AeVZ5ezOVuN_FMumN5kGAOZYNEAeDjf1CLEHqgoU7jIxL_zXO3aRK030DGDS2k9QjzMSfPQcoowNrREWFUmF5JpWRGk8ttPTbj6MVbKpdu-ym3XDZcLQJp4B-v2WK2ZpEMhtjvSODuViO2ksRuTsJzqE"/>
+<span class="text-xs font-semibold text-on-surface">G. Cole</span>
+</div>
+<div class="flex flex-col">
+<span class="text-[10px] text-on-surface-variant uppercase font-medium">ERA / WHIP</span>
+<span class="text-sm font-bold text-primary tabular-nums">2.63 / 0.98</span>
+</div>
+</div>
+<div class="space-y-1 text-right">
+<div class="flex items-center justify-end gap-2">
+<span class="text-xs font-semibold text-on-surface">T. Houck</span>
+<img alt="Pitcher Avatar" class="w-6 h-6 rounded-full bg-surface-variant" data-alt="professional athlete headshot of a pitcher in a red jersey with a serious expression" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAcwIQ7ww361jJV253dknfQNcqp-IDv8n_0yyGYTr77zELctmICj8ZgZ7t9KPfM9fd41yS2oR-cCJ5CY1tkbfSocRwJrrH_tAPQiKm4VJ1rvM0eGpWLKfb1bTaEp0VzSm3B3PteSLcT52fYnyv4-lrQ8kdy1N58sJafGnTt5AXPqGTCkK7BMfY5xuaO0AE7h0KmiBgt2FvMPJCiBrmpFX_WDdesUUFeL9sjdPN0Qa_bNejXPRxuoVFfhv7VRVAuOajhc0lErYtPwkE"/>
+</div>
+<div class="flex flex-col">
+<span class="text-[10px] text-on-surface-variant uppercase font-medium">ERA / WHIP</span>
+<span class="text-sm font-bold text-primary tabular-nums">3.12 / 1.15</span>
+</div>
+</div>
+</div>
+<!-- Environmental Factors -->
+<div class="px-4 py-3 flex items-center justify-between border-y border-white/5 bg-surface-container-low">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-sm text-outline" data-icon="cloud">cloud</span>
+<span class="text-[10px] text-on-surface-variant font-medium uppercase tracking-tighter">68°F • Wind 10mph OUT</span>
+</div>
+<div class="flex items-center gap-1.5 px-2 py-0.5 bg-surface-container rounded-sm border border-outline-variant/15">
+<span class="material-symbols-outlined text-[14px] text-primary" data-icon="stadium">stadium</span>
+<span class="text-[10px] font-bold text-primary">PF: 104</span>
+</div>
+</div>
+<!-- NRFI Tag -->
+<div class="flex items-center gap-1.5 px-2 py-1 bg-surface-container-highest rounded text-[10px] font-bold border border-primary/20">
+<span class="text-on-surface-variant">NRFI:</span>
+<span class="text-primary uppercase">HIGH PROB</span>
+</div>
+</div>
+<!-- Prediction & Probability -->
+<div class="p-4 space-y-3">
+<div class="flex justify-between items-center">
+<span class="text-[10px] text-on-surface-variant font-bold uppercase tracking-widest">Win Probability</span>
+<div class="flex gap-4">
+<span class="text-xs font-bold text-primary">NYY -142</span>
+<span class="text-xs font-bold text-on-surface">BOS +120</span>
+</div>
+</div>
+<!-- Prob Bar -->
+<div class="h-1.5 w-full bg-surface-container-highest rounded-full overflow-hidden flex">
+<div class="h-full bg-primary" style="width: 58%"></div>
+<div class="h-full bg-surface-variant" style="width: 42%"></div>
+</div>
+<div class="flex justify-between text-[10px] font-bold text-on-surface-variant">
+<span>58% NYY</span>
+<span>42% BOS</span>
+</div>
+</div>
+</div>
+<!-- Game Card 2: Dodgers vs Padres -->
+<div class="relative bg-surface-container-low rounded-xl overflow-hidden border-l-2 border-tertiary">
+<div class="p-4 bg-surface-container-highest/30 flex justify-between items-start">
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="text-on-surface-variant text-[10px] font-bold tracking-widest uppercase">NL WEST • 21:40 ET</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="text-lg font-headline font-bold tracking-tight">LAD</span>
+<span class="text-outline text-xs">@</span>
+<span class="text-lg font-headline font-bold tracking-tight">SDP</span>
+</div>
+</div>
+<div class="bg-tertiary-container/10 px-3 py-1.5 rounded-full flex flex-col items-end border border-tertiary/20">
+<span class="text-[10px] font-bold text-tertiary uppercase leading-none mb-0.5">Edge Score</span>
+<span class="text-lg font-headline font-extrabold text-tertiary leading-none tracking-tighter">76.8</span>
+</div>
+</div>
+<div class="px-4 py-3 grid grid-cols-2 gap-4 bg-surface-container-lowest/40">
+<div class="space-y-1">
+<div class="flex items-center gap-2">
+<img alt="Pitcher Avatar" class="w-6 h-6 rounded-full bg-surface-variant" data-alt="professional baseball pitcher in white uniform looking down the line" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBP9oyw8HLJ3I2R-qA9e3sulXp7o-A_YOiVbIcHGq4uQzKKZJVNzr9xZ3Qjt6uWRaUEFRCuIbeblo__MUcsUX0ddpxnBlfCItdQ2tm3cf1NPmjTITFf1XUSpXuUEnU9vkvBbffEDYLMM3OpHtrvh3tRzSBWQiyVaAe-goZsMPui-EOn3wvA6z_NtkcHEgYCiDNkk0lM2gQtl6wRMNCajdpwVr-iB-0KE3KvlglABq87xKQmrlOuW_oOMri_zGebYHTMxxk-Squ_XUQ"/>
+<span class="text-xs font-semibold text-on-surface">Y. Yamamoto</span>
+</div>
+<div class="flex flex-col">
+<span class="text-[10px] text-on-surface-variant uppercase font-medium">ERA / WHIP</span>
+<span class="text-sm font-bold text-tertiary tabular-nums">2.91 / 1.06</span>
+</div>
+</div>
+<div class="space-y-1 text-right">
+<div class="flex items-center justify-end gap-2">
+<span class="text-xs font-semibold text-on-surface">M. King</span>
+<img alt="Pitcher Avatar" class="w-6 h-6 rounded-full bg-surface-variant" data-alt="close-up of baseball pitcher in navy blue gear focusing on the pitch" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDLgk8cvQXQ-MVZX-pWmqUhpUwVNx8f9MNAyMrpypPta-XUe0ZgxEVQ2uoO3weFA7DlY04ztt50cXh1xOEIpQGU55dGjo4e5JtzEdv3uxuqHi_UoscIpa9JszlFkJoc7RPAiDolfn8xLm2sgny5OvpPGADE9aY-5ikn4koagWc7BXeyhT0jM_YYIrNB8ckP7eIfbLlNOeHzQneR537HdgcWnKBvS2FdI7eMK_QkOU5vybMvW0xR2fjAMxuNBnlr6lNQhOdE0b4kzGM"/>
+</div>
+<div class="flex flex-col">
+<span class="text-[10px] text-on-surface-variant uppercase font-medium">ERA / WHIP</span>
+<span class="text-sm font-bold text-tertiary tabular-nums">3.34 / 1.19</span>
+</div>
+</div>
+</div>
+<div class="px-4 py-3 flex items-center justify-between border-y border-white/5 bg-surface-container-low">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-sm text-outline" data-icon="sunny">sunny</span>
+<span class="text-[10px] text-on-surface-variant font-medium uppercase tracking-tighter">72°F • Wind 4mph IN</span>
+</div>
+<div class="flex items-center gap-1.5 px-2 py-0.5 bg-surface-container rounded-sm border border-outline-variant/15">
+<span class="material-symbols-outlined text-[14px] text-tertiary" data-icon="stadium">stadium</span>
+<span class="text-[10px] font-bold text-tertiary">PF: 92</span>
+</div>
+</div>
+<div class="flex items-center gap-1.5 px-2 py-1 bg-tertiary/10 rounded text-[10px] font-bold border border-tertiary/30">
+<span class="text-on-surface-variant">NRFI:</span>
+<span class="text-tertiary uppercase">YES (+115)</span>
+</div>
+</div>
+<div class="p-4 space-y-3">
+<div class="flex justify-between items-center">
+<span class="text-[10px] text-on-surface-variant font-bold uppercase tracking-widest">Win Probability</span>
+<div class="flex gap-4">
+<span class="text-xs font-bold text-tertiary">LAD -115</span>
+<span class="text-xs font-bold text-on-surface">SDP +105</span>
+</div>
+</div>
+<div class="h-1.5 w-full bg-surface-container-highest rounded-full overflow-hidden flex">
+<div class="h-full bg-tertiary" style="width: 52%"></div>
+<div class="h-full bg-surface-variant" style="width: 48%"></div>
+</div>
+<div class="flex justify-between text-[10px] font-bold text-on-surface-variant">
+<span>52% LAD</span>
+<span>48% SDP</span>
+</div>
+</div>
+</div>
+<!-- Featured Analysis Card (Asymmetric Bento) -->
+<div class="glass-panel rounded-xl p-4 border border-white/5 shadow-xl relative overflow-hidden">
+<div class="absolute -top-10 -right-10 w-24 h-24 bg-primary/10 blur-[40px]"></div>
+<div class="flex items-center gap-2 mb-4">
+<span class="material-symbols-outlined text-primary" data-icon="analytics">analytics</span>
+<span class="text-[10px] font-bold uppercase tracking-[0.2em] text-primary">Pitching Deep Dive</span>
+</div>
+<h4 class="text-lg font-headline font-bold mb-2">The "K-Rate" Surge</h4>
+<p class="text-xs text-on-surface-variant leading-relaxed mb-4">
+                Cole has seen a <span class="text-tertiary font-bold">+12%</span> increase in whiff rate on his 4-seam fastball over his last 3 starts at Fenway. Correlation with park dimensions suggests high NRFI value.
+            </p>
+<div class="flex gap-2">
+<div class="bg-surface-container px-3 py-2 rounded-sm border-b-2 border-primary">
+<div class="text-[9px] text-on-surface-variant font-bold uppercase">Whiff %</div>
+<div class="text-sm font-headline font-bold text-primary">32.4</div>
+</div>
+<div class="bg-surface-container px-3 py-2 rounded-sm border-b-2 border-tertiary">
+<div class="text-[9px] text-on-surface-variant font-bold uppercase">Exit Vel</div>
+<div class="text-sm font-headline font-bold text-tertiary">86.2</div>
+</div>
+</div>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 w-full z-50 flex justify-around items-center px-2 pb-6 pt-2 bg-[#10131a]/90 backdrop-blur-xl border-t border-white/5 shadow-[0_-12px_32px_rgba(0,0,0,0.4)]">
+<a class="flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined mb-1" data-icon="leaderboard">leaderboard</span>
+<span class="font-['Inter'] text-[10px] font-semibold uppercase tracking-widest">Board</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#a4e6ff] bg-[#1d2026] rounded-xl px-4 py-2 transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined mb-1" data-icon="sports_baseball" style="font-variation-settings: 'FILL' 1;">sports_baseball</span>
+<span class="font-['Inter'] text-[10px] font-semibold uppercase tracking-widest">MLB</span>
+</a>
+<a class="flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined mb-1" data-icon="analytics">analytics</span>
+<span class="font-['Inter'] text-[10px] font-semibold uppercase tracking-widest">Eval</span>
+</a>
+<a class="flex flex-col items-center justify-center text-slate-500 hover:text-slate-300 transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined mb-1" data-icon="trending_up">trending_up</span>
+<span class="font-['Inter'] text-[10px] font-semibold uppercase tracking-widest">Trends</span>
+</a>
+</nav>
+<!-- FAB (Suppressed based on logic for details, but shown for Home/MLB Board) -->
+<button class="fixed right-6 bottom-24 bg-gradient-to-br from-primary to-primary-container text-on-primary w-14 h-14 rounded-full shadow-2xl flex items-center justify-center active:scale-90 transition-transform z-40">
+<span class="material-symbols-outlined text-2xl" data-icon="add_chart" style="font-variation-settings: 'FILL' 1;">add_chart</span>
+</button>
+</body></html>
