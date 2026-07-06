@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     # model with >=53% WR and positive cumulative units.
     totals_in_best_bet: bool = False
 
+    # Path to the MLB totals model. Point at mlb_totals_v2.joblib once the
+    # retrained model passes holdout eval (see retrain_mlb_totals task).
+    # Missing file -> scorer falls back to v1, then to the heuristic.
+    mlb_totals_model_path: str = "models/mlb_totals_v1.joblib"
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
