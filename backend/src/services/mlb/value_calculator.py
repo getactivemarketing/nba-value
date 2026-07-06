@@ -222,6 +222,24 @@ class MLBValueCalculator:
         return max(value_bets, key=lambda v: v.sort_score)
 
     @classmethod
+    def find_best_bet(
+        cls,
+        values: list[MLBValueResult],
+        include_totals: bool = False,
+    ) -> MLBValueResult | None:
+        """
+        Find the overall best bet across markets.
+
+        Totals are excluded unless include_totals — they ran -29u / 48.7%
+        as best bets over Apr-Jul 2026. best_total is still tracked
+        separately as the shadow record for the retrained model
+        (re-entry gate: >=100 graded picks, >=53% WR, positive units).
+        """
+        if not include_totals:
+            values = [v for v in values if v.market_type != "total"]
+        return cls.find_best_value(values)
+
+    @classmethod
     def get_recommendation(cls, value: MLBValueResult) -> str:
         """
         Get a text recommendation for a value bet.

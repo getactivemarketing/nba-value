@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     # Set to False when a proper totals model is trained
     suppress_totals: bool = True
 
+    # Allow totals (over/under) to be chosen as the overall best_bet.
+    # Independent of suppress_totals (which stops totals being scored at all).
+    # Totals as best bets ran -29u / 48.7% Apr-Jul 2026. Flip to True only via
+    # the re-entry gate: >=100 graded best_total picks under the retrained
+    # model with >=53% WR and positive cumulative units.
+    totals_in_best_bet: bool = False
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"

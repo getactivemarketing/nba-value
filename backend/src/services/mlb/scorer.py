@@ -485,7 +485,9 @@ class MLBScorer:
                     prediction.best_total = MLBValueCalculator.find_best_value(total_values)
 
         # Find overall best bet
-        prediction.best_bet = MLBValueCalculator.find_best_value(all_values)
+        prediction.best_bet = MLBValueCalculator.find_best_bet(
+            all_values, include_totals=settings.totals_in_best_bet
+        )
 
     async def score_games(
         self,

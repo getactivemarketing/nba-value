@@ -109,3 +109,25 @@ class TestSortScore:
         ok = calc(model_prob=0.61, market_prob=0.50)
         best = MLBValueCalculator.find_best_value([blowup, ok])
         assert best is ok
+
+
+class TestFindBestBet:
+    def _candidates(self):
+        rl = calc(market_type="runline", model_prob=0.62, market_prob=0.50)    # edge_pct 24
+        ml = calc(market_type="moneyline", model_prob=0.61, market_prob=0.50)  # edge_pct 22
+        total = calc(market_type="total", model_prob=0.70, market_prob=0.50)   # edge_pct 40 (highest)
+        return rl, ml, total
+
+    def test_totals_excluded_by_default(self):
+        rl, ml, total = self._candidates()
+        best = MLBValueCalculator.find_best_bet([ml, rl, total])
+        assert best is rl  # highest non-total sort_score
+
+    def test_totals_included_when_flagged(self):
+        rl, ml, total = self._candidates()
+        best = MLBValueCalculator.find_best_bet([ml, rl, total], include_totals=True)
+        assert best is total
+
+    def test_returns_none_when_only_totals_qualify(self):
+        total = calc(market_type="total", model_prob=0.70, market_prob=0.50)
+        assert MLBValueCalculator.find_best_bet([total]) is None
