@@ -139,6 +139,15 @@ python3 -m src.tasks.prediction_tracker summary 7
 - Derive `home_spread` from `best_bet_line` and `best_bet_team` (if away bet, negate the line)
 - Use `prediction_snapshots.best_total_line` for total line
 
+## Recent Fixes & Changes (continued)
+
+- **2026-03-12**: Fixed systematic 0% value score on home teams:
+  - **Root cause**: Model was overconfident on away sides — every market hit the ±6% edge cap (+6% away, -6% home). The model's MOV prediction disagreed with the market by >6% on every game, always in the same direction.
+  - **Fix 1**: Increased `market_regression_weight` from 0.50 → 0.70 in `scorer.py`. Now 70% market / 30% model, reducing systematic overconfidence.
+  - **Fix 2**: Added market regression for moneyline markets (previously only spread had regression). Derives market-implied MOV from devigged odds via inverse CDF (`norm.ppf`).
+  - **Fix 3**: Frontend `GameCard.tsx` now hides 0% value badges and shows "No value" text instead.
+  - **Fix 4**: Added model status logging on `ScoringService` init to verify trained vs baseline models in Railway logs.
+
 ## Future Improvements (Potential)
 
 - Fix `odds_snapshots` population for proper line movement tracking
@@ -146,3 +155,4 @@ python3 -m src.tasks.prediction_tracker summary 7
 - Add player prop betting
 - Build alert system for high-value opportunities
 - Add backtesting framework for model iterations
+- Investigate if spread_model_v2 is loading on Railway or falling back to baseline (check logs for "ScoringService initialized" entry)

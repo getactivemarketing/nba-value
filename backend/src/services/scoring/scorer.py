@@ -1,10 +1,11 @@
 """Main scoring service that integrates MOV model, calibration, and Value Score algorithms."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dc_replace
 from decimal import Decimal
 from datetime import datetime, timezone
 
 import structlog
+from scipy.stats import norm
 
 from src.services.ml.mov_model import MOVModel, MOVPrediction
 from src.services.ml.calibration import CalibrationLayer
@@ -113,7 +114,7 @@ class ScoringService:
         mov_model=None,  # MOVModel or RidgeMOVModel
         calibration_layer: CalibrationLayer | None = None,
         spread_model_v2: SpreadModelV2 | None = None,
-        market_regression_weight: float = 0.50,  # How much to weight market vs model
+        market_regression_weight: float = 0.70,  # How much to weight market vs model
     ):
         """
         Initialize scoring service.
@@ -123,12 +124,23 @@ class ScoringService:
             calibration_layer: Calibration layer (uses identity if None)
             spread_model_v2: Spread model v2 with ATS features (uses baseline if None)
             market_regression_weight: Weight for market-implied MOV (0.0 = pure model, 1.0 = pure market)
-                                     Default 0.50 means 50% model, 50% market (balanced)
+                                     Default 0.70 means 30% model, 70% market
+                                     Higher weight reduces systematic model bias (model was
+                                     overconfident on away sides, hitting 6% edge cap on every game)
         """
         self.mov_model = mov_model if mov_model is not None else MOVModel()
         self.calibration = calibration_layer or CalibrationLayer()
         self.spread_model_v2 = spread_model_v2
         self.market_regression_weight = market_regression_weight
+
+        # Log model status on init
+        logger.info(
+            "ScoringService initialized",
+            mov_model_trained=getattr(self.mov_model, 'is_trained', False),
+            spread_v2_available=spread_model_v2 is not None,
+            spread_v2_trained=getattr(spread_model_v2, 'is_trained', False) if spread_model_v2 else False,
+            market_regression_weight=market_regression_weight,
+        )
 
     def score_market(self, input_data: ScoringInput) -> ScoringResult:
         """
@@ -172,9 +184,37 @@ class ScoringService:
         else:
             mov_pred = self.mov_model.predict(features)
 
-        # Step 1b: Apply market regression for spread bets
+        # Step 1b: Apply market regression for spread and moneyline bets
         # This blends our model's MOV with the market-implied MOV to reduce overconfidence
         # Market implied MOV from spread: if home is +9.5 underdog, market implies home MOV = -9.5
+        # For moneyline: derive market-implied MOV from devigged odds
+        if input_data.market_type == "moneyline":
+            # Derive market-implied MOV from odds
+            p_market_ml, _ = devig_two_way_odds(
+                input_data.odds_decimal,
+                input_data.opposite_odds,
+            )
+            is_home_ml = "home" in input_data.outcome_label.lower()
+            # p_market_ml is the probability for this outcome
+            # Convert to home win probability, then to MOV
+            home_win_prob = p_market_ml if is_home_ml else (1 - p_market_ml)
+            # Inverse of CDF: MOV = std * Z where Z = norm.ppf(home_win_prob)
+            if 0.01 < home_win_prob < 0.99:
+                market_implied_mov = mov_pred.mov_std * float(norm.ppf(home_win_prob))
+                original_mov = mov_pred.predicted_mov
+                blended_mov = (
+                    (1 - self.market_regression_weight) * mov_pred.predicted_mov +
+                    self.market_regression_weight * market_implied_mov
+                )
+                mov_pred = dc_replace(mov_pred, predicted_mov=blended_mov)
+                logger.debug(
+                    "Applied ML market regression",
+                    original_mov=original_mov,
+                    market_implied_mov=market_implied_mov,
+                    blended_mov=blended_mov,
+                    weight=self.market_regression_weight,
+                )
+
         if input_data.market_type == "spread" and input_data.line is not None:
             # Get market-implied MOV from the home perspective
             # home_spread line: positive = home is underdog, market thinks home loses by that much
@@ -193,8 +233,7 @@ class ScoringService:
             )
 
             # Create adjusted MOV prediction
-            from dataclasses import replace
-            mov_pred = replace(mov_pred, predicted_mov=blended_mov)
+            mov_pred = dc_replace(mov_pred, predicted_mov=blended_mov)
 
             logger.debug(
                 "Applied market regression",
