@@ -1,5 +1,6 @@
 """Value score calculation for MLB betting markets."""
 
+import math
 import structlog
 from dataclasses import dataclass
 from typing import Literal
@@ -35,6 +36,10 @@ class MLBValueResult:
     # Is this a recommended bet?
     is_value_bet: bool
 
+    # Unclamped selection metric: edge_pct * confidence * market multipliers.
+    # Used to rank candidates; value_score is display-only.
+    sort_score: float = 0.0
+
 
 class MLBValueCalculator:
     """
@@ -54,9 +59,16 @@ class MLBValueCalculator:
     """
 
     # Minimum edge required to consider a bet.
-    # Tightened from 0.02 → 0.10 on 2026-04-28 after backtest showed bets with
+    # Tightened from 0.02 -> 0.10 on 2026-04-28 after backtest showed bets with
     # raw_edge < 0.10 had a 20% win rate over 15 graded bets.
+    # 2026-07-06: stays 0.10 — the 0.10-0.15 bucket is the best performer
+    # since May 23 (56.9% WR, +17.9u over 72 bets). Do not raise.
     MIN_EDGE = 0.10
+
+    # Sanity cap on edge_pct. Real sports-betting edges rarely exceed ~20%;
+    # anything above 80% means the model is wildly miscalibrated for that
+    # game ("model blowup") — skip the bet.
+    MAX_EDGE_PCT = 80.0
 
     # Maximum decimal odds for a runline pick. Backtest (Apr 3-27) showed RL bets
     # with odds in 2.5-3.0 had 40% win rate over 35 bets (-2.5u). Filter applied
@@ -67,8 +79,18 @@ class MLBValueCalculator:
     STRONG_VALUE_THRESHOLD = 65
     MODERATE_VALUE_THRESHOLD = 55
 
-    # Edge to value score scaling
-    EDGE_SCALE_FACTOR = 400  # Multiply edge_pct to get base score
+    # Gate scale: the pre-2026-07-06 score formula (edge_pct * 4.0 * multipliers,
+    # clamped) is kept verbatim as the QUALIFICATION gate so the proven +160u
+    # season pick set is preserved exactly. (Was a dead `= 400` constant; the
+    # formula hardcoded 4.0.)
+    EDGE_SCALE_FACTOR = 4.0
+
+    # Display score: market-regress the edge 50% toward the market, then
+    # compress with tanh so scores spread 30-97 instead of piling up at 100
+    # (65% of picks scored exactly 100 before this change). Display only —
+    # selection uses sort_score, qualification uses the legacy gate.
+    MARKET_REGRESSION_WEIGHT = 0.50
+    DISPLAY_TANH_SCALE = 20.0
 
     @classmethod
     def calculate_value(
@@ -107,29 +129,41 @@ class MLBValueCalculator:
         else:
             edge_pct = 0.0
 
-        # Base value score from edge
-        # 5% edge = 20 points, 10% edge = 40 points, 15% edge = 60 points
-        base_score = edge_pct * 4.0
-
         # Confidence multiplier (0.8 - 1.2)
         confidence_multiplier = 0.8 + (model_confidence * 0.4)
 
-        # Market type adjustment
-        # Moneylines have slightly higher variance, so reduce score
+        # Market type adjustment. 0.95/0.90 retained; an 0.80 ML penalty was
+        # backtested 2026-07-06 and REJECTED (-8u vs 0.95 on 586 picks).
         market_multiplier = 1.0
         if market_type == "moneyline":
             market_multiplier = 0.95
         elif market_type == "total":
-            market_multiplier = 0.90  # Totals are harder to predict
+            market_multiplier = 0.90
 
-        # Calculate final value score
-        value_score = base_score * confidence_multiplier * market_multiplier
-
-        # Add bonus for strong favorites with edge (less variance)
+        # --- Qualification gate: legacy formula, kept verbatim -------------
+        gate_score = edge_pct * cls.EDGE_SCALE_FACTOR * confidence_multiplier * market_multiplier
         if model_prob > 0.65 and raw_edge > 0.03:
-            value_score += 5
+            gate_score += 5
+        gate_score = max(0, min(100, gate_score))
 
-        # Clamp to 0-100
+        # --- Selection metric: unclamped ------------------------------------
+        # The clamp made large edges tie at 100 and max() silently preferred
+        # whichever market was added to the candidate list first (ML).
+        sort_score = edge_pct * confidence_multiplier * market_multiplier
+
+        # --- Display score: regressed + tanh-compressed ----------------------
+        blended_edge_pct = edge_pct * (1.0 - cls.MARKET_REGRESSION_WEIGHT)
+        value_score = (
+            100.0
+            * math.tanh(blended_edge_pct / cls.DISPLAY_TANH_SCALE)
+            * confidence_multiplier
+            * market_multiplier
+        )
+        # Favorite bonus uses the regressed probability so it tracks the
+        # displayed edge (mirrors b004564).
+        adjusted_model_prob = market_prob + raw_edge * (1.0 - cls.MARKET_REGRESSION_WEIGHT)
+        if adjusted_model_prob > 0.65 and raw_edge > 0.03:
+            value_score += 5
         value_score = max(0, min(100, value_score))
 
         # Determine confidence level
@@ -140,8 +174,14 @@ class MLBValueCalculator:
         else:
             confidence = "low"
 
-        # Is it a value bet?
-        is_value = value_score >= cls.MODERATE_VALUE_THRESHOLD and raw_edge >= cls.MIN_EDGE
+        # Qualification: legacy gate + MIN_EDGE + blowup cap.
+        # Use small epsilon for raw_edge comparison to handle floating point
+        # precision (e.g., 0.60 - 0.50 gives 0.09999... due to binary representation)
+        is_value = (
+            gate_score >= cls.MODERATE_VALUE_THRESHOLD
+            and raw_edge >= cls.MIN_EDGE - 1e-10
+            and edge_pct <= cls.MAX_EDGE_PCT
+        )
 
         # Convert to American odds
         odds_american = cls.decimal_to_american(odds_decimal)
@@ -160,6 +200,7 @@ class MLBValueCalculator:
             odds_decimal=odds_decimal,
             odds_american=odds_american,
             is_value_bet=is_value,
+            sort_score=round(sort_score, 2),
         )
 
     @classmethod
@@ -180,7 +221,7 @@ class MLBValueCalculator:
         if not value_bets:
             return None
 
-        return max(value_bets, key=lambda v: v.value_score)
+        return max(value_bets, key=lambda v: v.sort_score)
 
     @classmethod
     def get_recommendation(cls, value: MLBValueResult) -> str:
