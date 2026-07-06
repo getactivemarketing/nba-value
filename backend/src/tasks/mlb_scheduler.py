@@ -30,8 +30,27 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.config import settings
+from src.services.mlb.value_calculator import MLBValueResult
 
 logger = structlog.get_logger()
+
+
+def resolve_best_bet(
+    best_bet: "MLBValueResult | None",
+    best_ml: "MLBValueResult | None",
+    best_rl: "MLBValueResult | None",
+    totals_allowed: bool,
+) -> "MLBValueResult | None":
+    """Defense-in-depth for snapshots: if the scorer handed us a total as
+    best_bet while totals_in_best_bet is off, fall back to the better of
+    ML/RL so a total never lands in best_bet_* fields."""
+    if best_bet is None or totals_allowed or best_bet.market_type != "total":
+        return best_bet
+    candidates = [v for v in (best_ml, best_rl) if v is not None and v.is_value_bet]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda v: v.sort_score)
+
 
 # Track last run times for health monitoring
 _last_run_times: dict[str, datetime] = {}
@@ -374,13 +393,19 @@ async def snapshot_predictions_async(hours_ahead: float = 1.0) -> dict:
                     snapshot.best_total_value_score = int(prediction.best_total.value_score)
                     snapshot.best_total_edge = prediction.best_total.raw_edge
 
-                if prediction.best_bet:
-                    snapshot.best_bet_type = prediction.best_bet.market_type
-                    snapshot.best_bet_team = prediction.best_bet.team
-                    snapshot.best_bet_line = prediction.best_bet.line
-                    snapshot.best_bet_odds = prediction.best_bet.odds_decimal
-                    snapshot.best_bet_value_score = int(prediction.best_bet.value_score)
-                    snapshot.best_bet_edge = prediction.best_bet.raw_edge
+                best_bet = resolve_best_bet(
+                    prediction.best_bet,
+                    prediction.best_ml,
+                    prediction.best_rl,
+                    totals_allowed=settings.totals_in_best_bet,
+                )
+                if best_bet:
+                    snapshot.best_bet_type = best_bet.market_type
+                    snapshot.best_bet_team = best_bet.team
+                    snapshot.best_bet_line = best_bet.line
+                    snapshot.best_bet_odds = best_bet.odds_decimal
+                    snapshot.best_bet_value_score = int(best_bet.value_score)
+                    snapshot.best_bet_edge = best_bet.raw_edge
 
                 session.add(snapshot)
                 await session.flush()
