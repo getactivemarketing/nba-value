@@ -320,6 +320,7 @@ class MLBModelTrainer:
                     )
                     features["season"] = season
                     features["game_id"] = game.get("gamePk")
+                    features["game_date"] = (game.get("gameDate") or "")[:10]
                     all_features.append(features)
 
                     if (i + 1) % 100 == 0:
@@ -345,7 +346,7 @@ class MLBModelTrainer:
             raise ImportError("LightGBM is required for model training")
 
         # Feature columns (exclude targets and metadata)
-        exclude_cols = ["run_diff", "total_runs", "home_win", "season", "game_id"]
+        exclude_cols = ["run_diff", "total_runs", "home_win", "season", "game_id", "game_date"]
         feature_cols = [c for c in df.columns if c not in exclude_cols]
 
         X = df[feature_cols].fillna(0)
@@ -407,22 +408,33 @@ class MLBModelTrainer:
 
         return model, feature_cols, {"rmse": rmse, "mae": mae}
 
-    def train_totals_model(self, df: pd.DataFrame) -> tuple:
-        """Train the total runs prediction model."""
+    def train_totals_model(self, df: pd.DataFrame, test_df: pd.DataFrame | None = None) -> tuple:
+        """Train the total runs prediction model.
+
+        Args:
+            df: Training data.
+            test_df: Optional explicit holdout. When given, train on all of
+                df and evaluate on test_df (time-based holdout). Otherwise
+                fall back to the legacy positional 80/20 split.
+        """
         if not HAS_LIGHTGBM:
             raise ImportError("LightGBM is required for model training")
 
         # Feature columns
-        exclude_cols = ["run_diff", "total_runs", "home_win", "season", "game_id"]
+        exclude_cols = ["run_diff", "total_runs", "home_win", "season", "game_id", "game_date"]
         feature_cols = [c for c in df.columns if c not in exclude_cols]
 
         X = df[feature_cols].fillna(0)
         y = df["total_runs"]
 
-        # Train/test split
-        split_idx = int(len(df) * 0.8)
-        X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-        y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+        if test_df is not None:
+            X_train, y_train = X, y
+            X_test = test_df[feature_cols].fillna(0)
+            y_test = test_df["total_runs"]
+        else:
+            split_idx = int(len(df) * 0.8)
+            X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+            y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
         # Create datasets
         train_data = lgb.Dataset(X_train, label=y_train)
