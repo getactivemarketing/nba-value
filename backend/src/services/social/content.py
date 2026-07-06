@@ -937,7 +937,9 @@ def generate_first_inning_recap_tweet(game: MLBGame) -> str | None:
     away_runs = game.away_first_inning_runs
     home_runs = game.home_first_inning_runs
     total = (away_runs or 0) + (home_runs or 0)
-    result_tag = "NRFI ✅ Model called it" if total == 0 else "YRFI ❌"
+    # Recap is only sent for games we picked NRFI on (filter in social_scheduler),
+    # so frame from the pick's perspective: NRFI hit if total==0, missed otherwise.
+    result_tag = "NRFI ✅ Model called it" if total == 0 else "NRFI ❌ Missed"
 
     lines = [
         "1st INNING RECAP",
