@@ -175,11 +175,9 @@ class MLBValueCalculator:
             confidence = "low"
 
         # Qualification: legacy gate + MIN_EDGE + blowup cap.
-        # Use small epsilon for raw_edge comparison to handle floating point
-        # precision (e.g., 0.60 - 0.50 gives 0.09999... due to binary representation)
         is_value = (
             gate_score >= cls.MODERATE_VALUE_THRESHOLD
-            and raw_edge >= cls.MIN_EDGE - 1e-10
+            and raw_edge >= cls.MIN_EDGE
             and edge_pct <= cls.MAX_EDGE_PCT
         )
 

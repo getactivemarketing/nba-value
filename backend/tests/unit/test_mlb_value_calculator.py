@@ -35,8 +35,10 @@ def calc(
 
 class TestQualificationGate:
     def test_min_edge_pick_still_qualifies(self):
-        # raw_edge 0.10, edge_pct 20 -> legacy gate 20*4*1.0 = 80 >= 55
-        result = calc(model_prob=0.60, market_prob=0.50)
+        # raw_edge 0.11, edge_pct 22 -> legacy gate 22*4*1.0 = 88 >= 55.
+        # (0.61 rather than 0.60: 0.60 - 0.50 is 0.0999... in binary floats,
+        # which the verbatim >= MIN_EDGE gate correctly rejects.)
+        result = calc(model_prob=0.61, market_prob=0.50)
         assert result.is_value_bet is True
 
     def test_below_min_edge_rejected(self):
@@ -70,6 +72,14 @@ class TestDisplayScore:
         result = calc(model_prob=0.80, market_prob=0.50)
         assert result.value_score == pytest.approx(100 * math.tanh(1.5), abs=0.1)
 
+    def test_favorite_bonus_applies_above_regressed_threshold(self):
+        # raw_edge 0.35, edge_pct 70 (<= cap); adjusted prob
+        # 0.50 + 0.35*0.5 = 0.675 > 0.65 and raw_edge > 0.03 -> +5 bonus.
+        # blended 35 -> 100*tanh(1.75) = 94.1, +5 = 99.1, still < 100.
+        result = calc(model_prob=0.85, market_prob=0.50)
+        assert result.value_score == pytest.approx(100 * math.tanh(1.75) + 5, abs=0.1)
+        assert result.value_score < 100
+
     def test_ml_multiplier_applies_to_display(self):
         rl = calc(market_type="runline", model_prob=0.60, market_prob=0.50)
         ml = calc(market_type="moneyline", model_prob=0.60, market_prob=0.50)
@@ -95,6 +105,7 @@ class TestSortScore:
 
     def test_find_best_value_still_requires_is_value_bet(self):
         blowup = calc(model_prob=0.95, market_prob=0.45, odds=2.22)  # capped
-        ok = calc(model_prob=0.60, market_prob=0.50)
+        # 0.61: comfortably above MIN_EDGE (0.60 - 0.50 is 0.0999... in floats)
+        ok = calc(model_prob=0.61, market_prob=0.50)
         best = MLBValueCalculator.find_best_value([blowup, ok])
         assert best is ok
