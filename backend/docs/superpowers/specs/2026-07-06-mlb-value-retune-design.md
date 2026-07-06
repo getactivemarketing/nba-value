@@ -63,6 +63,20 @@ Planning-phase sims already run (2026-07-06, basis for the revision): linear-sca
 3. **Shadow mode**: v2 powers `best_total` picks, which are recorded and graded nightly but never enter `best_bet` (Phase 1 flag).
 4. **Re-entry gate**: after ≥100 graded `best_total` picks under v2, if win rate ≥53% AND cumulative profit > 0, flip `totals_in_best_bet = true`. Otherwise totals stay out of best_bet.
 
+**Shadow deploy record (2026-07-06):** v2 trained on 6,299 games (2024-2026); holdout gate PASSED — v2 MAE 3.538 vs v1 3.564, line hit-rate 55.6% both (Jun 1 - Jul 5, 468 games, 169 with recorded lines). Served via `mlb_totals_model_path` code default (Railway CLI unauthenticated; env var flip not used).
+
+Re-entry gate check (run every ~2 weeks after 2026-07-06):
+
+    SELECT count(*) AS picks,
+           count(*) FILTER (WHERE best_total_result = 'win') AS wins,
+           round(100.0 * count(*) FILTER (WHERE best_total_result = 'win')
+                 / nullif(count(*) FILTER (WHERE best_total_result IN ('win','loss')), 0), 1) AS wr,
+           round(sum(best_total_profit)::numeric / 100, 1) AS units
+    FROM mlb_prediction_snapshots
+    WHERE game_date >= '2026-07-07' AND best_total_result IS NOT NULL;
+
+Gate: picks >= 100 AND wr >= 53 AND units > 0 → set `totals_in_best_bet = True` (config default or `TOTALS_IN_BEST_BET=true` on Railway). Otherwise totals stay out.
+
 ## Rollout & risk
 
 - Phase 1 commits to `main`; Railway auto-deploys. Verify via startup logs and next morning's pick slate (no totals as best bet, value scores spread below 100).

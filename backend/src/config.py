@@ -79,10 +79,13 @@ class Settings(BaseSettings):
     # model with >=53% WR and positive cumulative units.
     totals_in_best_bet: bool = False
 
-    # Path to the MLB totals model. Point at mlb_totals_v2.joblib once the
-    # retrained model passes holdout eval (see retrain_mlb_totals task).
+    # Path to the MLB totals model. v2 (trained through 2026-07-06 via
+    # retrain_mlb_totals) passed the holdout gate vs v1: MAE 3.538 vs 3.564,
+    # hit-rate 55.6% (Jun 1 - Jul 5 holdout, 468 games). Serving in SHADOW
+    # mode: powers best_total only; excluded from best_bet until the
+    # re-entry gate passes (see totals_in_best_bet).
     # Missing file -> scorer falls back to v1, then to the heuristic.
-    mlb_totals_model_path: str = "models/mlb_totals_v1.joblib"
+    mlb_totals_model_path: str = "models/mlb_totals_v2.joblib"
 
     @property
     def is_production(self) -> bool:
