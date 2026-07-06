@@ -71,3 +71,6 @@ celerybeat.pid
 
 # Jupyter
 .ipynb_checkpoints/
+.vercel
+.env*.local
+.DS_Store
