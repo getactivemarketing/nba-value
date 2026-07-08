@@ -1,10 +1,16 @@
 # Railway deployment configuration
-# This file lives in backend/ which Railway uses as the project root,
-# so watchPatterns are relative to backend/, not the repo root.
-# Last updated: 2026-04-07 to force redeploy
+# Railway matches watchPatterns against repo-root-relative paths even though
+# this service's root directory is backend/ — bare "src/**" never matched
+# "backend/src/...", which made every GitHub push register as SKIPPED
+# (observed May 22 – Jul 7 2026). Both prefixed and unprefixed forms are
+# listed to stay correct under either matching behavior.
 [build]
 builder = "NIXPACKS"
-watchPatterns = ["src/**", "assets/**", "requirements.txt", "Procfile", "railway.toml"]
+watchPatterns = [
+  "src/**", "assets/**", "requirements.txt", "Procfile", "railway.toml",
+  "backend/src/**", "backend/assets/**", "backend/requirements.txt", "backend/Procfile", "backend/railway.toml",
+  "backend/models/**", "models/**",
+]
 
 [deploy]
 startCommand = "uvicorn src.main:app --host 0.0.0.0 --port $PORT"
