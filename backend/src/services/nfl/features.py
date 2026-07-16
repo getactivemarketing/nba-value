@@ -6,6 +6,8 @@ so they are cheaply unit-testable and hold the point-in-time invariant explicitl
 import pandas as pd
 import structlog as _structlog
 
+from src.services.nfl.constants import normalize_team
+
 _log = _structlog.get_logger()
 
 
@@ -17,6 +19,8 @@ def team_game_epa(pbp: pd.DataFrame) -> pd.DataFrame:
     defteam). Plays with no posteam (kickoffs, etc.) are ignored for offense.
     """
     valid = pbp[pbp["posteam"].notna() & pbp["defteam"].notna()].copy().reset_index(drop=True)
+    valid["posteam"] = valid["posteam"].map(normalize_team)
+    valid["defteam"] = valid["defteam"].map(normalize_team)
 
     off = valid.groupby(["season", "week", "posteam"]).agg(
         off_epa_play=("epa", "mean"),

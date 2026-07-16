@@ -1,5 +1,5 @@
 from src.services.nfl.constants import (
-    NFL_DIVISIONS, is_divisional, is_primetime, primetime_slot,
+    NFL_DIVISIONS, is_divisional, is_primetime, normalize_team, primetime_slot,
 )
 
 
@@ -28,3 +28,19 @@ def test_primetime_slots():
 def test_is_primetime_matches_slot():
     assert is_primetime("Sunday", "20:20") is True
     assert is_primetime("Sunday", "13:00") is False
+
+
+def test_normalize_team_maps_historical_abbreviations():
+    assert normalize_team("OAK") == "LV"
+    assert normalize_team("SD") == "LAC"
+    assert normalize_team("STL") == "LA"
+
+
+def test_normalize_team_passes_through_unknown_and_current_codes():
+    assert normalize_team("KC") == "KC"
+    assert normalize_team("XYZ") == "XYZ"
+
+
+def test_normalize_team_result_is_divisional():
+    # SD (pre-2017 Chargers) and KC are both AFC West once normalized.
+    assert is_divisional(normalize_team("SD"), normalize_team("KC")) is True

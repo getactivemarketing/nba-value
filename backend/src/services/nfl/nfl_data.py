@@ -2,11 +2,10 @@
 from datetime import datetime, timezone
 
 import pandas as pd
-import structlog
 
-from src.services.nfl.constants import is_divisional, is_primetime, primetime_slot
-
-logger = structlog.get_logger()
+from src.services.nfl.constants import (
+    is_divisional, is_primetime, normalize_team, primetime_slot,
+)
 
 
 def load_schedules(seasons: list[int]) -> pd.DataFrame:
@@ -44,9 +43,12 @@ def schedule_to_game_rows(sched: pd.DataFrame) -> list[dict]:
     """Pure map of nflverse schedule rows -> NFLGame kwargs dicts."""
     rows: list[dict] = []
     for _, g in sched.iterrows():
-        weekday = g.get("weekday") or ""
-        gametime = g.get("gametime") or ""
-        home, away = g["home_team"], g["away_team"]
+        wd = g.get("weekday")
+        weekday = "" if pd.isna(wd) else wd
+        gt = g.get("gametime")
+        gametime = "" if pd.isna(gt) else gt
+        home = normalize_team(g["home_team"])
+        away = normalize_team(g["away_team"])
         rows.append({
             "game_id": g["game_id"],
             "season": int(g["season"]),

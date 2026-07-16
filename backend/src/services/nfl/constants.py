@@ -12,6 +12,17 @@ NFL_DIVISIONS: dict[str, str] = {
     "ARI": "NFC West", "LA": "NFC West", "SF": "NFC West", "SEA": "NFC West",
 }
 
+# Historical / variant nflverse abbreviations -> current franchise code.
+CANONICAL_TEAM = {
+    "OAK": "LV", "SD": "LAC", "STL": "LA",
+    "LAR": "LA", "WSH": "WAS", "JAC": "JAX", "ARZ": "ARI",
+}
+
+
+def normalize_team(abbr):
+    """Map historical/variant team abbreviations to the current franchise code."""
+    return CANONICAL_TEAM.get(abbr, abbr) if isinstance(abbr, str) else abbr
+
 
 def is_divisional(home: str, away: str) -> bool:
     """True when both teams share a division."""
@@ -29,7 +40,7 @@ def primetime_slot(weekday: str, gametime: str) -> str | None:
         return None
     try:
         hour = int(gametime.split(":")[0])
-    except (ValueError, IndexError):
+    except (ValueError, IndexError, AttributeError):
         return None
     if weekday == "Thursday" and hour >= 19:
         return "TNF"

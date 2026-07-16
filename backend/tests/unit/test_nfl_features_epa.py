@@ -45,6 +45,18 @@ def test_pass_and_rush_epa_split():
     assert round(out.loc["KC", "off_epa_play"], 3) == 0.5   # mean(2.0, -1.0)
 
 
+def test_team_game_epa_normalizes_historical_team_codes():
+    # OAK is the historical Raiders abbreviation; output team key must be
+    # normalized to the current franchise code (LV).
+    pbp = pd.DataFrame([
+        {"season": 2015, "week": 1, "posteam": "OAK", "defteam": "KC",
+         "epa": 1.0, "success": 1, "pass": 1, "rush": 0, "play_type": "pass"},
+    ])
+    out = team_game_epa(pbp)
+    assert "LV" in out["team"].tolist()
+    assert "OAK" not in out["team"].tolist()
+
+
 def test_handles_non_unique_index():
     pbp = pd.DataFrame([
         {"season": 2023, "week": 1, "posteam": "KC", "defteam": "DEN",

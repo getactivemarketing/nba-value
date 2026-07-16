@@ -114,7 +114,14 @@ def _compute_candidate_features(
 
         try:
             if week not in stakes_cache:
-                standings = _standings_through_week(sched, week)
+                # Standings ENTERING the week (i.e. through week-1) — using the
+                # game's own week would leak that week's own results into its
+                # playoff_stakes label.
+                standings_week = week - 1
+                if standings_week < 1:
+                    standings = _standings_through_week(sched, 0)
+                else:
+                    standings = _standings_through_week(sched, standings_week)
                 stakes_cache[week] = playoff_stakes(standings, season, week)
             stakes = stakes_cache[week]
             home_stakes[game_id] = stakes.get(home)
