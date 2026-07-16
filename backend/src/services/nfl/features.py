@@ -4,6 +4,9 @@ All functions here are deterministic transforms of DataFrames — no DB, no I/O 
 so they are cheaply unit-testable and hold the point-in-time invariant explicitly.
 """
 import pandas as pd
+import structlog as _structlog
+
+_log = _structlog.get_logger()
 
 
 def team_game_epa(pbp: pd.DataFrame) -> pd.DataFrame:
@@ -55,3 +58,43 @@ def rolling_team_stats(team_game: pd.DataFrame, window: int = 8) -> pd.DataFrame
             row["power_rating"] = row["off_epa_play"] - row["def_epa_play"]
             out_rows.append(row)
     return pd.DataFrame(out_rows)
+
+
+def starters_out(injuries: pd.DataFrame, depth: pd.DataFrame, team: str) -> int:
+    """Best-effort count of depth-chart starters ruled Out for a team.
+
+    Returns 0 (and logs) when data is missing — this is a noisy candidate
+    feature, not a correctness-critical one.
+    """
+    if injuries.empty or depth.empty:
+        _log.info("nfl_starters_out_missing_data", team=team)
+        return 0
+    starters = set(
+        depth[(depth["team"] == team) & (depth["depth_team"] == 1)]["gsis_id"]
+    )
+    out = injuries[(injuries["team"] == team)
+                   & (injuries["report_status"] == "Out")]["gsis_id"]
+    return int(sum(1 for pid in out if pid in starters))
+
+
+def playoff_stakes(standings: pd.DataFrame, season: int, week: int) -> dict[str, str]:
+    """Heuristic meaningful-game label per team. Weeks < 15 are all 'alive'.
+
+    `standings` is a per-team wins/losses frame through `week`. This is a
+    deliberately simple v1 heuristic (documented in the spec); Phase 2 decides
+    whether it carries signal.
+    """
+    if week < 15:
+        return {t: "alive" for t in standings["team"]}
+    # Weeks 15+: rank by wins; label bottom third eliminated, top third clinched.
+    ranked = standings.sort_values("wins", ascending=False).reset_index(drop=True)
+    n = len(ranked)
+    labels: dict[str, str] = {}
+    for i, row in ranked.iterrows():
+        if i < n // 3:
+            labels[row["team"]] = "clinched"
+        elif i >= 2 * n // 3:
+            labels[row["team"]] = "eliminated"
+        else:
+            labels[row["team"]] = "alive"
+    return labels
