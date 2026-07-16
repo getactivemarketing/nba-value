@@ -29,3 +29,29 @@ def team_game_epa(pbp: pd.DataFrame) -> pd.DataFrame:
 
     out = off.merge(deff, on=["season", "week", "team"], how="outer")
     return out
+
+
+_EPA_COLS = ["off_epa_play", "def_epa_play", "pass_epa", "rush_epa", "success_rate"]
+
+
+def rolling_team_stats(team_game: pd.DataFrame, window: int = 8) -> pd.DataFrame:
+    """Point-in-time trailing team form.
+
+    For each (season, team) and each played week w, emit a row keyed
+    through_week=w that aggregates ONLY that team's games with week <= w
+    (trailing `window` games). This row represents the team's form used to
+    predict week w+1 — it must never reference week > w.
+    """
+    out_rows: list[dict] = []
+    for (season, team), grp in team_game.groupby(["season", "team"]):
+        grp = grp.sort_values("week")
+        weeks = grp["week"].tolist()
+        for w in weeks:
+            hist = grp[grp["week"] <= w].tail(window)   # <= w, never > w
+            row = {"season": int(season), "team": team, "through_week": int(w),
+                   "pace": float(hist["plays"].mean())}
+            for col in _EPA_COLS:
+                row[col] = float(hist[col].mean())
+            row["power_rating"] = row["off_epa_play"] - row["def_epa_play"]
+            out_rows.append(row)
+    return pd.DataFrame(out_rows)
