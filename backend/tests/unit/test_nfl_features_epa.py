@@ -30,3 +30,28 @@ def test_team_game_epa_ignores_plays_without_posteam():
     out = team_game_epa(pbp).set_index("team")
     # The posteam=None play must not pollute SF's offense
     assert round(out.loc["SF", "off_epa_play"], 3) == 0.2
+
+
+def test_pass_and_rush_epa_split():
+    pbp = pd.DataFrame([
+        {"season": 2023, "week": 1, "posteam": "KC", "defteam": "DEN",
+         "epa": 2.0, "success": 1, "pass": 1, "rush": 0, "play_type": "pass"},
+        {"season": 2023, "week": 1, "posteam": "KC", "defteam": "DEN",
+         "epa": -1.0, "success": 0, "pass": 0, "rush": 1, "play_type": "run"},
+    ])
+    out = team_game_epa(pbp).set_index("team")
+    assert round(out.loc["KC", "pass_epa"], 3) == 2.0
+    assert round(out.loc["KC", "rush_epa"], 3) == -1.0
+    assert round(out.loc["KC", "off_epa_play"], 3) == 0.5   # mean(2.0, -1.0)
+
+
+def test_handles_non_unique_index():
+    pbp = pd.DataFrame([
+        {"season": 2023, "week": 1, "posteam": "KC", "defteam": "DEN",
+         "epa": 2.0, "success": 1, "pass": 1, "rush": 0, "play_type": "pass"},
+        {"season": 2023, "week": 1, "posteam": "KC", "defteam": "DEN",
+         "epa": -1.0, "success": 0, "pass": 0, "rush": 1, "play_type": "run"},
+    ], index=[0, 0])
+    out = team_game_epa(pbp).set_index("team")
+    assert round(out.loc["KC", "pass_epa"], 3) == 2.0
+    assert round(out.loc["KC", "rush_epa"], 3) == -1.0

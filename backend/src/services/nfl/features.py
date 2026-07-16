@@ -13,7 +13,7 @@ def team_game_epa(pbp: pd.DataFrame) -> pd.DataFrame:
     defense EPA is the EPA the team *allowed* (mean epa of plays where it is
     defteam). Plays with no posteam (kickoffs, etc.) are ignored for offense.
     """
-    valid = pbp[pbp["posteam"].notna() & pbp["defteam"].notna()].copy()
+    valid = pbp[pbp["posteam"].notna() & pbp["defteam"].notna()].copy().reset_index(drop=True)
 
     off = valid.groupby(["season", "week", "posteam"]).agg(
         off_epa_play=("epa", "mean"),
