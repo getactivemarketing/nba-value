@@ -94,8 +94,14 @@ def _compute_candidate_features(
     stakes_cache: dict[int, dict[str, str]] = {}
 
     for _, g in sched.iterrows():
-        game_id, week = g["game_id"], int(g["week"])
-        home, away = g["home_team"], g["away_team"]
+        try:
+            game_id, week = g["game_id"], int(g["week"])
+            home, away = g["home_team"], g["away_team"]
+        except (KeyError, TypeError, ValueError) as e:
+            # Malformed schedule row (e.g. NaN week, missing team/id) — skip
+            # this game rather than aborting the whole season backfill.
+            logger.warning("nfl_candidate_features_bad_row", error=str(e))
+            continue
 
         if have_injury_data:
             try:
