@@ -20,17 +20,21 @@ async def upsert_games(session: AsyncSession, game_rows: list[dict]) -> int:
     return len(game_rows)
 
 
+def _is_dome(roof) -> bool:
+    """True for enclosed venues; safe against NaN/None/non-str roof values."""
+    return isinstance(roof, str) and roof.strip().lower() in ("dome", "closed")
+
+
 async def upsert_game_context(session: AsyncSession, sched: pd.DataFrame) -> int:
     count = 0
     for _, g in sched.iterrows():
-        roof = (g.get("roof") or "").lower()
         values = {
             "game_id": g["game_id"],
             "home_rest_days": None if pd.isna(g.get("home_rest")) else int(g["home_rest"]),
             "away_rest_days": None if pd.isna(g.get("away_rest")) else int(g["away_rest"]),
             "temp_f": None if pd.isna(g.get("temp")) else float(g["temp"]),
             "wind_mph": None if pd.isna(g.get("wind")) else float(g["wind"]),
-            "is_dome": roof in ("dome", "closed"),
+            "is_dome": _is_dome(g.get("roof")),
         }
         stmt = insert(NFLGameContext).values(**values).on_conflict_do_update(
             index_elements=["game_id"],
