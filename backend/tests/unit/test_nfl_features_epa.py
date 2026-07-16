@@ -1,0 +1,32 @@
+import pandas as pd
+from src.services.nfl.features import team_game_epa
+
+
+def test_team_game_epa_offense_and_defense_split():
+    # 2 plays: KC on offense vs DEN; then DEN on offense vs KC.
+    pbp = pd.DataFrame([
+        {"season": 2023, "week": 1, "posteam": "KC", "defteam": "DEN",
+         "epa": 1.0, "success": 1, "pass": 1, "rush": 0, "play_type": "pass"},
+        {"season": 2023, "week": 1, "posteam": "DEN", "defteam": "KC",
+         "epa": -0.5, "success": 0, "pass": 0, "rush": 1, "play_type": "run"},
+    ])
+    out = team_game_epa(pbp).set_index("team")
+    # KC offense = +1.0 over 1 play; KC defense = DEN's -0.5 EPA allowed
+    assert round(out.loc["KC", "off_epa_play"], 3) == 1.0
+    assert round(out.loc["KC", "def_epa_play"], 3) == -0.5
+    assert round(out.loc["KC", "success_rate"], 3) == 1.0
+    # DEN mirror
+    assert round(out.loc["DEN", "off_epa_play"], 3) == -0.5
+    assert round(out.loc["DEN", "def_epa_play"], 3) == 1.0
+
+
+def test_team_game_epa_ignores_plays_without_posteam():
+    pbp = pd.DataFrame([
+        {"season": 2023, "week": 1, "posteam": None, "defteam": None,
+         "epa": 5.0, "success": 1, "pass": 0, "rush": 0, "play_type": "kickoff"},
+        {"season": 2023, "week": 1, "posteam": "SF", "defteam": "SEA",
+         "epa": 0.2, "success": 1, "pass": 1, "rush": 0, "play_type": "pass"},
+    ])
+    out = team_game_epa(pbp).set_index("team")
+    # The posteam=None play must not pollute SF's offense
+    assert round(out.loc["SF", "off_epa_play"], 3) == 0.2
