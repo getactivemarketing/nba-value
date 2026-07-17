@@ -17,6 +17,10 @@ def _synth(n=400, seed=0):
         "success_rate_diff": rng.normal(0, 0.03, n), "pace_diff": rng.normal(0, 3, n),
         "power_diff": power_diff, "rest_diff": rng.integers(-3, 4, n),
         "is_divisional": rng.integers(0, 2, n), "is_primetime": rng.integers(0, 2, n),
+        # spread_line is in MOV_FEATURES (market anchor). Kept independent of margin
+        # here so this mechanics test still checks the power_diff signal without the
+        # anchor cannibalizing it; that spread_line HELPS is validated by the real backtest.
+        "spread_line": rng.normal(0, 6, n),
         "margin": margin,
     })
 

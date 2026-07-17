@@ -97,8 +97,13 @@ async def load_training_frames(session: AsyncSession, seasons: list[int]):
 
 
 # Feature columns each model consumes (kept here as the single source of truth).
+# spread_line (market closing line, home favored by N pts) is a known-pre-game
+# market anchor: the model learns to adjust FROM the line rather than override it.
+# The v1 MOV model without it lost to the market (line RMSE 12.8 < model 13.8);
+# this mirrors how the totals model uses total_line and how the MLB/NBA scorers
+# regress toward the market.
 MOV_FEATURES = ["off_epa_diff", "def_epa_diff", "pass_epa_diff", "rush_epa_diff",
                 "success_rate_diff", "pace_diff", "power_diff", "rest_diff",
-                "is_divisional", "is_primetime"]
+                "is_divisional", "is_primetime", "spread_line"]
 TOTALS_FEATURES = ["off_epa_sum", "pace_sum", "pass_epa_diff", "is_dome",
                    "wind_mph", "temp_f", "total_line"]
