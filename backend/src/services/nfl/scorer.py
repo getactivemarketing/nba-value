@@ -3,6 +3,7 @@ import pandas as pd
 import structlog
 
 from src.config import settings
+from src.services.nfl.calibration_fit import apply_calibration
 from src.services.nfl.model_training import predict_mov
 from src.services.nfl.value_calculator import NFLValueCalculator
 from src.services.ml.probability import (
@@ -39,7 +40,7 @@ def score_game(feature_row, market_rows, mov_bundle, totals_bundle) -> dict:
             results.append(calc.calculate_value("spread", "home_spread", p_home, mh,
                            m["home_odds"], team="home", line=m["line"], model_confidence=0.6))
             results.append(calc.calculate_value("spread", "away_spread", 1 - p_home, ma,
-                           m["away_odds"], team="away", line=-float(m["line"]), model_confidence=0.6))
+                           m["away_odds"], team="away", line=float(m["line"]), model_confidence=0.6))
         elif mt == "moneyline" and m.get("home_odds") and m.get("away_odds"):
             p_home = mov_to_moneyline_prob(pred_margin, mstd)
             mh, ma = calc.devig_two_way(m["home_odds"], m["away_odds"])
@@ -50,7 +51,6 @@ def score_game(feature_row, market_rows, mov_bundle, totals_bundle) -> dict:
         elif mt == "total" and m.get("over_odds") and m.get("under_odds"):
             p_over = mov_to_total_prob(pred_total, 0.0, float(m["line"]), tstd)
             if totals_cal is not None:
-                from src.services.nfl.calibration_fit import apply_calibration
                 p_over = float(apply_calibration(totals_cal, [p_over])[0])
             mo, mu = calc.devig_two_way(m["over_odds"], m["under_odds"])
             results.append(calc.calculate_value("total", "over", p_over, mo,

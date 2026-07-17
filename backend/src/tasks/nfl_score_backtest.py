@@ -94,7 +94,7 @@ async def main():
         print(f"  ({lo:.2f},{hi:.2f})  {n:>4}  {wins:>4}  {wr:>6}  {units:>+8.2f}{flag}")
 
     # restore config defaults
-    settings.nfl_min_edge, settings.nfl_max_edge = 0.03, 0.12
+    settings.nfl_min_edge, settings.nfl_max_edge = 0.05, 0.99
     print("\nNOTE: pick the band with positive units AND a meaningful sample (n>=~150).")
     print("If no band clears break-even, do NOT ship totals live (best_bet stays empty).")
 
