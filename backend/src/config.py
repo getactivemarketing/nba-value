@@ -96,6 +96,14 @@ class Settings(BaseSettings):
     nfl_mov_model_path: str = "models/nfl_mov_v1.joblib"
     nfl_totals_model_path: str = "models/nfl_totals_v1.joblib"
 
+    # NFL value gate (calibrated in Phase 3 Task 4 backtest; placeholders here)
+    nfl_min_edge: float = 0.03            # floor
+    nfl_max_edge: float = 0.12            # ceiling (NFL totals profit in ~0.05-0.10 band)
+    nfl_moderate_threshold: float = 40.0  # gate_score qualification
+    nfl_totals_in_best_bet: bool = True
+    nfl_spread_in_best_bet: bool = False
+    nfl_ml_in_best_bet: bool = False
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
