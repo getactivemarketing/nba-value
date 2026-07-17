@@ -90,6 +90,12 @@ class Settings(BaseSettings):
     # Missing file -> scorer falls back to v1, then to the heuristic.
     mlb_totals_model_path: str = "models/mlb_totals_v2.joblib"
 
+    # NFL MOV + totals models (Phase 2, v1) -- trained via src/tasks/nfl_train.py
+    # on 2010-2023 seasons; see the walk-forward backtest report for the
+    # Phase 2 exit-gate numbers (spread/totals ATS%, reliability, saturation).
+    nfl_mov_model_path: str = "models/nfl_mov_v1.joblib"
+    nfl_totals_model_path: str = "models/nfl_totals_v1.joblib"
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
