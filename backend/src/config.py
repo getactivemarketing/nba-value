@@ -97,8 +97,8 @@ class Settings(BaseSettings):
     nfl_totals_model_path: str = "models/nfl_totals_v1.joblib"
 
     # NFL value gate (calibrated in Phase 3 Task 4 backtest; placeholders here)
-    nfl_min_edge: float = 0.03            # floor
-    nfl_max_edge: float = 0.12            # ceiling (NFL totals profit in ~0.05-0.10 band)
+    nfl_min_edge: float = 0.05            # floor (P3 gate backtest 2026-07-17)
+    nfl_max_edge: float = 0.99            # no ceiling (isotonic calibration handles overconfidence)
     nfl_moderate_threshold: float = 40.0  # gate_score qualification
     nfl_totals_in_best_bet: bool = True
     nfl_spread_in_best_bet: bool = False

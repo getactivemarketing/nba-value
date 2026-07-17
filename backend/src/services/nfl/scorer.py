@@ -27,6 +27,7 @@ def score_game(feature_row, market_rows, mov_bundle, totals_bundle) -> dict:
     pred_margin = float(predict_mov(mov_bundle, frame)[0])
     pred_total = float(predict_mov(totals_bundle, frame)[0])
     mstd, tstd = mov_bundle["resid_std"], totals_bundle["resid_std"]
+    totals_cal = totals_bundle.get("calibrator")
     calc = NFLValueCalculator
     results = []
 
@@ -48,6 +49,9 @@ def score_game(feature_row, market_rows, mov_bundle, totals_bundle) -> dict:
                            m["away_odds"], team="away", model_confidence=0.6))
         elif mt == "total" and m.get("over_odds") and m.get("under_odds"):
             p_over = mov_to_total_prob(pred_total, 0.0, float(m["line"]), tstd)
+            if totals_cal is not None:
+                from src.services.nfl.calibration_fit import apply_calibration
+                p_over = float(apply_calibration(totals_cal, [p_over])[0])
             mo, mu = calc.devig_two_way(m["over_odds"], m["under_odds"])
             results.append(calc.calculate_value("total", "over", p_over, mo,
                            m["over_odds"], line=m["line"], model_confidence=0.6))

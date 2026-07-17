@@ -9,8 +9,34 @@ class _Booster:
         return [self.val] * len(X)
 
 
-def _bundle(pred, cols, std):
-    return {"model": _Booster(pred), "feature_cols": cols, "resid_std": std}
+def _bundle(pred, cols, std, calibrator=None):
+    return {"model": _Booster(pred), "feature_cols": cols, "resid_std": std,
+            "calibrator": calibrator}
+
+
+def test_scorer_applies_totals_calibrator_when_present():
+    # A calibrator that maps every probability to 0.50 => zero total edge => no total pick.
+    from src.services.nfl.scorer import score_game
+
+    class _FlatCal:
+        def predict(self, probs):
+            return [0.50 for _ in probs]
+
+    feat = {c: 0.0 for c in ["off_epa_diff", "def_epa_diff", "pass_epa_diff",
+            "rush_epa_diff", "success_rate_diff", "pace_diff", "power_diff",
+            "rest_diff", "is_divisional", "is_primetime", "spread_line",
+            "off_epa_sum", "pace_sum", "is_dome", "wind_mph", "temp_f", "total_line"]}
+    feat["total_line"] = 44.0
+    mov = _bundle(3.0, ["off_epa_diff","def_epa_diff","pass_epa_diff","rush_epa_diff",
+                        "success_rate_diff","pace_diff","power_diff","rest_diff",
+                        "is_divisional","is_primetime","spread_line"], 13.0)
+    # Raw pred 60 vs line 44 would be a strong over, but the flat calibrator wipes the edge.
+    tot = _bundle(60.0, ["off_epa_sum","pace_sum","pass_epa_diff","is_dome",
+                        "wind_mph","temp_f","total_line"], 13.7, calibrator=_FlatCal())
+    markets = [{"market_type": "total", "line": 44.0, "over_odds": 1.909, "under_odds": 1.909}]
+    out = score_game(feat, markets, mov, tot)
+    # calibrated p_over == 0.50 == devigged market -> raw_edge 0 -> no qualifying total
+    assert out["best_total"] is None
 
 
 def test_score_game_picks_total_as_best_bet_when_only_totals_enabled(monkeypatch):

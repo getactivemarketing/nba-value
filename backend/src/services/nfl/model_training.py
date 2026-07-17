@@ -30,10 +30,15 @@ def train_regressor(frame: pd.DataFrame, feature_cols: list[str],
 
 
 def save_bundle(path: str, model, feature_cols: list[str], resid_std: float,
-                trained_seasons: list[int]) -> None:
+                trained_seasons: list[int], calibrator=None) -> None:
+    """Persist a model bundle. `calibrator` (optional) is a fitted isotonic
+    probability calibrator applied to this model's raw win probability at
+    scoring time (used for the totals model — see calibration_fit)."""
     joblib.dump({"model": model, "feature_cols": feature_cols,
-                 "resid_std": resid_std, "trained_seasons": list(trained_seasons)}, path)
-    logger.info("nfl_bundle_saved", path=path, resid_std=round(resid_std, 3))
+                 "resid_std": resid_std, "trained_seasons": list(trained_seasons),
+                 "calibrator": calibrator}, path)
+    logger.info("nfl_bundle_saved", path=path, resid_std=round(resid_std, 3),
+                calibrated=calibrator is not None)
 
 
 def load_bundle(path: str) -> dict:

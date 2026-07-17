@@ -20,15 +20,19 @@ def test_edge_and_scores_follow_mlb_formula():
     assert round(r.sort_score, 2) == round(16.0 * conf_mult * 0.90, 2)
 
 
-def test_edge_ceiling_rejects_overconfident_pick():
-    # raw_edge 0.20 exceeds the NFL ceiling (nfl_max_edge default 0.12) -> not a value bet
+def test_edge_ceiling_rejects_overconfident_pick(monkeypatch):
+    # The ceiling MECHANISM: with an active ceiling (0.12), a raw_edge 0.20 pick
+    # is rejected. (The shipped default is 0.99 = no ceiling, since calibration
+    # handles overconfidence — so we set an explicit ceiling to test the mechanism.)
+    from src.services.nfl import value_calculator as vc
+    monkeypatch.setattr(vc.settings, "nfl_max_edge", 0.12, raising=False)
     r = calc(model_prob=0.70, market_prob=0.50)
     assert r.raw_edge >= 0.12
     assert r.is_value_bet is False
 
 
 def test_in_band_pick_qualifies():
-    r = calc(model_prob=0.57, market_prob=0.50)   # raw_edge 0.07, in [0.03, 0.12]
+    r = calc(model_prob=0.57, market_prob=0.50)   # raw_edge 0.07 >= floor 0.05, under ceiling
     assert r.is_value_bet is True
 
 
