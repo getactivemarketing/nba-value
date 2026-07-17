@@ -1,6 +1,33 @@
 from src.services.nfl.backtest import grade_spread_pick, grade_total_pick
 
 
+def test_nan_spread_line_returns_none_not_fake_win():
+    # A null spread_line must never grade as an automatic win -- edge = cdf(NaN)-0.5
+    # is NaN, and `abs(edge) < threshold` is False for NaN, so without a guard this
+    # pick would slip past the edge filter and grade as a win.
+    r = grade_spread_pick(pred_mov=7.0, resid_std=13.0, spread_line=float("nan"),
+                          actual_margin=10, threshold=0.03)
+    assert r is None
+
+
+def test_nan_actual_margin_returns_none():
+    r = grade_spread_pick(pred_mov=7.0, resid_std=13.0, spread_line=3.0,
+                          actual_margin=float("nan"), threshold=0.03)
+    assert r is None
+
+
+def test_nan_total_line_returns_none_not_fake_win():
+    r = grade_total_pick(pred_total=52.0, total_std=10.0, total_line=float("nan"),
+                         actual_total=47.0, threshold=0.05)
+    assert r is None
+
+
+def test_nan_actual_total_returns_none():
+    r = grade_total_pick(pred_total=52.0, total_std=10.0, total_line=44.0,
+                         actual_total=float("nan"), threshold=0.05)
+    assert r is None
+
+
 def test_home_cover_win_and_loss():
     # Model predicts home by 7, line home -3 (spread_line=3). Big edge -> bet home.
     # Actual margin 10 -> home covers -3 -> win.

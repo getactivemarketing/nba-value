@@ -20,6 +20,8 @@ def grade_spread_pick(pred_mov, resid_std, spread_line, actual_margin, threshold
     from mov_to_spread_prob's own sign convention (spread_line negative = home
     favored), so we negate spread_line on the way in -- deliberate, pinned by tests.
     """
+    if pd.isna(spread_line) or pd.isna(actual_margin):
+        return None
     p_home = mov_to_spread_prob(pred_mov, -spread_line, resid_std)
     edge = p_home - 0.5
     if abs(edge) < threshold:
@@ -42,6 +44,8 @@ def grade_total_pick(pred_total, total_std, total_line, actual_total, threshold)
     other -- the sum (and therefore the probability) is unchanged. This reuses
     probability.py verbatim; no new norm.cdf math.
     """
+    if pd.isna(total_line) or pd.isna(actual_total):
+        return None
     p_over = mov_to_total_prob(pred_total, 0.0, total_line, total_std)
     edge = p_over - 0.5
     if abs(edge) < threshold:

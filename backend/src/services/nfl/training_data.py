@@ -47,7 +47,7 @@ def build_feature_frame(
         h, a = ts.loc[key_h], ts.loc[key_a]
         c = ctx.loc[g["game_id"]] if g["game_id"] in ctx.index else None
         li = ln.loc[g["game_id"]] if g["game_id"] in ln.index else None
-        if li is None:
+        if li is None or pd.isna(li["spread_line"]) or pd.isna(li["total_line"]):
             continue  # no line -> not gradable
         row = {
             "game_id": g["game_id"], "season": int(g["season"]), "week": w,

@@ -54,3 +54,21 @@ def test_missing_team_stats_row_drops_game():
     team_stats = team_stats[team_stats["team"] != "DET"]
     frame = build_feature_frame(games, team_stats, context, lines)
     assert len(frame) == 0
+
+
+def test_null_spread_line_drops_game():
+    games, team_stats, context, lines = _frames()
+    lines = lines.copy()
+    lines.loc[lines["game_id"] == "G2", "spread_line"] = float("nan")
+    frame = build_feature_frame(games, team_stats, context, lines)
+    # G2 is the only modelable game; a null spread_line must drop it, not
+    # silently include a fabricated 0.0 anchor after downstream fillna(0).
+    assert len(frame) == 0
+
+
+def test_null_total_line_drops_game():
+    games, team_stats, context, lines = _frames()
+    lines = lines.copy()
+    lines.loc[lines["game_id"] == "G2", "total_line"] = float("nan")
+    frame = build_feature_frame(games, team_stats, context, lines)
+    assert len(frame) == 0
