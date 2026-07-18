@@ -227,48 +227,56 @@ async def snapshot_due_games(session: AsyncSession, minutes_before: int,
 
     snapshotted = 0
     for game in games:
-        home_stats_row = (await session.execute(
-            select(NFLTeamStats).where(
-                NFLTeamStats.team == game.home_team,
-                NFLTeamStats.season == game.season,
-                NFLTeamStats.through_week == game.week - 1,
-            )
-        )).scalar_one_or_none()
-        away_stats_row = (await session.execute(
-            select(NFLTeamStats).where(
-                NFLTeamStats.team == game.away_team,
-                NFLTeamStats.season == game.season,
-                NFLTeamStats.through_week == game.week - 1,
-            )
-        )).scalar_one_or_none()
-        context_row = (await session.execute(
-            select(NFLGameContext).where(NFLGameContext.game_id == game.game_id)
-        )).scalar_one_or_none()
-        market_rows = (await session.execute(
-            select(NFLMarket).where(NFLMarket.game_id == game.game_id)
-        )).scalars().all()
+        # Per-game isolation (mirrors mlb_scheduler.snapshot_predictions_async):
+        # a single bad game (e.g. a null team-stat -> TypeError in scoring)
+        # must not abort the whole batch and starve every other due game's
+        # snapshot for the hour. Log it and move on.
+        try:
+            home_stats_row = (await session.execute(
+                select(NFLTeamStats).where(
+                    NFLTeamStats.team == game.home_team,
+                    NFLTeamStats.season == game.season,
+                    NFLTeamStats.through_week == game.week - 1,
+                )
+            )).scalar_one_or_none()
+            away_stats_row = (await session.execute(
+                select(NFLTeamStats).where(
+                    NFLTeamStats.team == game.away_team,
+                    NFLTeamStats.season == game.season,
+                    NFLTeamStats.through_week == game.week - 1,
+                )
+            )).scalar_one_or_none()
+            context_row = (await session.execute(
+                select(NFLGameContext).where(NFLGameContext.game_id == game.game_id)
+            )).scalar_one_or_none()
+            market_rows = (await session.execute(
+                select(NFLMarket).where(NFLMarket.game_id == game.game_id)
+            )).scalars().all()
 
-        game_dict = {
-            "game_id": game.game_id, "home_team": game.home_team, "away_team": game.away_team,
-            "kickoff_utc": game.kickoff_utc,
-            "game_date": game.kickoff_utc.date() if game.kickoff_utc else None,
-            "week": game.week, "is_divisional": game.is_divisional,
-            "is_primetime": game.is_primetime,
-        }
-        home_stats = _stats_dict(home_stats_row) if home_stats_row else None
-        away_stats = _stats_dict(away_stats_row) if away_stats_row else None
-        context = _context_dict(context_row)
-        markets = _latest_markets(market_rows)
+            game_dict = {
+                "game_id": game.game_id, "home_team": game.home_team, "away_team": game.away_team,
+                "kickoff_utc": game.kickoff_utc,
+                "game_date": game.kickoff_utc.date() if game.kickoff_utc else None,
+                "week": game.week, "is_divisional": game.is_divisional,
+                "is_primetime": game.is_primetime,
+            }
+            home_stats = _stats_dict(home_stats_row) if home_stats_row else None
+            away_stats = _stats_dict(away_stats_row) if away_stats_row else None
+            context = _context_dict(context_row)
+            markets = _latest_markets(market_rows)
 
-        snap = _score_one(game_dict, home_stats, away_stats, context, markets,
-                           mov_bundle, totals_bundle)
-        if snap is None:
-            log_task("Skipping game (missing prior-week stats or line)", game_id=game.game_id)
+            snap = _score_one(game_dict, home_stats, away_stats, context, markets,
+                              mov_bundle, totals_bundle)
+            if snap is None:
+                log_task("Skipping game (missing prior-week stats or line)", game_id=game.game_id)
+                continue
+
+            filtered = {k: v for k, v in snap.items() if k in _SNAPSHOT_COLUMNS}
+            session.add(NFLPredictionSnapshot(**filtered))
+            snapshotted += 1
+        except Exception as e:  # noqa: BLE001 - one bad game must not block the batch
+            log_task("Failed to snapshot game (skipping)", game_id=game.game_id, error=str(e))
             continue
-
-        filtered = {k: v for k, v in snap.items() if k in _SNAPSHOT_COLUMNS}
-        session.add(NFLPredictionSnapshot(**filtered))
-        snapshotted += 1
 
     await session.commit()
     return {"snapshotted": snapshotted}

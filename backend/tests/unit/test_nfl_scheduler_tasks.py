@@ -208,6 +208,71 @@ async def test_snapshot_due_games_one_due_game_inserts_snapshot():
     session.commit.assert_awaited_once()
 
 
+async def test_snapshot_due_games_isolates_a_failing_game_from_the_batch():
+    """One bad game (null pace -> TypeError in scoring) must not abort the batch:
+    the other due game still gets snapshotted, and the batch still commits."""
+    bad = NFLGame(
+        game_id="2026_02_BAD_GME", season=2026, week=2, home_team="NE", away_team="NYJ",
+        kickoff_utc=datetime(2026, 9, 13, 17, 0, tzinfo=timezone.utc), status="scheduled",
+        is_divisional=True, is_primetime=False,
+    )
+    good = NFLGame(
+        game_id="2026_02_CIN_KC", season=2026, week=2, home_team="KC", away_team="CIN",
+        kickoff_utc=datetime(2026, 9, 13, 20, 20, tzinfo=timezone.utc), status="scheduled",
+        is_divisional=False, is_primetime=True,
+    )
+    # bad home stats: pace=None -> float(None) TypeError inside _feature_diffs
+    bad_home = NFLTeamStats(team="NE", season=2026, through_week=1, off_epa_play=0.0,
+                            def_epa_play=0.0, pass_epa=0.0, rush_epa=0.0,
+                            success_rate=0.45, pace=None, power_rating=0.0)
+    bad_away = NFLTeamStats(team="NYJ", season=2026, through_week=1, off_epa_play=0.0,
+                            def_epa_play=0.0, pass_epa=0.0, rush_epa=0.0,
+                            success_rate=0.45, pace=60.0, power_rating=0.0)
+    bad_ctx = NFLGameContext(game_id=bad.game_id, home_rest_days=7, away_rest_days=7,
+                             wind_mph=5.0, temp_f=60.0, is_dome=False)
+    bad_spread = NFLMarket(game_id=bad.game_id, market_type="spread", line=2.0,
+                           home_odds=1.91, away_odds=1.91,
+                           captured_at=datetime(2026, 9, 12, tzinfo=timezone.utc))
+    bad_total = NFLMarket(game_id=bad.game_id, market_type="total", line=41.0,
+                          over_odds=1.91, under_odds=1.91,
+                          captured_at=datetime(2026, 9, 12, tzinfo=timezone.utc))
+
+    g_home = NFLTeamStats(team="KC", season=2026, through_week=1, off_epa_play=0.15,
+                          def_epa_play=-0.05, pass_epa=0.1, rush_epa=0.0,
+                          success_rate=0.47, pace=62.0, power_rating=0.20)
+    g_away = NFLTeamStats(team="CIN", season=2026, through_week=1, off_epa_play=0.0,
+                          def_epa_play=0.05, pass_epa=0.1, rush_epa=0.0,
+                          success_rate=0.47, pace=64.0, power_rating=-0.05)
+    g_ctx = NFLGameContext(game_id=good.game_id, home_rest_days=7, away_rest_days=7,
+                           wind_mph=6.0, temp_f=70.0, is_dome=False)
+    g_spread = NFLMarket(game_id=good.game_id, market_type="spread", line=3.0,
+                         home_odds=1.91, away_odds=1.91,
+                         captured_at=datetime(2026, 9, 12, tzinfo=timezone.utc))
+    g_total = NFLMarket(game_id=good.game_id, market_type="total", line=47.5,
+                        over_odds=1.91, under_odds=1.91,
+                        captured_at=datetime(2026, 9, 12, tzinfo=timezone.utc))
+
+    session = MagicMock()
+    session.execute = AsyncMock(side_effect=[
+        _scalars_result([bad, good]),                 # due games (bad first)
+        _scalar_result(bad_home), _scalar_result(bad_away),
+        _scalar_result(bad_ctx), _scalars_result([bad_spread, bad_total]),
+        _scalar_result(g_home), _scalar_result(g_away),
+        _scalar_result(g_ctx), _scalars_result([g_spread, g_total]),
+    ])
+    session.commit = AsyncMock()
+
+    result = await sched.snapshot_due_games(
+        session, minutes_before=90, mov_bundle=_mov_bundle(), totals_bundle=_totals_bundle(),
+    )
+
+    # bad game skipped, good game still snapshotted, batch still commits
+    assert result == {"snapshotted": 1}
+    session.add.assert_called_once()
+    assert session.add.call_args[0][0].game_id == "2026_02_CIN_KC"
+    session.commit.assert_awaited_once()
+
+
 # ---------------------------------------------------------------------------
 # 4. grade_finals
 # ---------------------------------------------------------------------------
