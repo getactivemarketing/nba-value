@@ -64,8 +64,8 @@ Applied to prod manually (consistent with existing migration practice). SQLAlche
 
 ## Config to be provided by founder
 
-- `PICK_ALERT_TO_NUMBER` — founder adds directly to Railway (not shared in repo/chat).
-- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` — from the existing Twilio account (AfterLine numbers).
+- `PICK_ALERT_TO_NUMBER` — founder's cell, set in Railway env only (never in repo).
+- `TEXTBELT_API_KEY` — from the founder's Textbelt credit purchase (see Amendment below; Twilio vars dropped).
 
 ## Out of scope
 
