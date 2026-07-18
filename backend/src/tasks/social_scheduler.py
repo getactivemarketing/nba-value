@@ -523,6 +523,10 @@ async def _post_nba_results_async() -> dict:
 # Picks below this aren't surprising enough to celebrate.
 CELEBRATION_MIN_DECIMAL_ODDS = 2.30
 
+# Minimum best_bet value score to text the founder — matches the site's
+# "Top Value Picks" threshold (post-tanh rescale; old 65 ≈ new 40).
+PICK_ALERT_MIN_SCORE = 40
+
 
 def _decimal_to_american(decimal_odds: float) -> int:
     if decimal_odds >= 2.0:
@@ -692,6 +696,62 @@ def run_post_celebrations():
         return {"status": "failed", "error": str(e)}
 
 
+async def _post_pick_alerts_async() -> dict:
+    """Text the founder each frozen best_bet pick (score >= 40), once per snapshot."""
+    from sqlalchemy import select, and_, text
+    from src.models.mlb_prediction_snapshot import MLBPredictionSnapshot
+    from src.services.notifications.pick_alerts import format_pick_alert
+    from src.services.notifications.sms import send_sms
+
+    sent = 0
+    skipped = 0
+    async with _social_session_factory() as session:
+        stmt = select(MLBPredictionSnapshot).where(
+            and_(
+                MLBPredictionSnapshot.game_date == _today_et(),
+                MLBPredictionSnapshot.best_bet_team.isnot(None),
+                MLBPredictionSnapshot.best_bet_value_score >= PICK_ALERT_MIN_SCORE,
+                MLBPredictionSnapshot.sms_alert_sent == False,  # noqa: E712
+            )
+        )
+        snaps = list((await session.execute(stmt)).scalars().all())
+        for snap in snaps:
+            body = format_pick_alert(
+                away_team=snap.away_team,
+                home_team=snap.home_team,
+                bet_type=snap.best_bet_type,
+                team=snap.best_bet_team,
+                line=float(snap.best_bet_line) if snap.best_bet_line is not None else None,
+                odds_decimal=float(snap.best_bet_odds) if snap.best_bet_odds is not None else None,
+                value_score=snap.best_bet_value_score,
+                edge=float(snap.best_bet_edge) if snap.best_bet_edge is not None else None,
+                game_time=snap.game_time,
+                away_starter=snap.away_starter_name,
+                home_starter=snap.home_starter_name,
+            )
+            if send_sms(body):
+                await session.execute(
+                    text("UPDATE mlb_prediction_snapshots SET sms_alert_sent = TRUE WHERE id = :sid"),
+                    {"sid": snap.id},
+                )
+                sent += 1
+            else:
+                skipped += 1
+        await session.commit()
+    return {"sent": sent, "skipped": skipped, "type": "pick_alerts"}
+
+
+def run_pick_alerts():
+    log_task("Sending best-bet pick alert SMS...")
+    try:
+        result = _run_async(_post_pick_alerts_async())
+        log_task("Pick alerts complete", **{k: str(v) for k, v in result.items()})
+        return result
+    except Exception as e:
+        log_task(f"Pick alerts FAILED: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
 def run_post_nba_picks():
     log_task("Posting NBA picks...")
     try:
@@ -833,6 +893,8 @@ def start_scheduler():
     social_scheduler.every(30).minutes.do(run_post_final_recaps)
     # Celebrations for underdog ML wins (≥+130) — runs every 15 min for both MLB and NBA
     social_scheduler.every(15).minutes.do(run_post_celebrations)
+    # Founder SMS alerts for frozen best_bet picks — every 10 min
+    social_scheduler.every(10).minutes.do(run_pick_alerts)
 
     # NBA posts (playoff schedule)
     # Results: 10:30 AM ET = 14:30 UTC
