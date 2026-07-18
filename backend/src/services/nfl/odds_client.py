@@ -96,7 +96,9 @@ def parse_nfl_odds_to_markets(
     One event yields up to 3 rows (spread, moneyline, total), using the
     first bookmaker in the event as the consensus book. `game_id` is left
     for the caller to resolve (matched to nfl_games by teams+date);
-    `home_team_abbr`/`away_team_abbr` are included for that lookup.
+    `home_team_abbr`/`away_team_abbr`/`commence_date` (ISO `YYYY-MM-DD`,
+    the UTC date portion of the event's `commence_time`) are included for
+    that lookup — see `season_update.match_event_to_game`.
 
     Convention: our stored `line` for spreads is HOME-FAVORED POSITIVE,
     while The Odds API's home-team `point` is NEGATIVE when the home team
@@ -125,10 +127,17 @@ def parse_nfl_odds_to_markets(
         bookmaker = bookmakers[0]
         book = bookmaker.get("key")
 
+        # commence_time is UTC ISO-8601, e.g. "2026-09-13T17:00:00Z" — take
+        # the date portion so match_event_to_game (season_update.py) can key
+        # on (home_team_abbr, away_team_abbr, commence_date).
+        commence_time = event.get("commence_time") or ""
+        commence_date = commence_time[:10] if commence_time else None
+
         base = {
             "home_team_abbr": home_abbr,
             "away_team_abbr": away_abbr,
             "book": book,
+            "commence_date": commence_date,
         }
 
         for market in bookmaker.get("markets", []):

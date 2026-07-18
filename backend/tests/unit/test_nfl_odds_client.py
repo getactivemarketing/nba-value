@@ -37,3 +37,4 @@ def test_parse_yields_three_markets_with_correct_convention():
     assert round(by_type["moneyline"]["home_odds"], 2) == 1.62
     assert by_type["spread"]["home_team_abbr"] == "KC"
     assert by_type["spread"]["away_team_abbr"] == "CIN"
+    assert by_type["spread"]["commence_date"] == "2026-09-13"
