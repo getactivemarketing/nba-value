@@ -153,18 +153,12 @@ async def odds_to_markets(session: AsyncSession, season: int) -> int:
             "game_id": r.game_id,
             "home_team": r.home_team,
             "away_team": r.away_team,
-            # Odds API commence_time is a true UTC instant; nflverse
-            # kickoff_utc is ET-wall-clock-as-UTC (see nfl_data._kickoff_utc),
-            # i.e. it's mislabeled, not converted. CONFIRMED via prod smoke
-            # (2026-07-18, live 75-event slate): this is NOT just a boundary
-            # edge case — every primetime/evening kickoff (TNF/SNF/MNF, ET
-            # kickoff late enough that +4/+5h true UTC crosses midnight) has
-            # a true commence_date one day LATER than this kickoff_date, so
-            # match_event_to_game legitimately (and per spec, correctly)
-            # drops those rows rather than mis-matching them. See the P4
-            # Task 3 report for the count. Fixing this needs a real UTC
-            # kickoff_utc in nfl_data._kickoff_utc (Phase-1, out of scope
-            # here — not one of this task's staged files).
+            # Both sides are true UTC: the Odds API commence_time is a UTC
+            # instant, and nfl_data._kickoff_utc now converts ET->UTC properly
+            # (was ET-wall-clock-mislabeled-as-UTC in early P1, which shifted
+            # every evening/primetime kickoff's date one day early and silently
+            # dropped all TNF/SNF/MNF odds — fixed 2026-07-18). So this UTC
+            # .date() matches the event's UTC commence_date for every game.
             "kickoff_date": r.kickoff_utc.date().isoformat() if r.kickoff_utc else None,
         }
         for r in result.all()

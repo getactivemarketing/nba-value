@@ -1,7 +1,12 @@
 """Thin nflverse (nfl_data_py) I/O wrapper returning pandas DataFrames."""
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
+
+# nflverse gametime is US/Eastern wall-clock; localize with this zone so DST
+# (EDT Sep-early Nov, EST Nov-Feb) is handled automatically when converting to UTC.
+_ET = ZoneInfo("America/New_York")
 
 from src.services.nfl.constants import (
     is_divisional, is_primetime, normalize_team, primetime_slot,
@@ -20,23 +25,26 @@ def load_pbp(seasons: list[int]) -> pd.DataFrame:
 
 
 def _kickoff_utc(row) -> datetime | None:
-    """Combine nflverse 'gameday' (YYYY-MM-DD) + 'gametime' (HH:MM ET) into UTC.
+    """Combine nflverse 'gameday' (YYYY-MM-DD) + 'gametime' (HH:MM ET) into true UTC.
 
-    nflverse times are US/Eastern. ET is UTC-4 (DST) for the NFL season
-    (Sep-Jan uses -5 in Nov-Jan); store naive-ET + a fixed -5 is wrong for
-    early season. We store the ET wall-clock as UTC-naive here and let the
-    scheduler (P4) handle precise windowing; kickoff_utc is informational in P1.
+    nflverse gametime is US/Eastern wall-clock. We localize to America/New_York
+    (handling EDT/EST DST across the Sep-Feb season) and convert to UTC, so
+    kickoff_utc is a real instant. This matters for P4: the scheduler windows
+    snapshots off kickoff_utc, and odds matching derives kickoff_date from its
+    UTC .date() -- evening primetime kickoffs (TNF/SNF/MNF) cross midnight UTC,
+    so their true date is one day past the ET gameday and must match the Odds
+    API's UTC commence_date. (Earlier P1 stored ET-wall-clock tagged UTC, which
+    silently dropped every primetime game's odds; fixed here.)
     """
     gameday = row.get("gameday")
     gametime = row.get("gametime")
     if not gameday or not gametime:
         return None
     try:
-        return datetime.strptime(f"{gameday} {gametime}", "%Y-%m-%d %H:%M").replace(
-            tzinfo=timezone.utc
-        )
+        naive_et = datetime.strptime(f"{gameday} {gametime}", "%Y-%m-%d %H:%M")
     except (ValueError, TypeError):
         return None
+    return naive_et.replace(tzinfo=_ET).astimezone(timezone.utc)
 
 
 def schedule_to_game_rows(sched: pd.DataFrame) -> list[dict]:
