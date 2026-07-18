@@ -72,3 +72,15 @@ Applied to prod manually (consistent with existing migration practice). SQLAlche
 - Morning provisional digest (possible follow-up).
 - NBA/NFL wiring (service is reusable; each sport adds its own flag column + job when live).
 - Two-way SMS / reply handling.
+
+## Amendment 2026-07-18: Twilio → Textbelt
+
+The founder has no Twilio account (telephony runs through Vapi, which exposes no
+general SMS API; the Twilio credentials found in AfterLine's Vercel env are dead).
+Delivery switched to Textbelt (textbelt.com): POST https://textbelt.com/text with
+`phone`/`message`/`key`; success is the JSON `success` field (Textbelt returns
+HTTP 200 even on failure). Env vars are now `TEXTBELT_API_KEY` +
+`PICK_ALERT_TO_NUMBER` (TWILIO_* vars dropped). `send_sms(body) -> bool`
+interface unchanged; formatter, `sms_alert_sent` column, and `run_pick_alerts`
+job unaffected. A low-quota warning logs when `quotaRemaining` < 20 so the
+founder knows to top up credits.
