@@ -28,8 +28,11 @@ def format_pick_alert(
     if bet_type == "moneyline":
         label = f"{team} ML"
     elif bet_type == "runline":
-        sign = "+" if (line or 0) > 0 else ""
-        label = f"{team} {sign}{line:g}"
+        if line is None:
+            label = f"{team} RL"
+        else:
+            sign = "+" if line > 0 else ""
+            label = f"{team} {sign}{line:g}"
     else:  # totals — not in best_bet while the re-entry gate is closed
         label = f"O/U {line:g}" if line is not None else "O/U"
 

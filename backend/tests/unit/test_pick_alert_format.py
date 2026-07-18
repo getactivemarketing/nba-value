@@ -41,3 +41,19 @@ def test_total_pick_future_proofing():
         line=8.5, odds_decimal=1.91, value_score=61, edge=0.06, game_time=None,
     )
     assert msg == "TruLine pick: O/U 8.5 (-110) CHC @ NYM\nScore 61 | Edge 6%"
+
+
+def test_invalid_odds_sentinel_omitted():
+    msg = format_pick_alert(
+        away_team="BOS", home_team="NYY", bet_type="moneyline", team="BOS",
+        line=None, odds_decimal=1.0, value_score=45, edge=None, game_time=None,
+    )
+    assert msg == "TruLine pick: BOS ML @ NYY\nScore 45"
+
+
+def test_runline_missing_line_does_not_crash():
+    msg = format_pick_alert(
+        away_team="SD", home_team="KC", bet_type="runline", team="SD",
+        line=None, odds_decimal=2.3, value_score=82, edge=0.20, game_time=None,
+    )
+    assert msg == "TruLine pick: SD RL (+130) @ KC\nScore 82 | Edge 20%"
