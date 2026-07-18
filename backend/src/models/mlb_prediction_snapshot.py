@@ -98,6 +98,9 @@ class MLBPredictionSnapshot(Base):
     # Social posting tracking
     celebration_tweet_posted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # SMS alert tracking
+    sms_alert_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     # Key factors (JSON array)
     factors: Mapped[str | None] = mapped_column(Text, nullable=True)
 
