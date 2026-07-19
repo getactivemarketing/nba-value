@@ -123,26 +123,34 @@ def main() -> None:
     print(f"\nscore health: min={smin} max={smax} avg={savg}  saturated={sat}/{sn}{flag}")
 
     # --- Totals re-entry gate progress ---
-    cur.execute(
-        """
-        SELECT COUNT(*),
-               SUM(CASE WHEN best_total_profit > 0 THEN 1 ELSE 0 END),
-               SUM(CASE WHEN best_total_profit < 0 THEN 1 ELSE 0 END),
-               ROUND((SUM(best_total_profit) / 100.0)::numeric, 2)
-        FROM mlb_prediction_snapshots
-        WHERE game_date >= %s AND best_total_profit IS NOT NULL AND actual_winner IS NOT NULL
-        """,
-        (BASELINE,),
-    )
-    tn, tw, tl, tu = cur.fetchone()
-    tn = tn or 0
-    tw, tl = tw or 0, tl or 0
-    twr = (tw / (tw + tl) * 100) if (tw + tl) else 0.0
-    tu = float(tu or 0)
+    # Two cuts since 2026-07-19: the shadow records every game's best total;
+    # the strict (gate-passing, best_total_is_value) subset is what the
+    # re-entry decision uses, the all-games cut tracks raw model quality.
+    def totals_cut(extra_where: str):
+        cur.execute(
+            f"""
+            SELECT COUNT(*),
+                   SUM(CASE WHEN best_total_profit > 0 THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN best_total_profit < 0 THEN 1 ELSE 0 END),
+                   ROUND((SUM(best_total_profit) / 100.0)::numeric, 2)
+            FROM mlb_prediction_snapshots
+            WHERE game_date >= %s AND best_total_profit IS NOT NULL
+              AND actual_winner IS NOT NULL{extra_where}
+            """,
+            (BASELINE,),
+        )
+        n, w, l, u = cur.fetchone()
+        n, w, l = n or 0, w or 0, l or 0
+        wr = (w / (w + l) * 100) if (w + l) else 0.0
+        return n, w, l, wr, float(u or 0)
+
+    tn, tw, tl, twr, tu = totals_cut(" AND best_total_is_value")
+    an, aw, al, awr, au = totals_cut("")
     gate_ok = tn >= GATE_MIN_N and twr >= GATE_MIN_WR and tu > 0
     status = "OPEN" if gate_ok else f"not yet ({tn}/{GATE_MIN_N} graded)"
-    print(f"\ntotals re-entry gate [{status}]: shadow {tw}-{tl} ({twr:.1f}% WR) {tu:+.2f}u")
-    print(f"  need >={GATE_MIN_N} graded AND WR>={GATE_MIN_WR}% AND units>0 to flip totals_in_best_bet")
+    print(f"\ntotals re-entry gate [{status}]: strict {tw}-{tl} ({twr:.1f}% WR) {tu:+.2f}u")
+    print(f"  all-games shadow: {aw}-{al} ({awr:.1f}% WR over {an}) {au:+.2f}u  <- model quality, not the gate")
+    print(f"  need >={GATE_MIN_N} strict graded AND WR>={GATE_MIN_WR}% AND units>0 to flip totals_in_best_bet")
 
     # --- Data-integrity guard: warn if snapshot count spikes (duplicate service redux) ---
     cur.execute(

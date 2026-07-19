@@ -230,6 +230,24 @@ class MLBValueCalculator:
         return max(value_bets, key=lambda v: v.sort_score)
 
     @classmethod
+    def find_best_shadow(
+        cls,
+        values: list[MLBValueResult],
+    ) -> MLBValueResult | None:
+        """
+        Best value by sort_score regardless of the qualification gate.
+
+        Used for the totals shadow record: recording only gate-passing
+        totals starved the re-entry gate (~0.7 records/day vs the 100-pick
+        requirement). is_value_bet is preserved on the result so consumers
+        (API display, retune tracker strict cut) can still filter to
+        gate-passers.
+        """
+        if not values:
+            return None
+        return max(values, key=lambda v: v.sort_score)
+
+    @classmethod
     def find_best_bet(
         cls,
         values: list[MLBValueResult],

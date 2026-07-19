@@ -131,3 +131,26 @@ class TestFindBestBet:
     def test_returns_none_when_only_totals_qualify(self):
         total = calc(market_type="total", model_prob=0.70, market_prob=0.50)
         assert MLBValueCalculator.find_best_bet([total]) is None
+
+
+class TestFindBestShadow:
+    """Shadow selection records the best total for EVERY game, gate or no gate
+    (2026-07-19: re-entry gate was starving at ~0.7 records/day when the shadow
+    only accumulated gate-passing totals)."""
+
+    def test_returns_best_even_when_nothing_passes_gate(self):
+        # Tiny edges: fail MIN_EDGE, is_value_bet False on both
+        over = calc("total", model_prob=0.52, market_prob=0.50)
+        under = calc("total", model_prob=0.51, market_prob=0.50)
+        assert not over.is_value_bet and not under.is_value_bet
+        assert MLBValueCalculator.find_best_value([over, under]) is None  # old behavior
+        best = MLBValueCalculator.find_best_shadow([over, under])
+        assert best is over  # higher edge -> higher sort_score
+
+    def test_prefers_gate_passer_when_it_has_higher_sort_score(self):
+        strong = calc("total", model_prob=0.65, market_prob=0.50)
+        weak = calc("total", model_prob=0.52, market_prob=0.50)
+        assert MLBValueCalculator.find_best_shadow([weak, strong]) is strong
+
+    def test_empty_returns_none(self):
+        assert MLBValueCalculator.find_best_shadow([]) is None

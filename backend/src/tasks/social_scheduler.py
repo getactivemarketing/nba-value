@@ -716,28 +716,42 @@ async def _post_pick_alerts_async() -> dict:
         )
         snaps = list((await session.execute(stmt)).scalars().all())
         for snap in snaps:
-            body = format_pick_alert(
-                away_team=snap.away_team,
-                home_team=snap.home_team,
-                bet_type=snap.best_bet_type,
-                team=snap.best_bet_team,
-                line=float(snap.best_bet_line) if snap.best_bet_line is not None else None,
-                odds_decimal=float(snap.best_bet_odds) if snap.best_bet_odds is not None else None,
-                value_score=snap.best_bet_value_score,
-                edge=float(snap.best_bet_edge) if snap.best_bet_edge is not None else None,
-                game_time=snap.game_time,
-                away_starter=snap.away_starter_name,
-                home_starter=snap.home_starter_name,
-            )
-            if send_sms(body):
-                await session.execute(
-                    text("UPDATE mlb_prediction_snapshots SET sms_alert_sent = TRUE WHERE id = :sid"),
-                    {"sid": snap.id},
+            # Per-row isolation: an SMS already delivered must have its flag
+            # committed immediately (a later crash would otherwise roll it
+            # back and re-text the founder next cycle), and one bad row must
+            # not stop the rest of the batch.
+            try:
+                body = format_pick_alert(
+                    away_team=snap.away_team,
+                    home_team=snap.home_team,
+                    bet_type=snap.best_bet_type,
+                    team=snap.best_bet_team,
+                    line=float(snap.best_bet_line) if snap.best_bet_line is not None else None,
+                    odds_decimal=float(snap.best_bet_odds) if snap.best_bet_odds is not None else None,
+                    value_score=snap.best_bet_value_score,
+                    edge=float(snap.best_bet_edge) if snap.best_bet_edge is not None else None,
+                    game_time=snap.game_time,
+                    away_starter=snap.away_starter_name,
+                    home_starter=snap.home_starter_name,
                 )
-                sent += 1
-            else:
+                if send_sms(body):
+                    await session.execute(
+                        text("UPDATE mlb_prediction_snapshots SET sms_alert_sent = TRUE WHERE id = :sid"),
+                        {"sid": snap.id},
+                    )
+                    await session.commit()
+                    sent += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                log_task(f"Pick alert failed for snapshot {snap.id}: {e}")
                 skipped += 1
-        await session.commit()
+                # A DB-level failure (execute/commit) leaves the session in a
+                # pending-rollback state that would fail every remaining row.
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
     return {"sent": sent, "skipped": skipped, "type": "pick_alerts"}
 
 

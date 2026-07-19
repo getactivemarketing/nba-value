@@ -765,7 +765,7 @@ def _build_game_response_fast(
                 confidence="high" if snapshot.best_rl_value_score >= 70 else "medium",
             )
 
-        if snapshot.best_total_direction and snapshot.best_total_value_score:
+        if snapshot.best_total_direction and snapshot.best_total_value_score and snapshot.best_total_is_value:
             best_total = ValueBetInfo(
                 market_type="total", bet_type=snapshot.best_total_direction, team=None,
                 line=float(snapshot.best_total_line) if snapshot.best_total_line else None,
@@ -919,7 +919,7 @@ async def _build_game_response(session, game: MLBGame) -> MLBGameResponse:
                 confidence="high" if snapshot.best_rl_value_score >= 70 else "medium",
             )
 
-        if snapshot.best_total_direction and snapshot.best_total_value_score:
+        if snapshot.best_total_direction and snapshot.best_total_value_score and snapshot.best_total_is_value:
             best_total = ValueBetInfo(
                 market_type="total",
                 bet_type=snapshot.best_total_direction,

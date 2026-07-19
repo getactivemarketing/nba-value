@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     # NOTE: the shadow best_total record (this gate's input) only accumulates
     # while the Railway env keeps SUPPRESS_TOTALS=false — the code default
     # suppress_totals=True above would stop totals being scored at all.
+    # Since 2026-07-19 the shadow records EVERY game's best total (not just
+    # gate-passers, which starved the gate at ~0.7/day); the strict gate cut
+    # filters on best_total_is_value.
     totals_in_best_bet: bool = False
 
     # Path to the MLB totals model. v2 (trained through 2026-07-06 via

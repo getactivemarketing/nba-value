@@ -392,6 +392,7 @@ async def snapshot_predictions_async(hours_ahead: float = 1.0) -> dict:
                     snapshot.best_total_odds = prediction.best_total.odds_decimal
                     snapshot.best_total_value_score = int(prediction.best_total.value_score)
                     snapshot.best_total_edge = prediction.best_total.raw_edge
+                    snapshot.best_total_is_value = prediction.best_total.is_value_bet
 
                 best_bet = resolve_best_bet(
                     prediction.best_bet,
