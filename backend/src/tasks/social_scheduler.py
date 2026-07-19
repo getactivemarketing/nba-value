@@ -746,6 +746,12 @@ async def _post_pick_alerts_async() -> dict:
             except Exception as e:
                 log_task(f"Pick alert failed for snapshot {snap.id}: {e}")
                 skipped += 1
+                # A DB-level failure (execute/commit) leaves the session in a
+                # pending-rollback state that would fail every remaining row.
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
     return {"sent": sent, "skipped": skipped, "type": "pick_alerts"}
 
 

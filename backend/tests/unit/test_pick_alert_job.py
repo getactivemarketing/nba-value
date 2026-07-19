@@ -91,3 +91,35 @@ def test_failed_send_neither_flags_nor_commits(monkeypatch):
     assert result == {"sent": 0, "skipped": 1, "type": "pick_alerts"}
     assert session.updated_ids == []
     assert session.commits == 0
+
+
+class FlakyCommitSession(FakeSession):
+    """commit() raises once (simulated transient DB failure), then recovers."""
+
+    def __init__(self, snaps):
+        super().__init__(snaps)
+        self.rollbacks = 0
+        self._fail_next_commit = True
+
+    async def commit(self):
+        if self._fail_next_commit:
+            self._fail_next_commit = False
+            raise RuntimeError("transient db failure")
+        await super().commit()
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+def test_db_failure_rolls_back_and_batch_continues(monkeypatch):
+    session = FlakyCommitSession([_snap(1), _snap(2)])
+    monkeypatch.setattr(ss, "_social_session_factory", lambda: session)
+    import src.services.notifications.pick_alerts as pa
+    import src.services.notifications.sms as sms_mod
+    monkeypatch.setattr(pa, "format_pick_alert", lambda **kw: "msg")
+    monkeypatch.setattr(sms_mod, "send_sms", lambda body: True)
+    result = asyncio.run(ss._post_pick_alerts_async())
+    # Row 1's commit blew up -> rolled back, counted skipped, row 2 unaffected
+    assert result == {"sent": 1, "skipped": 1, "type": "pick_alerts"}
+    assert session.rollbacks == 1
+    assert session.commits == 1
