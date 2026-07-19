@@ -28,6 +28,23 @@ _DIFF_MAP = {
 }
 
 
+def _feature_diffs(home_stats, away_stats) -> dict:
+    """Shared diff/sum computation used by both training and live feature rows.
+
+    `home_stats`/`away_stats` may be a pandas Series or a plain dict/row-mapping
+    (anything supporting `[col]` lookup) of nfl_team_stats columns. Factored out
+    here so training (`build_feature_frame`) and live scoring
+    (`live_features.build_live_feature_row`) can never drift apart.
+    """
+    row = {
+        "pace_sum": float(home_stats["pace"]) + float(away_stats["pace"]),
+        "off_epa_sum": float(home_stats["off_epa_play"]) + float(away_stats["off_epa_play"]),
+    }
+    for col, name in _DIFF_MAP.items():
+        row[name] = float(home_stats[col]) - float(away_stats[col])
+    return row
+
+
 def build_feature_frame(
     games: pd.DataFrame, team_stats: pd.DataFrame,
     context: pd.DataFrame, lines: pd.DataFrame,
@@ -60,16 +77,13 @@ def build_feature_frame(
             "total_line": float(li["total_line"]),
             "home_moneyline": None if pd.isna(li["home_moneyline"]) else float(li["home_moneyline"]),
             "away_moneyline": None if pd.isna(li["away_moneyline"]) else float(li["away_moneyline"]),
-            "pace_sum": float(h["pace"]) + float(a["pace"]),
-            "off_epa_sum": float(h["off_epa_play"]) + float(a["off_epa_play"]),
             "rest_diff": (0 if c is None or pd.isna(c["home_rest_days"]) else int(c["home_rest_days"]))
                          - (0 if c is None or pd.isna(c["away_rest_days"]) else int(c["away_rest_days"])),
             "is_dome": 0 if c is None else int(bool(c["is_dome"])),
             "wind_mph": None if c is None or pd.isna(c["wind_mph"]) else float(c["wind_mph"]),
             "temp_f": None if c is None or pd.isna(c["temp_f"]) else float(c["temp_f"]),
         }
-        for col, name in _DIFF_MAP.items():
-            row[name] = float(h[col]) - float(a[col])
+        row.update(_feature_diffs(h, a))
         rows.append(row)
     return pd.DataFrame(rows)
 

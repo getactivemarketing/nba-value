@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
 from src.database import init_db
-from src.api import health, markets, bets, evaluation, admin, trends, backtest, mlb
+from src.api import health, markets, bets, evaluation, admin, trends, backtest, mlb, nfl
 
 # Configure structured logging
 structlog.configure(
@@ -202,6 +202,10 @@ app.include_router(admin.router, prefix=settings.api_v1_prefix, tags=["Admin"])
 app.include_router(trends.router, prefix=settings.api_v1_prefix, tags=["Trends"])
 app.include_router(backtest.router, prefix=settings.api_v1_prefix, tags=["Backtest"])
 app.include_router(mlb.router, prefix=settings.api_v1_prefix, tags=["MLB"])
+# NFL router only — the NFL weekly scheduler (tasks/nfl_scheduler.py) ships
+# DISABLED and is intentionally NOT started here; enabling it is a deliberate
+# go-live switch for the season (~Sept), separate from exposing these endpoints.
+app.include_router(nfl.router, prefix=settings.api_v1_prefix, tags=["NFL"])
 
 
 @app.get("/")

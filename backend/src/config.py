@@ -107,6 +107,12 @@ class Settings(BaseSettings):
     nfl_spread_in_best_bet: bool = False
     nfl_ml_in_best_bet: bool = False
 
+    # NFL weekly scheduler (P4 Task 4). Ships DISABLED — flipping this on is
+    # a deliberate go-live switch for ~Sept 2026 (nothing calls
+    # nfl_scheduler.start_scheduler() until then).
+    nfl_scheduler_enabled: bool = False
+    nfl_snapshot_minutes_before: int = 90
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"

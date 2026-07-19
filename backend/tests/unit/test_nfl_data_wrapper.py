@@ -1,5 +1,36 @@
+from datetime import timezone
+
 import pandas as pd
-from src.services.nfl.nfl_data import schedule_to_game_rows
+from src.services.nfl.nfl_data import _kickoff_utc, schedule_to_game_rows
+
+
+def test_kickoff_utc_converts_et_to_true_utc_primetime_crosses_midnight():
+    # SNF 8:20pm ET on 2026-09-13 (EDT, UTC-4) -> 00:20 UTC on 2026-09-14.
+    # The UTC DATE is one day past the ET gameday: this is exactly the case
+    # that must match the Odds API's UTC commence_date (2026-09-14), not the
+    # gameday (2026-09-13). Regression guard for the primetime odds-drop bug.
+    dt = _kickoff_utc({"gameday": "2026-09-13", "gametime": "20:20"})
+    assert dt.tzinfo == timezone.utc
+    assert (dt.year, dt.month, dt.day, dt.hour, dt.minute) == (2026, 9, 14, 0, 20)
+    assert dt.date().isoformat() == "2026-09-14"
+
+
+def test_kickoff_utc_afternoon_game_stays_same_utc_date():
+    # 1:00pm ET (EDT) -> 17:00 UTC, still 2026-09-13.
+    dt = _kickoff_utc({"gameday": "2026-09-13", "gametime": "13:00"})
+    assert dt.date().isoformat() == "2026-09-13" and dt.hour == 17
+
+
+def test_kickoff_utc_respects_est_dst_offset_in_november():
+    # Nov is EST (UTC-5): 8:20pm ET on 2026-11-15 -> 01:20 UTC 2026-11-16.
+    dt = _kickoff_utc({"gameday": "2026-11-15", "gametime": "20:20"})
+    assert (dt.month, dt.day, dt.hour) == (11, 16, 1)
+
+
+def test_kickoff_utc_missing_or_malformed_returns_none():
+    assert _kickoff_utc({"gameday": None, "gametime": "20:20"}) is None
+    assert _kickoff_utc({"gameday": "2026-09-13", "gametime": None}) is None
+    assert _kickoff_utc({"gameday": "2026-09-13", "gametime": "notatime"}) is None
 
 
 def test_schedule_to_game_rows_maps_flags_and_keys():
