@@ -10,7 +10,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import asc, desc, select
+from sqlalchemy import asc, select
 
 from src.database import async_session
 from src.models import NFLGame, NFLPredictionSnapshot
@@ -158,8 +158,17 @@ async def get_games(
 
 
 @router.get("/debug/odds")
-async def debug_odds() -> dict:
-    """Odds/data sanity probe. Never exposes the full API key (8-char prefix only)."""
+async def debug_odds(live: bool = Query(
+    True, description="Also hit The Odds API for a live event count (set false to skip the network call)")
+) -> dict:
+    """Odds/data sanity probe for the ~Sept scheduler go-live.
+
+    Reports masked key presence, current nfl_* table counts, and (when
+    live=true) a live The Odds API event/market count so odds ingestion can be
+    verified before enabling the scheduler. Never exposes the full API key
+    (8-char prefix only). A DB or Odds-API failure is reported in-band, not as
+    a 500 — this is a diagnostic endpoint.
+    """
     from sqlalchemy import text
     from src.config import settings
 
@@ -178,4 +187,19 @@ async def debug_odds() -> dict:
                 results[label] = row.scalar()
     except Exception as e:  # noqa: BLE001 - debug probe must never 500 the caller
         raise HTTPException(status_code=503, detail=f"NFL data probe failed: {e}")
+
+    if live:
+        # Live odds probe (network). Isolated so an Odds-API hiccup still returns
+        # the DB counts above rather than failing the whole endpoint.
+        from src.services.nfl.odds_client import (
+            NFLOddsClient, NFL_TEAM_NAME_TO_ABBR, parse_nfl_odds_to_markets,
+        )
+        try:
+            events = await NFLOddsClient().get_nfl_odds()
+            rows = parse_nfl_odds_to_markets(events, NFL_TEAM_NAME_TO_ABBR)
+            results["live_event_count"] = len(events)
+            results["live_market_row_count"] = len(rows)
+        except Exception as e:  # noqa: BLE001 - network probe is best-effort
+            results["live_odds_error"] = str(e)
+
     return results

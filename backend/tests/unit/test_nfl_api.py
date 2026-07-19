@@ -65,16 +65,26 @@ def test_picks_returns_seeded_pick_and_filters_below_threshold(monkeypatch):
     assert body["picks"][0]["best_bet_value_score"] == 55.0
 
 
-def test_picks_min_value_score_query_is_passed_through(monkeypatch):
-    kickoff = datetime(2026, 9, 13, 17, 0, tzinfo=timezone.utc)
+def test_picks_min_value_score_applied_in_sql_not_just_echoed(monkeypatch):
+    """Guards the SQL threshold clause: since the mocked session returns whatever
+    we hand it, a removed `.where(best_bet_value_score >= ...)` wouldn't change
+    the response — so instead we inspect the actual statement handed to execute()
+    and assert the threshold predicate, the ordering, and the bound value are all
+    really there. This is what makes the filter tests non-tautological."""
     session = _patch_session(monkeypatch, [_scalars([])])
 
     client = TestClient(app)
     resp = client.get(f"{settings.api_v1_prefix}/nfl/picks", params={"min_value_score": 70})
     assert resp.status_code == 200
     assert resp.json()["min_value_score"] == 70
-    # the query was executed once (threshold applied in SQL)
     session.execute.assert_awaited_once()
+
+    stmt = session.execute.await_args[0][0]
+    sql = str(stmt)
+    assert "best_bet_value_score >=" in sql       # the threshold clause survived
+    assert "ORDER BY" in sql and "kickoff_utc" in sql
+    # the 70 the caller passed is the bound threshold value (not a hardcoded default)
+    assert 70 in set(stmt.compile().params.values())
 
 
 def test_picks_drops_rows_without_a_best_bet(monkeypatch):
@@ -104,6 +114,25 @@ def test_games_returns_upcoming_with_snapshot_join(monkeypatch):
     g = body["games"][0]
     assert g["game_id"] == "2026_02_CIN_KC" and g["is_primetime"] is True
     assert g["best_bet_type"] == "total" and g["best_bet_value_score"] == 55.0
+
+
+def test_debug_odds_masks_key_and_skips_network_when_live_false(monkeypatch):
+    monkeypatch.setattr(settings, "odds_api_key", "abcd1234efgh5678", raising=False)
+
+    def _count(_n):
+        r = MagicMock()
+        r.scalar.return_value = 42
+        return r
+
+    _patch_session(monkeypatch, [_count(0), _count(0), _count(0)])
+
+    client = TestClient(app)
+    body = client.get(f"{settings.api_v1_prefix}/nfl/debug/odds", params={"live": "false"}).json()
+    assert body["odds_api_key_set"] is True
+    assert body["odds_api_key_prefix"] == "abcd1234..."      # 8-char prefix only
+    assert "abcd1234efgh5678" not in str(body)               # full key never leaks
+    assert body["existing_markets"] == 42
+    assert "live_event_count" not in body                    # network skipped
 
 
 def test_picks_endpoint_is_in_openapi_schema():
