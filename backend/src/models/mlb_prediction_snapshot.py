@@ -58,6 +58,9 @@ class MLBPredictionSnapshot(Base):
     best_total_odds: Mapped[Decimal | None] = mapped_column(Numeric(6, 3), nullable=True)
     best_total_value_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     best_total_edge: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    # True when this total passed the betting gate (score/edge/cap). The shadow
+    # record itself accumulates for ALL games; this flag preserves the strict cut.
+    best_total_is_value: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     # Overall best bet (highest value score across all markets)
     best_bet_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # moneyline/runline/total

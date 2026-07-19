@@ -489,7 +489,7 @@ class MLBScorer:
                     all_values.append(under_value)
 
                     total_values = [over_value, under_value]
-                    prediction.best_total = MLBValueCalculator.find_best_value(total_values)
+                    prediction.best_total = MLBValueCalculator.find_best_shadow(total_values)
 
         # Find overall best bet
         prediction.best_bet = MLBValueCalculator.find_best_bet(
