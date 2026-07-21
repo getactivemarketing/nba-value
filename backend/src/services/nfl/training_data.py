@@ -10,8 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import NFLGame, NFLTeamStats, NFLGameContext
-from src.services.nfl.nfl_data import load_schedules, load_pbp
-from src.services.nfl.qb_ratings import compute_qb_deltas
+from src.services.nfl.nfl_data import load_schedules
 
 logger = structlog.get_logger()
 
@@ -49,13 +48,10 @@ def _feature_diffs(home_stats, away_stats) -> dict:
 def build_feature_frame(
     games: pd.DataFrame, team_stats: pd.DataFrame,
     context: pd.DataFrame, lines: pd.DataFrame,
-    qb_deltas: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     ts = team_stats.set_index(["team", "season", "through_week"])
     ctx = context.set_index("game_id")
     ln = lines.set_index("game_id")
-    qbd = ({} if qb_deltas is None or qb_deltas.empty
-           else dict(zip(qb_deltas["game_id"], qb_deltas["qb_delta"])))
     rows = []
     for _, g in games.iterrows():
         w = int(g["week"])
@@ -79,7 +75,6 @@ def build_feature_frame(
             "total": int(g["home_score"]) + int(g["away_score"]),
             "spread_line": float(li["spread_line"]),
             "total_line": float(li["total_line"]),
-            "qb_delta": float(qbd.get(g["game_id"], 0.0)),
             "home_moneyline": None if pd.isna(li["home_moneyline"]) else float(li["home_moneyline"]),
             "away_moneyline": None if pd.isna(li["away_moneyline"]) else float(li["away_moneyline"]),
             "rest_diff": (0 if c is None or pd.isna(c["home_rest_days"]) else int(c["home_rest_days"]))
@@ -97,8 +92,7 @@ async def load_training_frames(session: AsyncSession, seasons: list[int]):
     games = pd.DataFrame([r._mapping for r in (await session.execute(
         select(NFLGame.game_id, NFLGame.season, NFLGame.week, NFLGame.home_team,
                NFLGame.away_team, NFLGame.home_score, NFLGame.away_score,
-               NFLGame.is_divisional, NFLGame.is_primetime,
-               NFLGame.home_qb_id, NFLGame.away_qb_id)
+               NFLGame.is_divisional, NFLGame.is_primetime)
         .where(NFLGame.season.in_(seasons), NFLGame.home_score.isnot(None)))).all()])
     team_stats = pd.DataFrame([dict(
         team=r.team, season=r.season, through_week=r.through_week,
@@ -113,9 +107,7 @@ async def load_training_frames(session: AsyncSession, seasons: list[int]):
         for r in (await session.execute(select(NFLGameContext))).scalars().all()])
     sched = load_schedules(seasons)
     lines = sched[["game_id", "spread_line", "total_line", "home_moneyline", "away_moneyline"]].copy()
-    pbp = load_pbp(seasons)
-    qb_deltas = compute_qb_deltas(pbp, games)
-    return games, team_stats, context, lines, qb_deltas
+    return games, team_stats, context, lines
 
 
 # Feature columns each model consumes (kept here as the single source of truth).
@@ -126,6 +118,6 @@ async def load_training_frames(session: AsyncSession, seasons: list[int]):
 # regress toward the market.
 MOV_FEATURES = ["off_epa_diff", "def_epa_diff", "pass_epa_diff", "rush_epa_diff",
                 "success_rate_diff", "pace_diff", "power_diff", "rest_diff",
-                "is_divisional", "is_primetime", "spread_line", "qb_delta"]
+                "is_divisional", "is_primetime", "spread_line"]
 TOTALS_FEATURES = ["off_epa_sum", "pace_sum", "pass_epa_diff", "is_dome",
                    "wind_mph", "temp_f", "total_line"]

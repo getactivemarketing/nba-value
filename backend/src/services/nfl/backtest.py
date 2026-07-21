@@ -99,15 +99,10 @@ def walk_forward(frame: pd.DataFrame, test_seasons: list[int], threshold: float 
         for i, (_, g) in enumerate(test.iterrows()):
             sp = grade_spread_pick(mov_pred[i], mov_std, g["spread_line"], g["margin"], threshold)
             tp = grade_total_pick(tot_pred[i], tot_std, g["total_line"], g["total"], threshold)
-            if sp is not None:
-                sp["game_id"] = g["game_id"]  # reporting-only tag; not used in grading
-            if tp is not None:
-                tp["game_id"] = g["game_id"]
             spread_picks.append(sp)
             total_picks.append(tp)
             sat = max(sat, abs(mov_to_spread_prob(mov_pred[i], -g["spread_line"], mov_std) - 0.5) + 0.5)
     return {"spread": _aggregate(spread_picks), "totals": _aggregate(total_picks),
             "spread_reliability": _reliability(spread_picks),
             "totals_reliability": _reliability(total_picks),
-            "saturation_max_prob": round(sat, 3),
-            "spread_picks": spread_picks, "total_picks": total_picks}
+            "saturation_max_prob": round(sat, 3)}

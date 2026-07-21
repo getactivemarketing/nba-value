@@ -139,3 +139,29 @@ Empirical gate (not a unit test): the retrain + walk-forward backtest is the GO/
 - **Constant sensitivity:** `R`/`K` are priors; keep the sane-range check coarse to avoid
   overfitting the 2019–24 window.
 - **Totals untouched** → the live product carries no risk from this spike.
+
+---
+
+## RESULT — NO-GO (2026-07-21)
+
+The spike ran (walk-forward 2019–24, 3217 modelable games, qb_delta active on 845 / 26.3%).
+`qb_delta` did NOT push spread over break-even — it made it **worse**, including on the
+QB-change games it targets:
+
+| | ATS% | Units |
+|---|---|---|
+| Spread v1 (no qb_delta) | 50.2% | −29.0u |
+| Spread v2 (qb_delta) | 49.1% | −42.9u |
+| v1, non-zero-delta subset | 47.3% | −21.6u |
+| v2, non-zero-delta subset | 45.2% | −28.6u |
+
+Totals came out byte-identical v1 vs v2 (54.4% / +23.9u) — the live product was never at risk.
+**Conclusion:** the market already prices QB changes at least as well as a shrunk-EPA delta does
+(NFL spreads are efficient; matches the Phase-2 diagnosis). Spread + ML stay SHADOW.
+
+**Landed state (after cleanup):** the `qb_delta` wiring was reverted out of `MOV_FEATURES` and the
+training/live path so a future MOV retrain can't bake in the rejected feature. The reusable
+per-QB rating module `services/nfl/qb_ratings.py` (`shrink`, `rating_as_of`, `compute_qb_deltas`)
+is KEPT (unused by production, ready for a future QB signal). A better QB signal — a real
+injury/depth-based starter projection, or a non-EPA quality metric — is the open path if spread is
+revisited; a shrunk-EPA delta specifically does not beat the market.

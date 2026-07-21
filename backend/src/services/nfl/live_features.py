@@ -34,8 +34,6 @@ def build_live_feature_row(game, home_stats, away_stats, context,
         "is_dome": int(bool(context.get("is_dome"))),
         "wind_mph": None if wind_mph is None else float(wind_mph),
         "temp_f": None if temp_f is None else float(temp_f),
-        # P2.5b will populate from the live starter projection; 0.0 = no adjustment
-        "qb_delta": 0.0,
     }
     row.update(_feature_diffs(home_stats, away_stats))
     return row
