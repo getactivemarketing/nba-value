@@ -252,6 +252,7 @@ class MLBValueCalculator:
         cls,
         values: list[MLBValueResult],
         include_totals: bool = False,
+        include_runline: bool = True,
     ) -> MLBValueResult | None:
         """
         Find the overall best bet across markets.
@@ -260,9 +261,18 @@ class MLBValueCalculator:
         as best bets over Apr-Jul 2026. best_total is still tracked
         separately as the shadow record for the retrained model
         (re-entry gate: >=100 graded picks, >=53% WR, positive units).
+
+        Runline is excluded unless include_runline — paused 2026-07-21 while a
+        scorer sign-pairing bug (favorite -1.5 prices mislabeled as +1.5) is
+        fixed; best_rl is still tracked separately.
         """
+        excluded = set()
         if not include_totals:
-            values = [v for v in values if v.market_type != "total"]
+            excluded.add("total")
+        if not include_runline:
+            excluded.add("runline")
+        if excluded:
+            values = [v for v in values if v.market_type not in excluded]
         return cls.find_best_value(values)
 
     @classmethod

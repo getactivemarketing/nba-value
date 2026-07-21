@@ -40,13 +40,22 @@ def resolve_best_bet(
     best_ml: "MLBValueResult | None",
     best_rl: "MLBValueResult | None",
     totals_allowed: bool,
+    runline_allowed: bool = True,
 ) -> "MLBValueResult | None":
-    """Defense-in-depth for snapshots: if the scorer handed us a total as
-    best_bet while totals_in_best_bet is off, fall back to the better of
-    ML/RL so a total never lands in best_bet_* fields."""
-    if best_bet is None or totals_allowed or best_bet.market_type != "total":
+    """Defense-in-depth for snapshots: never let a disallowed market land in
+    best_bet_*. If the scorer handed us a paused market (total, or runline
+    while runline_allowed is off), fall back to the best allowed candidate."""
+    disallowed = set()
+    if not totals_allowed:
+        disallowed.add("total")
+    if not runline_allowed:
+        disallowed.add("runline")
+    if best_bet is None or best_bet.market_type not in disallowed:
         return best_bet
-    candidates = [v for v in (best_ml, best_rl) if v is not None and v.is_value_bet]
+    candidates = [
+        v for v in (best_ml, best_rl)
+        if v is not None and v.is_value_bet and v.market_type not in disallowed
+    ]
     if not candidates:
         return None
     return max(candidates, key=lambda v: v.sort_score)
@@ -399,6 +408,7 @@ async def snapshot_predictions_async(hours_ahead: float = 1.0) -> dict:
                     prediction.best_ml,
                     prediction.best_rl,
                     totals_allowed=settings.totals_in_best_bet,
+                    runline_allowed=settings.runline_in_best_bet,
                 )
                 if best_bet:
                     snapshot.best_bet_type = best_bet.market_type
