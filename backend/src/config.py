@@ -85,6 +85,14 @@ class Settings(BaseSettings):
     # filters on best_total_is_value.
     totals_in_best_bet: bool = False
 
+    # Runline PAUSED out of best_bet 2026-07-21: a scorer sign-pairing bug
+    # labeled favorite -1.5 prices (plus-money) as "+1.5" and scored them with
+    # the +1.5 cover probability, inflating the tracked runline record. best_rl
+    # is still computed/stored for display+re-validation, but excluded from
+    # best_bet until the pairing is fixed. Flip to True only after the fix +
+    # re-grade confirm a real edge.
+    runline_in_best_bet: bool = False
+
     # Path to the MLB totals model. v2 (trained through 2026-07-06 via
     # retrain_mlb_totals) passed the holdout gate vs v1: MAE 3.538 vs 3.564,
     # hit-rate 55.6% (Jun 1 - Jul 5 holdout, 468 games). Serving in SHADOW
