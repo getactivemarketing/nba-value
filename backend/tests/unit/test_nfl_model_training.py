@@ -21,6 +21,9 @@ def _synth(n=400, seed=0):
         # here so this mechanics test still checks the power_diff signal without the
         # anchor cannibalizing it; that spread_line HELPS is validated by the real backtest.
         "spread_line": rng.normal(0, 6, n),
+        # qb_delta: independent synthetic noise (not part of the power_diff signal
+        # this test checks); present only so MOV_FEATURES columns all exist.
+        "qb_delta": rng.normal(0, 0.1, n),
         "margin": margin,
     })
 

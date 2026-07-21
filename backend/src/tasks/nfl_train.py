@@ -19,8 +19,8 @@ FINAL_TRAIN = list(range(2010, 2024))  # hold out 2024 as the headline walk-forw
 
 async def main() -> None:
     async with async_session_maker() as session:
-        frames = await load_training_frames(session, ALL_SEASONS)
-    frame = build_feature_frame(*frames)
+        games, team_stats, context, lines, qb_deltas = await load_training_frames(session, ALL_SEASONS)
+    frame = build_feature_frame(games, team_stats, context, lines, qb_deltas)
     print(f"modelable games: {len(frame)} ({frame['season'].min()}-{frame['season'].max()})")
 
     report = walk_forward(frame, TEST_SEASONS, threshold=0.05)
