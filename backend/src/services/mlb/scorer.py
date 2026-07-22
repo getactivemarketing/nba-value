@@ -334,7 +334,8 @@ class MLBScorer:
         p = 1 / (1 + math.exp(-k * run_diff))
         return max(0.05, min(0.95, p))  # Clamp to reasonable range
 
-    def _run_diff_to_cover_prob(self, run_diff: float, spread: float) -> float:
+    @staticmethod
+    def _run_diff_to_cover_prob(run_diff: float, spread: float) -> float:
         """
         Calculate probability of covering a spread.
 
@@ -354,6 +355,44 @@ class MLBScorer:
         k = 0.5
         p = 1 / (1 + math.exp(-k * adjusted_diff))
         return max(0.05, min(0.95, p))
+
+    @staticmethod
+    def _runline_side_values(
+        predicted_run_diff: float,
+        home_team: str,
+        away_team: str,
+        line: float,
+        home_odds: float,
+        away_odds: float,
+    ) -> list["MLBValueResult"]:
+        """Two side-values for ONE standard runline row (abs(line)==1.5), each
+        paired with its own cover probability, real price, and SIGNED line."""
+        cover = MLBScorer._run_diff_to_cover_prob
+        p_home_minus = cover(predicted_run_diff, 1.5)    # home -1.5
+        p_away_minus = cover(-predicted_run_diff, 1.5)   # away -1.5
+        p_home_plus = 1 - p_away_minus                    # home +1.5
+        p_away_plus = 1 - p_home_minus                    # away +1.5
+
+        home_prob, away_prob = MLBValueCalculator.devig_odds(home_odds, away_odds)
+
+        if line == -1.5:
+            sides = [
+                (p_home_minus, home_odds, -1.5, home_team, "home_rl", home_prob),
+                (p_away_plus, away_odds, 1.5, away_team, "away_rl", away_prob),
+            ]
+        else:  # line == 1.5
+            sides = [
+                (p_home_plus, home_odds, 1.5, home_team, "home_rl", home_prob),
+                (p_away_minus, away_odds, -1.5, away_team, "away_rl", away_prob),
+            ]
+
+        return [
+            MLBValueCalculator.calculate_value(
+                market_type="runline", bet_type=bt, model_prob=prob,
+                market_prob=mprob, odds_decimal=odds, team=team, line=sline,
+            )
+            for prob, odds, sline, team, bt, mprob in sides
+        ]
 
     def _total_to_over_prob(self, predicted_total: float, line: float) -> float:
         """Calculate probability of over given predicted total and line."""
