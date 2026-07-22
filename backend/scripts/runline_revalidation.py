@@ -6,12 +6,16 @@ the frozen predicted_run_diff + historical mlb_markets prices (via the fixed
 MLBScorer._runline_side_values), grades it against the actual margin, and reports
 the real runline edge vs the tracker's inflated figure. Does NOT mutate the DB.
 
-Run from backend/: python3 scripts/runline_revalidation.py
+Run from backend/: python3 -m scripts.runline_revalidation
 """
 import os
 import re
 import sys
 from pathlib import Path
+
+# Allow `python3 scripts/runline_revalidation.py` (puts scripts/ on path, not
+# backend/) to still import `src.*` by adding backend/ to sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 BASELINE = "2026-07-08"
 
@@ -46,6 +50,10 @@ def corrected_pick(predicted_run_diff, market_rows):
     for line, ho, ao, h, a in market_rows:
         if line is None or abs(float(line)) != 1.5 or ho is None or ao is None:
             continue
+        # Skip degenerate historical prices (odds <= 1.0 can't be bet and break
+        # the American-odds conversion with a divide-by-zero).
+        if float(ho) <= 1.0 or float(ao) <= 1.0:
+            continue
         vals += MLBScorer._runline_side_values(
             float(predicted_run_diff), h, a, float(line), float(ho), float(ao)
         )
@@ -72,20 +80,23 @@ def main():
         print("no graded snapshots found")
         return
 
-    def market_rows(gid):
-        cur.execute(
-            """SELECT line, home_odds, away_odds FROM mlb_markets
-               WHERE game_id=%s AND market_type='runline'
-                 AND home_odds IS NOT NULL AND away_odds IS NOT NULL""",
-            (gid,),
-        )
-        return cur.fetchall()
+    # Bulk-fetch all runline markets once (avoid N+1 round-trips over the proxy).
+    game_ids = [r[0] for r in rows]
+    cur.execute(
+        """SELECT game_id, line, home_odds, away_odds FROM mlb_markets
+           WHERE market_type='runline' AND game_id = ANY(%s)
+             AND home_odds IS NOT NULL AND away_odds IS NOT NULL""",
+        (game_ids,),
+    )
+    markets_by_game = {}
+    for gid, line, ho, ao in cur.fetchall():
+        markets_by_game.setdefault(gid, []).append((line, ho, ao))
 
     windows = {"since_baseline": [], "all_history": []}
     dates = []
     for (gid, d, home, away, rd, hs, as_, bt, bteam, bscore) in rows:
         dates.append(d)
-        mrows = [(l, ho, ao, home, away) for (l, ho, ao) in market_rows(gid)]
+        mrows = [(l, ho, ao, home, away) for (l, ho, ao) in markets_by_game.get(gid, [])]
         pick = corrected_pick(rd, mrows)
         if pick is None:
             continue
