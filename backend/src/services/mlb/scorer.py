@@ -334,7 +334,8 @@ class MLBScorer:
         p = 1 / (1 + math.exp(-k * run_diff))
         return max(0.05, min(0.95, p))  # Clamp to reasonable range
 
-    def _run_diff_to_cover_prob(self, run_diff: float, spread: float) -> float:
+    @staticmethod
+    def _run_diff_to_cover_prob(run_diff: float, spread: float) -> float:
         """
         Calculate probability of covering a spread.
 
@@ -354,6 +355,44 @@ class MLBScorer:
         k = 0.5
         p = 1 / (1 + math.exp(-k * adjusted_diff))
         return max(0.05, min(0.95, p))
+
+    @staticmethod
+    def _runline_side_values(
+        predicted_run_diff: float,
+        home_team: str,
+        away_team: str,
+        line: float,
+        home_odds: float,
+        away_odds: float,
+    ) -> list["MLBValueResult"]:
+        """Two side-values for ONE standard runline row (abs(line)==1.5), each
+        paired with its own cover probability, real price, and SIGNED line."""
+        cover = MLBScorer._run_diff_to_cover_prob
+        p_home_minus = cover(predicted_run_diff, 1.5)    # home -1.5
+        p_away_minus = cover(-predicted_run_diff, 1.5)   # away -1.5
+        p_home_plus = 1 - p_away_minus                    # home +1.5
+        p_away_plus = 1 - p_home_minus                    # away +1.5
+
+        home_prob, away_prob = MLBValueCalculator.devig_odds(home_odds, away_odds)
+
+        if line == -1.5:
+            sides = [
+                (p_home_minus, home_odds, -1.5, home_team, "home_rl", home_prob),
+                (p_away_plus, away_odds, 1.5, away_team, "away_rl", away_prob),
+            ]
+        else:  # line == 1.5
+            sides = [
+                (p_home_plus, home_odds, 1.5, home_team, "home_rl", home_prob),
+                (p_away_minus, away_odds, -1.5, away_team, "away_rl", away_prob),
+            ]
+
+        return [
+            MLBValueCalculator.calculate_value(
+                market_type="runline", bet_type=bt, model_prob=prob,
+                market_prob=mprob, odds_decimal=odds, team=team, line=sline,
+            )
+            for prob, odds, sline, team, bt, mprob in sides
+        ]
 
     def _total_to_over_prob(self, predicted_total: float, line: float) -> float:
         """Calculate probability of over given predicted total and line."""
@@ -376,6 +415,7 @@ class MLBScorer:
         markets = result.scalars().all()
 
         all_values = []
+        rl_values: list[MLBValueResult] = []
 
         for market in markets:
             if market.market_type == "moneyline":
@@ -412,44 +452,22 @@ class MLBScorer:
                     prediction.best_ml = MLBValueCalculator.find_best_value(ml_values)
 
             elif market.market_type == "runline":
-                if market.home_odds and market.away_odds:
-                    home_odds = float(market.home_odds)
-                    away_odds = float(market.away_odds)
-                    home_prob, away_prob = MLBValueCalculator.devig_odds(
-                        home_odds, away_odds
+                # Standard runline only; each side paired with its own cover
+                # probability, real price, and SIGNED line (2026-07-21 fix).
+                if (
+                    market.home_odds and market.away_odds and market.line
+                    and abs(float(market.line)) == 1.5
+                ):
+                    side_values = MLBScorer._runline_side_values(
+                        prediction.predicted_run_diff,
+                        game.home_team,
+                        game.away_team,
+                        float(market.line),
+                        float(market.home_odds),
+                        float(market.away_odds),
                     )
-
-                    rl_values: list[MLBValueResult] = []
-
-                    # Home runline value (filter mid-dog odds — see MAX_RUNLINE_ODDS)
-                    if home_odds <= MLBValueCalculator.MAX_RUNLINE_ODDS:
-                        home_value = MLBValueCalculator.calculate_value(
-                            market_type="runline",
-                            bet_type="home_rl",
-                            model_prob=prediction.p_home_cover,
-                            market_prob=home_prob,
-                            odds_decimal=home_odds,
-                            team=game.home_team,
-                            line=float(market.line) if market.line else -1.5,
-                        )
-                        all_values.append(home_value)
-                        rl_values.append(home_value)
-
-                    if away_odds <= MLBValueCalculator.MAX_RUNLINE_ODDS:
-                        away_value = MLBValueCalculator.calculate_value(
-                            market_type="runline",
-                            bet_type="away_rl",
-                            model_prob=prediction.p_away_cover,
-                            market_prob=away_prob,
-                            odds_decimal=away_odds,
-                            team=game.away_team,
-                            line=abs(float(market.line)) if market.line else 1.5,
-                        )
-                        all_values.append(away_value)
-                        rl_values.append(away_value)
-
-                    if rl_values:
-                        prediction.best_rl = MLBValueCalculator.find_best_value(rl_values)
+                    all_values.extend(side_values)
+                    rl_values.extend(side_values)
 
             elif market.market_type == "total":
                 if settings.suppress_totals:
@@ -490,6 +508,9 @@ class MLBScorer:
 
                     total_values = [over_value, under_value]
                     prediction.best_total = MLBValueCalculator.find_best_shadow(total_values)
+
+        if rl_values:
+            prediction.best_rl = MLBValueCalculator.find_best_value(rl_values)
 
         # Find overall best bet
         prediction.best_bet = MLBValueCalculator.find_best_bet(
