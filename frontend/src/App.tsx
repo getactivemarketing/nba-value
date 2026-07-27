@@ -8,6 +8,7 @@ import { PlayerPropsPage } from '@/pages/PlayerPropsPage';
 import { MLBPicks } from '@/pages/MLBPicks';
 import { NRFI } from '@/pages/NRFI';
 import { MLBEvaluation } from '@/pages/MLBEvaluation';
+import { NFLPicks } from '@/pages/NFLPicks';
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
         <Route path="/mlb" element={<MLBPicks />} />
         <Route path="/mlb/performance" element={<MLBEvaluation />} />
         <Route path="/nrfi" element={<NRFI />} />
+        <Route path="/nfl" element={<NFLPicks />} />
         <Route path="/bet/:marketId" element={<BetDetail />} />
         <Route path="/trends" element={<Trends />} />
         <Route path="/evaluation" element={<Evaluation />} />
