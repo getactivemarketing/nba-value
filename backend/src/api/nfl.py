@@ -6,7 +6,7 @@ totals-only live (spread + moneyline are shadow-recorded, never best_bet).
 Mirrors `src/api/mlb.py`'s conventions (router prefix, `async_session()`
 usage, min_value_score default 40, key-prefix masking).
 """
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -203,3 +203,99 @@ async def debug_odds(live: bool = Query(
             results["live_odds_error"] = str(e)
 
     return results
+
+
+# --- Evaluation --------------------------------------------------------------
+
+class NFLDailyPerformance(BaseModel):
+    date: str
+    predictions: int
+    wins: int
+    losses: int
+    pushes: int
+    win_rate: float | None
+    profit: float
+
+
+class NFLEvaluationSummary(BaseModel):
+    total_predictions: int
+    graded: int
+    wins: int
+    losses: int
+    pushes: int
+    win_rate: float | None
+    total_profit: float
+    by_market: dict
+
+
+def _tally(result: str | None, profit, acc: dict) -> None:
+    if result == "win":
+        acc["wins"] += 1
+    elif result == "loss":
+        acc["losses"] += 1
+    elif result is not None:
+        acc["pushes"] += 1
+    acc["profit"] += float(profit or 0)
+
+
+def _finish(acc: dict) -> dict:
+    decided = acc["wins"] + acc["losses"]
+    acc["win_rate"] = round(acc["wins"] / decided, 3) if decided else None
+    acc["count"] = acc["wins"] + acc["losses"] + acc["pushes"]
+    acc["profit"] = round(acc["profit"], 2)
+    return acc
+
+
+@router.get("/evaluation/summary", response_model=NFLEvaluationSummary)
+async def get_evaluation_summary() -> NFLEvaluationSummary:
+    """Graded best_bet (totals, LIVE) record + spread/ML as SHADOW."""
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(NFLPredictionSnapshot).where(NFLPredictionSnapshot.best_bet_result.isnot(None))
+        )).scalars().all()
+
+    markets = {m: {"wins": 0, "losses": 0, "pushes": 0, "profit": 0.0}
+               for m in ("best_bet", "spread", "ml")}
+    for s in rows:
+        _tally(s.best_bet_result, s.best_bet_profit, markets["best_bet"])
+        _tally(s.best_spread_result, s.best_spread_profit, markets["spread"])
+        _tally(s.best_ml_result, s.best_ml_profit, markets["ml"])
+    bb = markets["best_bet"]
+    decided = bb["wins"] + bb["losses"]
+    return NFLEvaluationSummary(
+        total_predictions=len(rows), graded=len(rows),
+        wins=bb["wins"], losses=bb["losses"], pushes=bb["pushes"],
+        win_rate=round(bb["wins"] / decided, 3) if decided else None,
+        total_profit=round(bb["profit"], 2),
+        by_market={m: _finish(a) for m, a in markets.items()},
+    )
+
+
+@router.get("/evaluation/daily", response_model=list[NFLDailyPerformance])
+async def get_daily_evaluation(
+    days: int = Query(30, ge=1, le=60, description="Days to include"),
+) -> list[NFLDailyPerformance]:
+    """Per-day best_bet (totals) performance, oldest first."""
+    async with async_session() as session:
+        start = date.today() - timedelta(days=days)
+        rows = (await session.execute(
+            select(NFLPredictionSnapshot).where(
+                NFLPredictionSnapshot.game_date >= start,
+                NFLPredictionSnapshot.best_bet_result.isnot(None),
+            ).order_by(NFLPredictionSnapshot.game_date)
+        )).scalars().all()
+
+    by_date: dict[str, dict] = {}
+    for s in rows:
+        d = s.game_date.isoformat() if s.game_date else "unknown"
+        acc = by_date.setdefault(d, {"wins": 0, "losses": 0, "pushes": 0, "profit": 0.0})
+        _tally(s.best_bet_result, s.best_bet_profit, acc)
+    out = []
+    for d, a in sorted(by_date.items()):
+        decided = a["wins"] + a["losses"]
+        out.append(NFLDailyPerformance(
+            date=d, predictions=a["wins"] + a["losses"] + a["pushes"],
+            wins=a["wins"], losses=a["losses"], pushes=a["pushes"],
+            win_rate=round(a["wins"] / decided, 3) if decided else None,
+            profit=round(a["profit"], 2)))
+    return out
