@@ -27,6 +27,7 @@ class NFLPick(BaseModel):
     kickoff_utc: datetime | None
     best_bet_type: str | None
     best_bet_team: str | None
+    best_total_direction: str | None = None
     best_bet_line: float | None
     best_bet_odds: float | None
     best_bet_value_score: float | None
@@ -53,6 +54,7 @@ class NFLGameSummary(BaseModel):
     # best_bet summary from the snapshot, when one exists (else null = not yet snapshotted)
     best_bet_type: str | None = None
     best_bet_team: str | None = None
+    best_total_direction: str | None = None
     best_bet_line: float | None = None
     best_bet_value_score: float | None = None
 
@@ -94,6 +96,7 @@ async def get_picks(
             kickoff_utc=s.kickoff_utc,
             best_bet_type=s.best_bet_type,
             best_bet_team=s.best_bet_team,
+            best_total_direction=s.best_total_direction,
             best_bet_line=s.best_bet_line,
             best_bet_odds=s.best_bet_odds,
             best_bet_value_score=s.best_bet_value_score,
@@ -151,6 +154,7 @@ async def get_games(
             is_divisional=g.is_divisional, is_primetime=g.is_primetime,
             best_bet_type=s.best_bet_type if s else None,
             best_bet_team=s.best_bet_team if s else None,
+            best_total_direction=(s.best_total_direction if s else None),
             best_bet_line=s.best_bet_line if s else None,
             best_bet_value_score=s.best_bet_value_score if s else None,
         ))

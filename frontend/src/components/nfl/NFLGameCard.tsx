@@ -81,7 +81,14 @@ export function NFLGameCard({ game }: NFLGameCardProps) {
   const tier = valueScore != null ? getValueTier(valueScore) : null;
 
   const hasBestBet = game.best_bet_type === 'total' && valueScore != null;
-  const direction = game.best_bet_team && game.best_bet_team.toLowerCase().includes('under') ? 'UNDER' : 'OVER';
+  // Totals never set best_bet_team (the scorer only sets `team` for spread/ML), so the
+  // real over/under direction comes from the snapshot's best_total_direction column.
+  // Never guess a specific side when it's missing — fall back to a neutral O/U label.
+  const rawDirection = game.best_total_direction?.toLowerCase();
+  const direction = rawDirection === 'over' ? 'OVER' : rawDirection === 'under' ? 'UNDER' : null;
+  const bestBetLabel = direction
+    ? `${direction} ${game.best_bet_line ?? '-'}`
+    : `O/U ${game.best_bet_line ?? '-'}`;
 
   return (
     <div className="rounded-xl bg-[#191c22] border border-[#1e293b] hover:border-[#a4e6ff]/30 relative overflow-hidden transition-colors">
@@ -152,7 +159,7 @@ export function NFLGameCard({ game }: NFLGameCardProps) {
           {hasBestBet && tier ? (
             <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border ${tier.bg}`}>
               <span className={`font-semibold text-sm ${tier.text}`}>
-                {direction} {game.best_bet_line ?? '-'}
+                {bestBetLabel}
               </span>
               <span className={`font-bold font-mono text-sm ${tier.text}`}>{valueScore!.toFixed(0)}</span>
             </div>

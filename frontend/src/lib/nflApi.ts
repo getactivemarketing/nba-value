@@ -21,7 +21,8 @@ client.interceptors.request.use((config) => {
 // Types
 export interface NFLPick {
   game_id: string; home_team: string; away_team: string; kickoff_utc: string | null;
-  best_bet_type: string | null; best_bet_team: string | null; best_bet_line: number | null;
+  best_bet_type: string | null; best_bet_team: string | null; best_total_direction: string | null;
+  best_bet_line: number | null;
   best_bet_odds: number | null; best_bet_value_score: number | null; best_bet_edge: number | null;
   predicted_margin: number | null; predicted_total: number | null;
 }
@@ -30,7 +31,7 @@ export interface NFLPicksResponse { picks: NFLPick[]; total: number; min_value_s
 export interface NFLGameSummary {
   game_id: string; season: number; week: number; home_team: string; away_team: string;
   kickoff_utc: string | null; is_divisional: boolean | null; is_primetime: boolean | null;
-  best_bet_type: string | null; best_bet_team: string | null;
+  best_bet_type: string | null; best_bet_team: string | null; best_total_direction: string | null;
   best_bet_line: number | null; best_bet_value_score: number | null;
 }
 export interface NFLGamesResponse { games: NFLGameSummary[]; total: number; }

@@ -18,12 +18,14 @@ from src.main import app
 from src.models import NFLGame, NFLPredictionSnapshot
 
 
-def _snap(game_id, value_score, kickoff, best_bet_type="total", best_bet_team=None):
+def _snap(game_id, value_score, kickoff, best_bet_type="total", best_bet_team=None,
+          best_total_direction="under"):
     return NFLPredictionSnapshot(
         game_id=game_id, home_team="KC", away_team="CIN", kickoff_utc=kickoff,
         snapshot_time=kickoff, game_date=kickoff.date(),
         predicted_margin=2.5, predicted_total=48.0,
         best_bet_type=best_bet_type, best_bet_team=best_bet_team,
+        best_total_direction=best_total_direction,
         best_bet_line=47.5, best_bet_odds=1.91,
         best_bet_value_score=value_score, best_bet_edge=0.07,
     )
@@ -63,6 +65,7 @@ def test_picks_returns_seeded_pick_and_filters_below_threshold(monkeypatch):
     assert body["picks"][0]["game_id"] == "2026_02_CIN_KC"
     assert body["picks"][0]["best_bet_type"] == "total"
     assert body["picks"][0]["best_bet_value_score"] == 55.0
+    assert body["picks"][0]["best_total_direction"] == "under"
 
 
 def test_picks_min_value_score_applied_in_sql_not_just_echoed(monkeypatch):
@@ -114,6 +117,7 @@ def test_games_returns_upcoming_with_snapshot_join(monkeypatch):
     g = body["games"][0]
     assert g["game_id"] == "2026_02_CIN_KC" and g["is_primetime"] is True
     assert g["best_bet_type"] == "total" and g["best_bet_value_score"] == 55.0
+    assert g["best_total_direction"] == "under"
 
 
 def test_debug_odds_masks_key_and_skips_network_when_live_false(monkeypatch):
