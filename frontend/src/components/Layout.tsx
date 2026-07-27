@@ -11,6 +11,7 @@ const navItems = [
   { path: '/mlb/performance', label: 'MLB Results' },
   { path: '/nrfi', label: 'NRFI' },
   { path: '/nfl', label: 'NFL', icon: '🏈' },
+  { path: '/nfl/performance', label: 'NFL Results' },
   { path: '/props', label: 'Props' },
   { path: '/trends', label: 'Trends' },
   { path: '/evaluation', label: 'Performance' },
