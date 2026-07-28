@@ -415,6 +415,7 @@ class MLBScorer:
         markets = result.scalars().all()
 
         all_values = []
+        ml_values: list[MLBValueResult] = []
         rl_values: list[MLBValueResult] = []
 
         for market in markets:
@@ -435,6 +436,7 @@ class MLBScorer:
                         team=game.home_team,
                     )
                     all_values.append(home_value)
+                    ml_values.append(home_value)
 
                     # Away ML value
                     away_value = MLBValueCalculator.calculate_value(
@@ -446,10 +448,7 @@ class MLBScorer:
                         team=game.away_team,
                     )
                     all_values.append(away_value)
-
-                    # Find best ML
-                    ml_values = [home_value, away_value]
-                    prediction.best_ml = MLBValueCalculator.find_best_value(ml_values)
+                    ml_values.append(away_value)
 
             elif market.market_type == "runline":
                 # Standard runline only; each side paired with its own cover
@@ -508,6 +507,14 @@ class MLBScorer:
 
                     total_values = [over_value, under_value]
                     prediction.best_total = MLBValueCalculator.find_best_shadow(total_values)
+
+        # Select each market's best AFTER the loop, across every book's prices.
+        # (Assigning inside the loop made these reflect only the last row
+        # iterated: a book with no qualifying price wiped out a good pick from
+        # an earlier book, leaving best_ml NULL while best_bet was still a
+        # moneyline — which strands the snapshot as ungradeable. 2026-07-28.)
+        if ml_values:
+            prediction.best_ml = MLBValueCalculator.find_best_value(ml_values)
 
         if rl_values:
             prediction.best_rl = MLBValueCalculator.find_best_value(rl_values)
