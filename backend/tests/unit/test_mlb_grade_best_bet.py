@@ -121,3 +121,27 @@ def test_grades_without_any_component_columns():
     """The whole point: a snapshot with NULL best_ml_* still grades, because
     this helper never looks at the component columns."""
     assert _ml("HOM", 7, 2, odds=1.80) == ("win", pytest.approx(80.0))
+
+
+# --- legacy-runline guard ---------------------------------------------------
+# The first fix guarded only the SQL sentinel's second arm; rows entering via
+# the actual_winner-IS-NULL arm (results-sync marking an old game final) were
+# still graded at their untrustworthy stored line. The guard now lives next to
+# the grading call, so it applies no matter how the row was selected.
+from datetime import date
+
+from src.tasks.mlb_scheduler import RUNLINE_SIGN_FIX_DATE, is_legacy_runline
+
+
+def test_legacy_runline_is_flagged_regardless_of_how_the_row_was_selected():
+    assert is_legacy_runline("runline", date(2026, 7, 21)) is True
+    assert is_legacy_runline("runline", date(2026, 4, 15)) is True
+
+
+def test_post_fix_runline_and_other_markets_are_not_flagged():
+    assert is_legacy_runline("runline", RUNLINE_SIGN_FIX_DATE) is False
+    assert is_legacy_runline("runline", date(2026, 8, 1)) is False
+    assert is_legacy_runline("moneyline", date(2026, 4, 15)) is False
+    assert is_legacy_runline("total", date(2026, 4, 15)) is False
+    assert is_legacy_runline(None, date(2026, 4, 15)) is False
+    assert is_legacy_runline("runline", None) is False

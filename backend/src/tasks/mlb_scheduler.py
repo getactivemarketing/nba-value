@@ -70,6 +70,16 @@ def resolve_best_bet(
 RUNLINE_SIGN_FIX_DATE = date(2026, 7, 22)
 
 
+def is_legacy_runline(best_bet_type: str | None, game_date) -> bool:
+    """True for runline picks frozen before the sign-pairing fix — never grade
+    these from their stored line (see RUNLINE_SIGN_FIX_DATE)."""
+    return (
+        best_bet_type == "runline"
+        and game_date is not None
+        and game_date < RUNLINE_SIGN_FIX_DATE
+    )
+
+
 def grade_best_bet(
     *,
     best_bet_type: str | None,
@@ -645,19 +655,24 @@ async def grade_predictions_async() -> dict:
             # Grade overall best bet from its OWN frozen columns (not by copying
             # a component result — a NULL component used to strand the row
             # permanently, and the component's price is a different book's).
-            bb_result, bb_profit = grade_best_bet(
-                best_bet_type=snapshot.best_bet_type,
-                best_bet_team=snapshot.best_bet_team,
-                best_bet_line=float(snapshot.best_bet_line) if snapshot.best_bet_line is not None else None,
-                best_bet_odds=float(snapshot.best_bet_odds) if snapshot.best_bet_odds is not None else None,
-                best_total_direction=snapshot.best_total_direction,
-                home_team=game.home_team,
-                home_score=game.home_score,
-                away_score=game.away_score,
-            )
-            if bb_result is not None:
-                snapshot.best_bet_result = bb_result
-                snapshot.best_bet_profit = bb_profit
+            # The legacy-runline guard must sit HERE, not only in the query:
+            # a row can also enter this loop via the actual_winner-IS-NULL arm
+            # (e.g. results-sync marks an old game final long after the fact),
+            # which would otherwise grade it at its untrustworthy stored line.
+            if not is_legacy_runline(snapshot.best_bet_type, snapshot.game_date):
+                bb_result, bb_profit = grade_best_bet(
+                    best_bet_type=snapshot.best_bet_type,
+                    best_bet_team=snapshot.best_bet_team,
+                    best_bet_line=float(snapshot.best_bet_line) if snapshot.best_bet_line is not None else None,
+                    best_bet_odds=float(snapshot.best_bet_odds) if snapshot.best_bet_odds is not None else None,
+                    best_total_direction=snapshot.best_total_direction,
+                    home_team=game.home_team,
+                    home_score=game.home_score,
+                    away_score=game.away_score,
+                )
+                if bb_result is not None:
+                    snapshot.best_bet_result = bb_result
+                    snapshot.best_bet_profit = bb_profit
 
             graded += 1
 
