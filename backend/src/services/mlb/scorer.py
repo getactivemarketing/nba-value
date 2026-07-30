@@ -18,6 +18,25 @@ from src.services.mlb.value_calculator import MLBValueCalculator, MLBValueResult
 
 logger = structlog.get_logger()
 
+# Logistic slope converting predicted run differential -> probability.
+#
+# FITTED, not hand-picked (2026-07-30 calibration audit). A logistic with scale
+# s = 1/k has SD = s*pi/sqrt(3). Observed MLB margin SD over 1,463 completed
+# 2026 games is 4.64 runs, so k = (pi/sqrt(3)) / 4.64 = 0.391.
+#
+# The previous k=0.5 ("gives reasonable spread") implied SD 3.63 — ~28% too
+# steep, pushing every probability too far from 0.5. That overconfidence was
+# measurable in the picks themselves: on its own graded moneyline selections the
+# model overstated its edge by +9pts on underdogs (said 54.8%, won 45.8%) and
+# +23pts on favorites (said 65.0%, won 42.1%).
+#
+# Backtested through the REAL gate on 351 graded ML picks:
+#   k=0.500 -> 253 picks, 48.6% WR, +32.87u (+0.130/pick)   [old]
+#   k=0.391 -> 261 picks, 47.9% WR, +38.90u (+0.149/pick)   [this]
+# k was derived from the margin SD independently of P&L; it landing on the
+# backtest optimum (0.32 and 0.50 both score worse) is corroboration, not a fit.
+RUN_DIFF_LOGISTIC_K = 0.391
+
 
 @dataclass
 class MLBGamePrediction:
@@ -324,14 +343,10 @@ class MLBScorer:
         """
         Convert predicted run differential to win probability.
 
-        Uses logistic function calibrated on historical data.
-        Each run of expected margin ~ 15% win probability shift
+        P(home win) = 1 / (1 + exp(-k * run_diff)), k = RUN_DIFF_LOGISTIC_K.
         """
-        # Logistic function: P(home win) = 1 / (1 + exp(-k * run_diff))
-        # k = 0.5 gives reasonable spread
         import math
-        k = 0.5
-        p = 1 / (1 + math.exp(-k * run_diff))
+        p = 1 / (1 + math.exp(-RUN_DIFF_LOGISTIC_K * run_diff))
         return max(0.05, min(0.95, p))  # Clamp to reasonable range
 
     @staticmethod
@@ -350,10 +365,17 @@ class MLBScorer:
         # Home covers -1.5 if they win by 2+
         adjusted_diff = run_diff - spread
 
-        # Use same logistic conversion
+        # Same fitted logistic as the win curve.
+        # CAVEAT (2026-07-30 calibration audit): shifting the win curve by the
+        # spread assumes margins are logistic with a fixed scale. They are not —
+        # 27.2% of MLB games are decided by exactly 1 run, and the ±1.5 runline
+        # sits directly on that spike, so this curve is measurably mis-specified
+        # (empirical P(margin>=2) vs this model: +0.039 / +0.059 / -0.043 across
+        # predicted-run-diff buckets — the sign flips). Runline stays paused
+        # (`runline_in_best_bet=False`) until this is rebuilt as an empirical
+        # cover curve and re-validated on clean forward data.
         import math
-        k = 0.5
-        p = 1 / (1 + math.exp(-k * adjusted_diff))
+        p = 1 / (1 + math.exp(-RUN_DIFF_LOGISTIC_K * adjusted_diff))
         return max(0.05, min(0.95, p))
 
     @staticmethod
