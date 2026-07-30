@@ -5,20 +5,56 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
-const navItems = [
-  { path: '/', label: 'NBA', icon: '🏀' },
-  { path: '/mlb', label: 'MLB', icon: '⚾' },
-  { path: '/mlb/performance', label: 'MLB Results' },
-  { path: '/nrfi', label: 'NRFI' },
-  { path: '/nfl', label: 'NFL', icon: '🏈' },
-  { path: '/nfl/performance', label: 'NFL Results' },
-  { path: '/props', label: 'Props' },
-  { path: '/trends', label: 'Trends' },
-  { path: '/evaluation', label: 'Performance' },
+// Nav is two levels: pick a sport, then a page within it. Previously all nine
+// links sat in one flat row, which put NBA's own sub-pages (Props / Trends /
+// Performance) at the same level as the sports themselves.
+const SPORTS = [
+  {
+    key: 'nba',
+    label: 'NBA',
+    icon: '🏀',
+    path: '/',
+    pages: [
+      { path: '/', label: 'Picks' },
+      { path: '/props', label: 'Props' },
+      { path: '/trends', label: 'Trends' },
+      { path: '/evaluation', label: 'Results' },
+    ],
+  },
+  {
+    key: 'mlb',
+    label: 'MLB',
+    icon: '⚾',
+    path: '/mlb',
+    pages: [
+      { path: '/mlb', label: 'Picks' },
+      { path: '/nrfi', label: 'NRFI' },
+      { path: '/mlb/performance', label: 'Results' },
+    ],
+  },
+  {
+    key: 'nfl',
+    label: 'NFL',
+    icon: '🏈',
+    path: '/nfl',
+    pages: [
+      { path: '/nfl', label: 'Picks' },
+      { path: '/nfl/performance', label: 'Results' },
+    ],
+  },
 ];
+
+/** Which sport owns the current route. Total — everything else is NBA,
+ *  including '/', '/props', '/trends', '/evaluation' and '/bet/:marketId'. */
+function activeSport(pathname: string) {
+  if (pathname.startsWith('/nfl')) return SPORTS[2];
+  if (pathname.startsWith('/mlb') || pathname === '/nrfi') return SPORTS[1];
+  return SPORTS[0];
+}
 
 export function Layout({ children }: LayoutProps) {
   const location = useLocation();
+  const current = activeSport(location.pathname);
 
   return (
     <div className="min-h-screen bg-tru-bg bg-grid">
@@ -38,23 +74,23 @@ export function Layout({ children }: LayoutProps) {
               </span>
             </Link>
 
-            {/* Navigation */}
-            <nav className="hidden md:flex items-center gap-1">
-              {navItems.map((item) => {
-                const isActive = location.pathname === item.path;
+            {/* Sport switcher — three tabs, all screen sizes */}
+            <nav className="flex items-center gap-1">
+              {SPORTS.map((sport) => {
+                const isActive = sport.key === current.key;
                 return (
                   <Link
-                    key={item.path}
-                    to={item.path}
+                    key={sport.key}
+                    to={sport.path}
                     className={clsx(
-                      'px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
+                      'px-2.5 sm:px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
                       isActive
                         ? 'bg-accent-cyan/10 text-accent-cyan'
                         : 'text-txt-muted hover:text-txt-primary hover:bg-tru-surface'
                     )}
                   >
-                    {item.icon && <span className="mr-1">{item.icon}</span>}
-                    {item.label}
+                    <span className="mr-1">{sport.icon}</span>
+                    {sport.label}
                   </Link>
                 );
               })}
@@ -66,7 +102,7 @@ export function Layout({ children }: LayoutProps) {
                 href="https://x.com/trulineapp"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-txt-muted hover:text-txt-primary transition-colors text-sm"
+                className="hidden sm:block text-txt-muted hover:text-txt-primary transition-colors text-sm"
               >
                 @trulineapp
               </a>
@@ -75,26 +111,30 @@ export function Layout({ children }: LayoutProps) {
         </div>
       </header>
 
-      {/* Mobile nav */}
-      <nav className="md:hidden flex overflow-x-auto border-b border-tru-border bg-tru-surface/50 px-4 gap-1 py-2">
-        {navItems.map((item) => {
-          const isActive = location.pathname === item.path;
-          return (
-            <Link
-              key={item.path}
-              to={item.path}
-              className={clsx(
-                'flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
-                isActive
-                  ? 'bg-accent-cyan/10 text-accent-cyan'
-                  : 'text-txt-muted'
-              )}
-            >
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
+      {/* Pages within the active sport. Hidden when there's only one page. */}
+      {current.pages.length > 1 && (
+        <nav className="flex overflow-x-auto border-b border-tru-border bg-tru-surface/50 gap-1 py-2 px-4 sm:px-6 lg:px-8">
+          <div className="max-w-7xl w-full mx-auto flex gap-1">
+            {current.pages.map((page) => {
+              const isActive = location.pathname === page.path;
+              return (
+                <Link
+                  key={page.path}
+                  to={page.path}
+                  className={clsx(
+                    'flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
+                    isActive
+                      ? 'bg-accent-cyan/10 text-accent-cyan'
+                      : 'text-txt-muted hover:text-txt-primary hover:bg-tru-surface'
+                  )}
+                >
+                  {page.label}
+                </Link>
+              );
+            })}
+          </div>
+        </nav>
+      )}
 
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
