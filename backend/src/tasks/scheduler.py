@@ -1349,7 +1349,23 @@ def start_scheduler():
     """Start the scheduler loop."""
     log_task("Starting prediction tracker scheduler...")
 
-    # Run all tasks immediately on startup
+    # Stay quiet until the healthcheck has resolved.
+    #
+    # This thread used to call run_all() the instant the process booted, while
+    # uvicorn was still coming up. The work is CPU-bound (model unpickling,
+    # scoring) and holds the GIL, so the main event loop could not answer
+    # /health even though the port was bound — Railway saw "service
+    # unavailable" and killed the container while the logs happily showed
+    # "Application startup complete".
+    #
+    # It was always marginal rather than broken: 481463e scraped through on
+    # healthcheck attempt #3, then b3c1176 and 16da4b3 exhausted all 8 and
+    # failed to deploy. MLB already waits 120s and social 180s for exactly
+    # this reason; 150s slots between them so the three do not collide.
+    log_task("Waiting 150s before initial run so the healthcheck can pass...")
+    time.sleep(150)
+
+    # Run all tasks on startup
     run_all()
 
     # Schedule recurring tasks
