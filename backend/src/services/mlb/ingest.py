@@ -16,7 +16,10 @@ from src.services.mlb.odds_history import (
     prices_changed,
     quote_from_bookmaker,
 )
-from src.services.mlb.mlb_api import MLBStatsAPIClient, MLBGameData, PARK_FACTORS, DOME_VENUES
+from src.services.mlb.mlb_api import (
+    MLBStatsAPIClient, MLBGameData, PARK_FACTORS, DOME_VENUES,
+    parse_team_season_stats,
+)
 from src.services.mlb.weather_api import WeatherAPIClient
 from src.services.data.odds_api import OddsAPIClient
 
@@ -678,6 +681,7 @@ class MLBDataIngestor:
         pitchers = result.scalars().all()
 
         count = 0
+        failed = 0
         for pitcher in pitchers:
             try:
                 stats = await self.mlb_client.get_pitcher_stats(
@@ -687,14 +691,30 @@ class MLBDataIngestor:
                     await self._upsert_pitcher_stats(pitcher.pitcher_id, stats, date_)
                     count += 1
             except Exception as e:
+                failed += 1
                 logger.warning(
                     "Failed to fetch pitcher stats",
                     pitcher_id=pitcher.pitcher_id,
                     error=str(e),
                 )
+                # A failed statement leaves the session in pending-rollback,
+                # which would fail every remaining pitcher with "current
+                # transaction is aborted" — one bad row silently costing the
+                # entire batch. Same per-row isolation the pick-alert job uses.
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
 
         await self.session.commit()
-        logger.info("Ingested pitcher stats", count=count)
+        # Surfaced so a wholesale failure cannot read as success: this task
+        # reported count=0 for the life of the system while the table stayed
+        # empty and all ten starter features served hardcoded defaults.
+        if failed:
+            logger.warning(
+                "Pitcher stats ingest had failures", ingested=count, failed=failed
+            )
+        logger.info("Ingested pitcher stats", count=count, failed=failed)
         return count
 
     async def _upsert_pitcher_stats(
@@ -724,7 +744,14 @@ class MLBDataIngestor:
             games_started=stats.games_started,
             quality_score=quality_score,
         ).on_conflict_do_update(
-            constraint="idx_mlb_pitcher_stats_unique",
+            # Infer from the unique INDEX columns. `ON CONFLICT ON CONSTRAINT`
+            # requires a real constraint, and idx_mlb_pitcher_stats_unique is
+            # only a unique index — so every insert raised, aborting the
+            # surrounding transaction and turning every later pitcher in the
+            # loop into "current transaction is aborted". The caller logged
+            # each at warning level and returned count=0 as success. Second of
+            # two bugs that kept mlb_pitcher_stats empty. Found 2026-07-31.
+            index_elements=["pitcher_id", "stat_date"],
             set_={
                 "era": stats.era,
                 "whip": stats.whip,
@@ -762,12 +789,37 @@ class MLBDataIngestor:
             runs_scored = record.get("runs_scored", 0)
             runs_allowed = record.get("runs_allowed", 0)
 
+            # Season rate stats. The standings endpoint carries runs and
+            # records but no OPS/AVG/OBP/SLG/ERA/WHIP, so these six columns sat
+            # at 0% coverage while the run-diff model — trained on them with
+            # real variance — was served a league-average constant for every
+            # game. A failure here must not cost us the standings-derived
+            # fields, so it degrades to None rather than aborting the team.
+            rates: dict = {}
+            team_id = record.get("team_id")
+            if team_id:
+                try:
+                    rates = parse_team_season_stats(
+                        await self.mlb_client.get_team_stats(int(team_id))
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Team season stats fetch failed",
+                        team=team_abbr,
+                        error=str(exc),
+                    )
+
             stmt = insert(MLBTeamStats).values(
                 team_abbr=team_abbr,
                 stat_date=today,
                 wins=wins,
                 losses=losses,
                 win_pct=record.get("win_pct"),
+                ops=rates.get("ops"),
+                batting_avg=rates.get("batting_avg"),
+                obp=rates.get("obp"),
+                slg=rates.get("slg"),
+                era=rates.get("era"),
                 runs_per_game=round(runs_scored / games, 2) if games > 0 else None,
                 runs_allowed_per_game=round(runs_allowed / games, 2) if games > 0 else None,
                 run_diff_per_game=round((runs_scored - runs_allowed) / games, 2) if games > 0 else None,
@@ -778,7 +830,7 @@ class MLBDataIngestor:
                 last_10_wins=record.get("last_10_wins"),
                 last_10_losses=record.get("last_10_losses"),
                 last_10_record=f"{record.get('last_10_wins', 0)}-{record.get('last_10_losses', 0)}",
-                team_whip=None,
+                team_whip=rates.get("team_whip"),
             ).on_conflict_do_update(
                 constraint="uq_mlb_team_stats_team_date",
                 set_={
@@ -795,6 +847,12 @@ class MLBDataIngestor:
                     "last_10_wins": record.get("last_10_wins"),
                     "last_10_losses": record.get("last_10_losses"),
                     "last_10_record": f"{record.get('last_10_wins', 0)}-{record.get('last_10_losses', 0)}",
+                    "ops": rates.get("ops"),
+                    "batting_avg": rates.get("batting_avg"),
+                    "obp": rates.get("obp"),
+                    "slg": rates.get("slg"),
+                    "era": rates.get("era"),
+                    "team_whip": rates.get("team_whip"),
                 },
             )
             await self.session.execute(stmt)

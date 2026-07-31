@@ -118,6 +118,66 @@ DOME_VENUES = {
 }
 
 
+# Rate stats MLB reports as strings when the value is undefined (0 innings
+# pitched, no at-bats). Parsing these as numbers would poison a feature with a
+# fabricated value, so they resolve to None instead.
+_UNDEFINED_STAT_VALUES = {"-.--", "*.**", "INF", "inf", "", "-", "--"}
+
+
+def _parse_stat(value) -> float | None:
+    """Parse an MLB rate stat. Returns None rather than guessing.
+
+    MLB writes rate stats as strings with a leading dot ('.233'), and uses
+    placeholder text for undefined rates.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if text in _UNDEFINED_STAT_VALUES:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def parse_team_season_stats(payload: dict) -> dict[str, float | None]:
+    """Pull season hitting/pitching rate stats out of a /teams/{id}/stats payload.
+
+    These six fields had 0% coverage in mlb_team_stats because update_team_stats
+    read only the standings endpoint. The run-diff model was trained on them
+    with real variance and served a league-average constant for every game.
+
+    Missing values stay None rather than defaulting — a default is
+    indistinguishable from a genuinely league-average team, which is exactly
+    how this went unnoticed for so long.
+    """
+    out: dict[str, float | None] = {
+        "batting_avg": None, "obp": None, "slg": None,
+        "ops": None, "era": None, "team_whip": None,
+    }
+
+    for block in payload.get("stats", []):
+        group = (block.get("group", {}) or {}).get("displayName", "").lower()
+        splits = block.get("splits") or []
+        if not splits:
+            continue
+        stat = splits[0].get("stat", {}) or {}
+
+        if group == "hitting":
+            out["batting_avg"] = _parse_stat(stat.get("avg"))
+            out["obp"] = _parse_stat(stat.get("obp"))
+            out["slg"] = _parse_stat(stat.get("slg"))
+            out["ops"] = _parse_stat(stat.get("ops"))
+        elif group == "pitching":
+            out["era"] = _parse_stat(stat.get("era"))
+            out["team_whip"] = _parse_stat(stat.get("whip"))
+
+    return out
+
+
 class MLBStatsAPIClient:
     """Client for MLB Stats API (free, no key required)."""
 
@@ -301,13 +361,19 @@ class MLBStatsAPIClient:
             response.raise_for_status()
             data = response.json()
 
-        # Also get player info
-        player_response = await client.get(
-            f"{self.BASE_URL}/people/{player_id}",
-            timeout=self.timeout,
-        )
-        player_data = player_response.json()
-        player_info = player_data.get("people", [{}])[0]
+            # Must stay INSIDE the context manager. This call was dedented out
+            # of it, so every invocation hit a closed client and raised
+            # RuntimeError before returning anything. The caller logged that at
+            # warning level and reported pitchers_updated=0 as success, so
+            # mlb_pitcher_stats sat empty for the life of the system and all ten
+            # starting-pitcher features silently served hardcoded defaults.
+            # Found 2026-07-31.
+            player_response = await client.get(
+                f"{self.BASE_URL}/people/{player_id}",
+                timeout=self.timeout,
+            )
+            player_data = player_response.json()
+            player_info = player_data.get("people", [{}])[0]
 
         stats_list = data.get("stats", [])
         if not stats_list:
