@@ -8,7 +8,13 @@ from sqlalchemy.dialects.postgresql import insert
 
 from src.models import (
     MLBTeam, MLBPitcher, MLBPitcherStats, MLBTeamStats,
-    MLBGame, MLBGameContext, MLBMarket,
+    MLBGame, MLBGameContext, MLBMarket, MLBOddsSnapshot,
+)
+from src.services.mlb.odds_history import (
+    OddsQuote,
+    minutes_to_first_pitch,
+    prices_changed,
+    quote_from_bookmaker,
 )
 from src.services.mlb.mlb_api import MLBStatsAPIClient, MLBGameData, PARK_FACTORS, DOME_VENUES
 from src.services.mlb.weather_api import WeatherAPIClient
@@ -39,6 +45,12 @@ MLB_TEAM_NAME_TO_ABBR = {
     "New York Mets": "NYM",
     "New York Yankees": "NYY",
     "Oakland Athletics": "OAK",
+    # The club dropped its city name after relocating; the Odds API now sends
+    # bare "Athletics". Without this alias every A's game silently failed the
+    # name lookup and was skipped — 111 games this season with zero odds rows,
+    # meaning the model could never bet or even price them. Found 2026-07-31.
+    "Athletics": "OAK",
+    "Sacramento Athletics": "OAK",
     "Philadelphia Phillies": "PHI",
     "Pittsburgh Pirates": "PIT",
     "San Diego Padres": "SD",
@@ -351,6 +363,7 @@ class MLBDataIngestor:
         odds_data = await self.odds_client.get_mlb_odds()
 
         count = 0
+        history_written = 0
         for game in odds_data:
             # Match to our game
             home_team = MLB_TEAM_NAME_TO_ABBR.get(game["home_team"])
@@ -399,6 +412,20 @@ class MLBDataIngestor:
             for bookmaker in game.get("bookmakers", []):
                 book = bookmaker["key"]
 
+                # Append-only history alongside the mlb_markets overwrite.
+                # Failures here must never cost us the live odds ingest.
+                try:
+                    history_written += await self._record_odds_history(
+                        mlb_game, book, bookmaker
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(
+                        "Odds history capture failed",
+                        game_id=mlb_game.game_id,
+                        book=book,
+                        error=str(exc),
+                    )
+
                 for market in bookmaker.get("markets", []):
                     market_key = market["key"]
 
@@ -424,8 +451,80 @@ class MLBDataIngestor:
                         count += 1
 
         await self.session.commit()
-        logger.info("Ingested MLB odds", count=count)
+        logger.info("Ingested MLB odds", count=count, history_rows=history_written)
         return count
+
+    async def _record_odds_history(
+        self,
+        game: MLBGame,
+        book: str,
+        bookmaker: dict,
+    ) -> int:
+        """Append one `mlb_odds_snapshots` row if this book's prices moved.
+
+        Returns 1 when a row was written, 0 when the quote was unchanged.
+
+        Writing every book on every 30-minute ingest would be ~16k
+        near-duplicate rows a day. Writing only on change stores exactly the
+        line movement Phase 4 needs, at a fraction of the volume.
+        """
+        quote = quote_from_bookmaker(
+            bookmaker, home_team=game.home_team, name_to_abbr=MLB_TEAM_NAME_TO_ABBR
+        )
+        if quote == OddsQuote():
+            return 0  # book listed the game but posted no prices we track
+
+        latest = await self.session.execute(
+            select(MLBOddsSnapshot)
+            .where(
+                and_(
+                    MLBOddsSnapshot.game_id == game.game_id,
+                    MLBOddsSnapshot.book == book,
+                )
+            )
+            .order_by(MLBOddsSnapshot.snapshot_time.desc())
+            .limit(1)
+        )
+        previous_row = latest.scalar_one_or_none()
+        previous = (
+            OddsQuote(
+                ml_home=previous_row.ml_home,
+                ml_away=previous_row.ml_away,
+                rl_line=previous_row.rl_line,
+                rl_home_odds=previous_row.rl_home_odds,
+                rl_away_odds=previous_row.rl_away_odds,
+                total_line=previous_row.total_line,
+                over_odds=previous_row.over_odds,
+                under_odds=previous_row.under_odds,
+            )
+            if previous_row
+            else None
+        )
+
+        if not prices_changed(previous, quote):
+            return 0
+
+        now = datetime.now(timezone.utc)
+        self.session.add(
+            MLBOddsSnapshot(
+                game_id=game.game_id,
+                book=book,
+                snapshot_time=now,
+                minutes_to_first_pitch=(
+                    minutes_to_first_pitch(now, game.game_time) if game.game_time else None
+                ),
+                ml_home=quote.ml_home,
+                ml_away=quote.ml_away,
+                rl_line=quote.rl_line,
+                rl_home_odds=quote.rl_home_odds,
+                rl_away_odds=quote.rl_away_odds,
+                total_line=quote.total_line,
+                over_odds=quote.over_odds,
+                under_odds=quote.under_odds,
+                created_at=now,
+            )
+        )
+        return 1
 
     async def _upsert_market_moneyline(
         self,

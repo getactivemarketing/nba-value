@@ -57,7 +57,7 @@ This is the single most common way roadmaps like this go wrong: an ensemble of f
 The infrastructure is already half-built. `odds_snapshots` exists with the right schema:
 
 ```
-79,453 rows | 644 games | 11 books | 2026-01-05 → 2026-06-14 (dead since June)
+79,453 rows | 644 games | 11 books | 2026-01-05 → 2026-06-14
 book_key, minutes_to_tip, home_ml_odds, away_ml_odds, home_spread,
 total_line, over/under_odds, home_ml_prob, over_prob, is_closing_line
 
@@ -65,14 +65,26 @@ is_closing_line = true:  0 rows        <- never once set
 MLB equivalent:          does not exist
 ```
 
+**Correction (2026-07-31):** this capture did not fail — the last NBA game was
+2026-06-13, so it stopped at the season boundary and the NBA pipeline is
+healthy. The real gap is narrower and worse: **MLB and NFL have no odds
+history at all**, and `is_closing_line` has never been set true in any
+vertical. Phase 1 is therefore *porting a working NBA capability to MLB*, not
+repairing a broken one.
+
 **Work**
-1. Revive `odds_snapshots` population (dead since 2026-06-14); root-cause why it stopped.
-2. Extend to MLB and NFL — an append-only per-book odds history keyed `(game_id, book_key, market_type, snapshot_time)`.
-3. Implement closing-line capture and actually set `is_closing_line`, keyed to game start.
-4. Compute and store CLV per pick: snapshot price vs closing price.
-5. Surface rolling CLV on the evaluation pages beside win rate.
-6. Alert on sustained negative CLV.
+1. ~~Build MLB odds history~~ **DONE 2026-07-31.** `mlb_odds_snapshots`,
+   append-on-change, wired into `ingest_odds`. Live-verified: 14 games × 11
+   books captured, 108 unchanged quotes suppressed, genuine moves recorded.
+2. ~~Closing-line marking~~ **DONE 2026-07-31.** `mark_closing_lines` task
+   selects the last quote at or before first pitch per (game, book) and sets
+   `is_closing_line`. Scheduled every 30m; idempotent.
+3. Compute and store CLV per pick: snapshot price vs closing price.
+4. Surface rolling CLV on the evaluation pages beside win rate.
+5. Alert on sustained negative CLV.
+6. Extend the same capture to NFL before the September opener.
 7. **Retrain the MLB run-diff model** (last trained 2026-02-09) and fix the feature-vector contract in the same commit — see `02` §2, `03` §9.
+8. Backfill NBA `odds_snapshots` closing-line marking when the season resumes.
 
 **Exit gate**
 ```

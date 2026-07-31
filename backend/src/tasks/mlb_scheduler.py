@@ -788,6 +788,112 @@ def run_grading():
         return {"status": "failed", "error": str(e)}
 
 
+async def mark_closing_lines_async(lookback_hours: int = 48) -> dict:
+    """Flag the closing quote per (game, book) once first pitch has passed.
+
+    The closing line is the last price observed at or before first pitch. It is
+    what closing-line value is measured against, and CLV is the fastest honest
+    signal we have that the model knows something the market does not — it
+    resolves in tens of bets where win rate needs thousands.
+
+    The NBA writer hardcoded `is_closing_line = False` and nothing ever set it
+    true, so no row in any vertical has ever been marked. This is that missing
+    step.
+
+    Idempotent: a (game, book) pair already carrying a marked row is skipped.
+    """
+    from sqlalchemy import select, and_, update
+    from src.models import MLBGame, MLBOddsSnapshot
+    from src.services.mlb.odds_history import select_closing_quote
+
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=lookback_hours)
+
+    games_marked = 0
+    rows_marked = 0
+
+    async with mlb_session() as session:
+        started = await session.execute(
+            select(MLBGame.game_id, MLBGame.game_time).where(
+                and_(
+                    MLBGame.game_time <= now,
+                    MLBGame.game_time >= window_start,
+                )
+            )
+        )
+        for game_id, first_pitch in started.all():
+            if first_pitch is None:
+                continue
+
+            # Books that already have a closing row for this game.
+            done = await session.execute(
+                select(MLBOddsSnapshot.book)
+                .where(
+                    and_(
+                        MLBOddsSnapshot.game_id == game_id,
+                        MLBOddsSnapshot.is_closing_line.is_(True),
+                    )
+                )
+                .distinct()
+            )
+            settled = {row[0] for row in done.all()}
+
+            candidates = await session.execute(
+                select(
+                    MLBOddsSnapshot.snapshot_id,
+                    MLBOddsSnapshot.book,
+                    MLBOddsSnapshot.snapshot_time,
+                ).where(MLBOddsSnapshot.game_id == game_id)
+            )
+
+            by_book: dict[str, list[tuple[int, datetime]]] = {}
+            for snapshot_id, book, snapshot_time in candidates.all():
+                if book in settled:
+                    continue
+                by_book.setdefault(book, []).append((snapshot_id, snapshot_time))
+
+            marked_this_game = 0
+            for book, quotes in by_book.items():
+                closing_id = select_closing_quote(quotes, first_pitch)
+                if closing_id is None:
+                    # Every quote for this book landed after first pitch. Leave
+                    # it unmarked — an honest gap beats a live in-game price
+                    # masquerading as a close.
+                    continue
+                await session.execute(
+                    update(MLBOddsSnapshot)
+                    .where(MLBOddsSnapshot.snapshot_id == closing_id)
+                    .values(is_closing_line=True)
+                )
+                marked_this_game += 1
+
+            if marked_this_game:
+                games_marked += 1
+                rows_marked += marked_this_game
+
+        await session.commit()
+
+    return {
+        "games_marked": games_marked,
+        "rows_marked": rows_marked,
+        "status": "success",
+    }
+
+
+def run_mark_closing_lines():
+    """Sync wrapper for closing-line marking."""
+    log_task("Marking MLB closing lines...")
+    try:
+        result = _run_async(mark_closing_lines_async())
+        log_task("Closing-line marking complete", **{k: str(v) for k, v in result.items()})
+        _last_run_times['mark_closing_lines'] = datetime.now(timezone.utc)
+        return result
+    except Exception as e:
+        log_task(f"Closing-line marking FAILED: {e}")
+        _last_run_times['mark_closing_lines'] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
+
+
 async def sync_results_async() -> dict:
     """Sync final scores for today and yesterday (ET)."""
     from src.services.mlb.ingest import MLBDataIngestor
@@ -905,6 +1011,9 @@ def run_all():
     run_grading()
     time.sleep(2)
 
+    run_mark_closing_lines()
+    time.sleep(2)
+
     run_sync_results()
 
     log_task("All MLB tasks complete")
@@ -1010,6 +1119,9 @@ def start_scheduler():
     mlb_scheduler.every(30).minutes.do(run_scoring)
     mlb_scheduler.every(15).minutes.do(run_snapshot)
     mlb_scheduler.every(1).hour.do(run_grading)
+    # Runs after games start; a 30m cadence keeps the closing row fresh enough
+    # for same-night CLV without hammering the table.
+    mlb_scheduler.every(30).minutes.do(run_mark_closing_lines)
     mlb_scheduler.every(2).hours.do(run_sync_results)
     mlb_scheduler.every(1).hour.do(run_health_check)
 

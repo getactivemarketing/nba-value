@@ -134,7 +134,8 @@ This is the most important section in this document. Each table has a different 
 
 | Table | Contract | Implication |
 |---|---|---|
-| `mlb_markets` | **Overwritten in place.** Current odds only. | Historical candidate sets are **unrecoverable**. Any backtest needing "what else was available that night" is impossible. |
+| `mlb_markets` | **Overwritten in place.** Current odds only. | Historical candidate sets before 2026-07-31 are **unrecoverable**. Backtests over that period cannot ask "what else was available that night". |
+| `mlb_odds_snapshots` | **Append-only**, written when a book's price moves. | Line movement, closing lines, CLV. Live from 2026-07-31. |
 | `mlb_predictions` | Upserted per `(game_id, market_type)`. Latest scoring run wins. | Not a historical record. |
 | `mlb_prediction_snapshots` | **Append-only, immutable after creation.** One row per game. | The single source of truth for what was actually bet, at what price. |
 | `mlb_games` | Mutable; `status` and scores updated post-game. | |

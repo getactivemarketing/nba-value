@@ -22,6 +22,7 @@ from src.models.mlb_team_stats import MLBTeamStats
 from src.models.mlb_game import MLBGame
 from src.models.mlb_game_context import MLBGameContext
 from src.models.mlb_market import MLBMarket
+from src.models.mlb_odds_snapshot import MLBOddsSnapshot
 from src.models.mlb_prediction import MLBPrediction
 from src.models.mlb_prediction_snapshot import MLBPredictionSnapshot
 
@@ -56,6 +57,7 @@ __all__ = [
     "MLBGame",
     "MLBGameContext",
     "MLBMarket",
+    "MLBOddsSnapshot",
     "MLBPrediction",
     "MLBPredictionSnapshot",
     # NFL Models
