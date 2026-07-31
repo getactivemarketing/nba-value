@@ -79,8 +79,13 @@ repairing a broken one.
 2. ~~Closing-line marking~~ **DONE 2026-07-31.** `mark_closing_lines` task
    selects the last quote at or before first pitch per (game, book) and sets
    `is_closing_line`. Scheduled every 30m; idempotent.
-3. Compute and store CLV per pick: snapshot price vs closing price.
-4. Surface rolling CLV on the evaluation pages beside win rate.
+3. ~~Compute and store CLV per pick~~ **DONE 2026-07-31.** `services/mlb/clv.py`
+   + hourly `compute_clv` task; `closing_novig_prob` / `clv` / `clv_books` on
+   the snapshot. Unmeasured picks stay NULL, never 0.
+4. **API DONE 2026-07-31** — `GET /api/v1/mlb/evaluation/clv?days=N` reports
+   mean/median CLV, beat-close rate, standard error, a sample-size `verdict`,
+   and `unmeasured` so a broken capture pipeline is visible rather than
+   silently shrinking the sample. *Frontend surfacing still to do.*
 5. Alert on sustained negative CLV.
 6. Extend the same capture to NFL before the September opener.
 7. **Retrain the MLB run-diff model** (last trained 2026-02-09) and fix the feature-vector contract in the same commit — see `02` §2, `03` §9.

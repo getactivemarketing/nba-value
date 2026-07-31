@@ -20,6 +20,7 @@ Pure functions only — no database, no network. See
 
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Iterable, Sequence
@@ -108,6 +109,60 @@ def consensus_novig_prob(
     if len(usable) < max(1, min_books):
         return None
     return sum(usable) / len(usable)
+
+
+# -- sample-size thresholds for the reported verdict --------------------------
+# CLV converges far faster than win rate, but not instantly. 30 is the point
+# a mean stops being anecdote; 100 is where it is worth acting on. Chosen
+# before looking at any CLV data — see docs/engineering/04 §4 on
+# pre-registration.
+VERDICT_PROVISIONAL_AT = 30
+VERDICT_MEANINGFUL_AT = 100
+
+
+def summarize_clv(values: Iterable[float | None]) -> dict:
+    """Aggregate per-pick CLV into a reportable summary.
+
+    Unmeasured picks (None) are excluded rather than counted as zero: treating
+    "no closing line" as neutral would pull the mean toward zero and let a
+    broken capture pipeline read as an absence of edge.
+
+    `verdict` deliberately depends only on sample size, never on how good the
+    number looks — a +25pt mean over five picks is still not evidence.
+    """
+    measured: Sequence[float] = [float(v) for v in values if v is not None]
+    n = len(measured)
+
+    if n == 0:
+        return {
+            "measured": 0,
+            "mean_clv": None,
+            "median_clv": None,
+            "beat_close_rate": None,
+            "std_error": None,
+            "verdict": "insufficient",
+        }
+
+    mean = statistics.fmean(measured)
+    std_error = (
+        round(statistics.stdev(measured) / (n ** 0.5), 5) if n > 1 else None
+    )
+
+    if n >= VERDICT_MEANINGFUL_AT:
+        verdict = "meaningful"
+    elif n >= VERDICT_PROVISIONAL_AT:
+        verdict = "provisional"
+    else:
+        verdict = "insufficient"
+
+    return {
+        "measured": n,
+        "mean_clv": round(mean, 5),
+        "median_clv": round(statistics.median(measured), 5),
+        "beat_close_rate": round(sum(1 for v in measured if v > 0) / n, 4),
+        "std_error": std_error,
+        "verdict": verdict,
+    }
 
 
 def clv_from_closing(

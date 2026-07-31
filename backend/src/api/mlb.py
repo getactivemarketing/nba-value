@@ -188,6 +188,26 @@ class EvaluationSummary(BaseModel):
     by_type: dict = {}
 
 
+class ClvSummary(BaseModel):
+    """Closing-line value — reported separately from P&L on purpose.
+
+    Win rate needs thousands of bets to resolve; CLV needs tens, because it
+    strips out game-outcome randomness and asks only whether we bought a price
+    the market later disagreed with. Mixing the two into one payload invites
+    reading a 40-bet CLV signal with the same scepticism as a 40-bet P&L
+    record, when the whole point is that they carry very different weight.
+    """
+    measured: int
+    unmeasured: int
+    mean_clv: float | None
+    median_clv: float | None
+    beat_close_rate: float | None
+    std_error: float | None
+    verdict: str
+    by_type: dict = {}
+    daily: list[dict] = []
+
+
 # Endpoints
 
 @router.get("/games", response_model=MLBGamesResponse)
@@ -574,6 +594,66 @@ async def get_evaluation_summary() -> EvaluationSummary:
             by_value_tier=tiers,
             by_type=by_type,
         )
+
+
+@router.get("/evaluation/clv", response_model=ClvSummary)
+async def get_clv_summary(
+    days: int = Query(30, ge=1, le=365, description="Look-back window in days"),
+) -> ClvSummary:
+    """Rolling closing-line value for MLB picks.
+
+    `unmeasured` is reported alongside `measured` deliberately: a run of picks
+    with no closing consensus means the capture pipeline is broken, and that
+    must be visible rather than silently shrinking the sample.
+    """
+    from datetime import date as _date, timedelta as _timedelta
+    from src.services.mlb.clv import summarize_clv
+
+    cutoff = _date.today() - _timedelta(days=days)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(MLBPredictionSnapshot).where(
+                and_(
+                    MLBPredictionSnapshot.best_bet_team.isnot(None),
+                    MLBPredictionSnapshot.game_date >= cutoff,
+                )
+            )
+        )
+        snapshots = list(result.scalars().all())
+
+    graded = [s for s in snapshots if s.clv is not None]
+    summary = summarize_clv([float(s.clv) for s in graded])
+
+    by_type: dict[str, dict] = {}
+    for snap in graded:
+        bucket = by_type.setdefault((snap.best_bet_type or "unknown").lower(), [])
+        bucket.append(float(snap.clv))
+    by_type_summary = {k: summarize_clv(v) for k, v in by_type.items()}
+
+    daily: dict = {}
+    for snap in graded:
+        daily.setdefault(snap.game_date, []).append(float(snap.clv))
+    daily_rows = [
+        {
+            "date": day.isoformat(),
+            "measured": len(vals),
+            "mean_clv": round(sum(vals) / len(vals), 5),
+        }
+        for day, vals in sorted(daily.items())
+    ]
+
+    return ClvSummary(
+        measured=summary["measured"],
+        unmeasured=len(snapshots) - len(graded),
+        mean_clv=summary["mean_clv"],
+        median_clv=summary["median_clv"],
+        beat_close_rate=summary["beat_close_rate"],
+        std_error=summary["std_error"],
+        verdict=summary["verdict"],
+        by_type=by_type_summary,
+        daily=daily_rows,
+    )
 
 
 @router.get("/stats/first-inning")
