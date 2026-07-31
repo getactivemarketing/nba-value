@@ -5,7 +5,7 @@ MLB Scheduler for automated prediction tracking tasks.
 This script runs scheduled tasks for MLB:
 1. Sync teams (daily)
 2. Ingest games from MLB Stats API (every 2 hours)
-3. Update team/pitcher stats (every 2 hours)
+3. Update team stats (every 2 hours); pitcher stats (daily 07:00)
 4. Ingest weather data (every 2 hours)
 5. Ingest odds from Odds API (every 30 min)
 6. Run scoring/predictions (every 30 min)
@@ -251,20 +251,50 @@ def run_ingest_games():
 
 
 async def update_stats_async() -> dict:
-    """Update team and pitcher statistics."""
+    """Update team statistics.
+
+    Pitcher stats were split out to their own daily task (2026-07-31). Once
+    ingest_pitcher_stats actually worked it took ~7 minutes for 325 pitchers,
+    and `schedule` runs jobs sequentially on one thread — so leaving it here
+    would have blocked run_snapshot (every 15m) well into the window where it
+    needs to freeze picks before first pitch. It had been free only because
+    every call was failing.
+    """
     from src.services.mlb.ingest import MLBDataIngestor
 
     async with mlb_session() as session:
-        ingestor = MLBDataIngestor(session)
+        team_count = await MLBDataIngestor(session).update_team_stats()
 
-        team_count = await ingestor.update_team_stats()
-        pitcher_count = await ingestor.ingest_pitcher_stats()
+    return {"teams_updated": team_count, "status": "success"}
 
-    return {
-        "teams_updated": team_count,
-        "pitchers_updated": pitcher_count,
-        "status": "success",
-    }
+
+async def ingest_pitcher_stats_async() -> dict:
+    """Refresh season-to-date pitcher stats.
+
+    Daily is ample: a starter pitches roughly every fifth day, so a 2-hourly
+    refresh spent ~7,800 calls/day on the free MLB API to re-fetch numbers
+    that had not moved.
+    """
+    from src.services.mlb.ingest import MLBDataIngestor
+
+    async with mlb_session() as session:
+        pitcher_count = await MLBDataIngestor(session).ingest_pitcher_stats()
+
+    return {"pitchers_updated": pitcher_count, "status": "success"}
+
+
+def run_ingest_pitcher_stats():
+    """Sync wrapper for pitcher stats ingestion."""
+    log_task("Ingesting MLB pitcher stats...")
+    try:
+        result = _run_async(ingest_pitcher_stats_async())
+        log_task("Pitcher stats complete", **{k: str(v) for k, v in result.items()})
+        _last_run_times['ingest_pitcher_stats'] = datetime.now(timezone.utc)
+        return result
+    except Exception as e:
+        log_task(f"Pitcher stats FAILED: {e}")
+        _last_run_times['ingest_pitcher_stats'] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
 
 
 def run_update_stats():
@@ -1112,6 +1142,9 @@ def run_all():
     run_update_stats()
     time.sleep(2)
 
+    run_ingest_pitcher_stats()
+    time.sleep(2)
+
     run_ingest_weather()
     time.sleep(2)
 
@@ -1233,6 +1266,9 @@ def start_scheduler():
     mlb_scheduler.every().day.at("06:00").do(run_sync_teams)  # Daily team sync
     mlb_scheduler.every(2).hours.do(run_ingest_games)
     mlb_scheduler.every(2).hours.do(run_update_stats)
+    # Daily, and early: ~7 min for 325 pitchers, so keep it away from the
+    # evening slate when run_snapshot is freezing picks before first pitch.
+    mlb_scheduler.every().day.at("07:00").do(run_ingest_pitcher_stats)
     mlb_scheduler.every(2).hours.do(run_ingest_weather)
     mlb_scheduler.every(30).minutes.do(run_ingest_odds)
     mlb_scheduler.every(30).minutes.do(run_scoring)
