@@ -894,6 +894,122 @@ def run_mark_closing_lines():
         return {"status": "failed", "error": str(e)}
 
 
+async def compute_clv_async(lookback_hours: int = 72) -> dict:
+    """Measure closing-line value for every pick whose game has started.
+
+    CLV is the fastest honest read on whether the model knows something the
+    market does not: it resolves in tens of bets where realized win rate needs
+    thousands. Depends on `mark_closing_lines` having run first.
+
+    Picks with no closing consensus are left NULL rather than zeroed — an
+    unmeasured pick recorded as neutral would dilute the average toward zero
+    and make a broken capture pipeline look like an absence of edge.
+    """
+    from sqlalchemy import select, and_, update
+    from src.models import MLBGame, MLBOddsSnapshot, MLBPredictionSnapshot
+    from src.services.mlb.clv import (
+        ClosingQuote,
+        clv_from_closing,
+        consensus_novig_prob,
+        novig_prob_for_side,
+    )
+
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=lookback_hours)
+
+    measured = 0
+    unmeasurable = 0
+
+    async with mlb_session() as session:
+        pending = await session.execute(
+            select(MLBPredictionSnapshot, MLBGame.game_time)
+            .join(MLBGame, MLBGame.game_id == MLBPredictionSnapshot.game_id)
+            .where(
+                and_(
+                    MLBPredictionSnapshot.best_bet_team.isnot(None),
+                    MLBPredictionSnapshot.clv.is_(None),
+                    MLBGame.game_time <= now,
+                    MLBGame.game_time >= window_start,
+                )
+            )
+        )
+
+        for snap, _game_time in pending.all():
+            closing = await session.execute(
+                select(MLBOddsSnapshot).where(
+                    and_(
+                        MLBOddsSnapshot.game_id == snap.game_id,
+                        MLBOddsSnapshot.is_closing_line.is_(True),
+                    )
+                )
+            )
+            quotes = list(closing.scalars().all())
+            if not quotes:
+                unmeasurable += 1
+                continue
+
+            is_home = snap.best_bet_team == snap.home_team
+            # Totals carry no team, so best_total_direction is the only record
+            # of which side was taken. Note the query filters on
+            # best_bet_team IS NOT NULL, so totals cannot reach here while
+            # they remain disabled — this keeps the path correct for the day
+            # they are re-enabled rather than leaving a latent bug.
+            direction = (
+                snap.best_total_direction if snap.best_bet_type == "total" else None
+            )
+
+            probs = [
+                novig_prob_for_side(
+                    ClosingQuote(
+                        ml_home=row.ml_home, ml_away=row.ml_away,
+                        rl_line=row.rl_line, rl_home_odds=row.rl_home_odds,
+                        rl_away_odds=row.rl_away_odds, total_line=row.total_line,
+                        over_odds=row.over_odds, under_odds=row.under_odds,
+                    ),
+                    market=snap.best_bet_type,
+                    is_home=is_home,
+                    line=snap.best_bet_line,
+                    direction=direction,
+                )
+                for row in quotes
+            ]
+
+            consensus = consensus_novig_prob(probs)
+            value = clv_from_closing(snap.best_bet_odds, consensus)
+            if value is None:
+                unmeasurable += 1
+                continue
+
+            await session.execute(
+                update(MLBPredictionSnapshot)
+                .where(MLBPredictionSnapshot.id == snap.id)
+                .values(
+                    closing_novig_prob=round(consensus, 5),
+                    clv=round(value, 5),
+                    clv_books=len([p for p in probs if p is not None]),
+                )
+            )
+            measured += 1
+
+        await session.commit()
+
+    return {"measured": measured, "unmeasurable": unmeasurable, "status": "success"}
+
+
+def run_compute_clv():
+    """Sync wrapper for CLV measurement."""
+    log_task("Computing MLB closing-line value...")
+    try:
+        result = _run_async(compute_clv_async())
+        log_task("CLV computation complete", **{k: str(v) for k, v in result.items()})
+        _last_run_times['compute_clv'] = datetime.now(timezone.utc)
+        return result
+    except Exception as e:
+        log_task(f"CLV computation FAILED: {e}")
+        _last_run_times['compute_clv'] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
+
+
 async def sync_results_async() -> dict:
     """Sync final scores for today and yesterday (ET)."""
     from src.services.mlb.ingest import MLBDataIngestor
@@ -1014,6 +1130,9 @@ def run_all():
     run_mark_closing_lines()
     time.sleep(2)
 
+    run_compute_clv()
+    time.sleep(2)
+
     run_sync_results()
 
     log_task("All MLB tasks complete")
@@ -1122,6 +1241,8 @@ def start_scheduler():
     # Runs after games start; a 30m cadence keeps the closing row fresh enough
     # for same-night CLV without hammering the table.
     mlb_scheduler.every(30).minutes.do(run_mark_closing_lines)
+    # Runs after marking; CLV is only computable once a closing row exists.
+    mlb_scheduler.every(1).hour.do(run_compute_clv)
     mlb_scheduler.every(2).hours.do(run_sync_results)
     mlb_scheduler.every(1).hour.do(run_health_check)
 

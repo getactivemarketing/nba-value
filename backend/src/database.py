@@ -68,6 +68,11 @@ async def init_db() -> None:
         ("mlb_games", "first_inning_tweet_posted", "BOOLEAN DEFAULT FALSE"),
         ("mlb_games", "final_tweet_posted", "BOOLEAN DEFAULT FALSE"),
         ("mlb_prediction_snapshots", "celebration_tweet_posted", "BOOLEAN DEFAULT FALSE"),
+        # Closing-line value (roadmap Phase 1). Additive + nullable; old rows
+        # stay valid and simply carry NULL = "never measured".
+        ("mlb_prediction_snapshots", "closing_novig_prob", "NUMERIC(6,5)"),
+        ("mlb_prediction_snapshots", "clv", "NUMERIC(7,5)"),
+        ("mlb_prediction_snapshots", "clv_books", "INTEGER"),
         ("prediction_snapshots", "celebration_tweet_posted", "BOOLEAN DEFAULT FALSE"),
     ]
 

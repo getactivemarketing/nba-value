@@ -98,6 +98,18 @@ class MLBPredictionSnapshot(Base):
     best_bet_result: Mapped[str | None] = mapped_column(String(20), nullable=True)
     best_bet_profit: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
 
+    # Closing-line value. Measured after first pitch from mlb_odds_snapshots
+    # rows flagged is_closing_line, so it is an OUTCOME field like the grading
+    # columns above — the frozen pre-game record is never rewritten.
+    #
+    #   clv = closing_novig_prob - (1 / best_bet_odds)
+    #
+    # NULL means "not measured" (no closing consensus available), never
+    # "neutral" — see services/mlb/clv.py.
+    closing_novig_prob: Mapped[Decimal | None] = mapped_column(Numeric(6, 5), nullable=True)
+    clv: Mapped[Decimal | None] = mapped_column(Numeric(7, 5), nullable=True)
+    clv_books: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Social posting tracking
     celebration_tweet_posted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
