@@ -1142,8 +1142,9 @@ def run_all():
     run_update_stats()
     time.sleep(2)
 
-    run_ingest_pitcher_stats()
-    time.sleep(2)
+    # NOT run_ingest_pitcher_stats(): it takes ~7 minutes and run_all()
+    # executes on every startup, holding one of only 2 pooled connections
+    # for the duration. It runs on its own daily schedule instead.
 
     run_ingest_weather()
     time.sleep(2)
