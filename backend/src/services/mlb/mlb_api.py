@@ -143,6 +143,13 @@ def _parse_stat(value) -> float | None:
         return None
 
 
+def _parse_innings_notation(raw) -> float | None:
+    """Thin re-export so the client can parse innings without a circular import."""
+    from src.services.mlb.pitcher_history import parse_innings
+
+    return parse_innings(raw)
+
+
 def parse_team_season_stats(payload: dict) -> dict[str, float | None]:
     """Pull season hitting/pitching rate stats out of a /teams/{id}/stats payload.
 
@@ -396,9 +403,63 @@ class MLBStatsAPIClient:
             k_per_9=self._safe_float(stat.get("strikeoutsPer9Inn")),
             bb_per_9=self._safe_float(stat.get("walksPer9Inn")),
             fip=None,  # Not directly available, calculate separately
-            innings_pitched=self._safe_float(stat.get("inningsPitched")),
+            # Baseball notation, not a decimal: '60.2' is 60 2/3 innings.
+            # _safe_float stored it as 60.2, which both understates the value
+            # and mixes two different scales into one column now that the
+            # game-log backfill writes true decimals.
+            innings_pitched=_parse_innings_notation(stat.get("inningsPitched")),
             games_started=stat.get("gamesStarted"),
         )
+
+    async def get_pitcher_game_logs(
+        self,
+        player_id: int,
+        season: int | None = None,
+    ) -> list:
+        """Fetch per-appearance game logs for a pitcher.
+
+        The only route to point-in-time pitcher stats: the season endpoint
+        returns a single to-date snapshot, which cannot say what a pitcher's
+        ERA was back in April. Game logs carry dates, so cumulative stats can
+        be rebuilt as of any game.
+        """
+        from src.services.mlb.pitcher_history import GameLogEntry
+
+        if season is None:
+            season = date.today().year
+
+        params = {"stats": "gameLog", "season": season, "group": "pitching"}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.BASE_URL}/people/{player_id}/stats",
+                params=params,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        stats_list = data.get("stats", [])
+        if not stats_list:
+            return []
+
+        entries = []
+        for split in stats_list[0].get("splits", []):
+            stat = split.get("stat", {}) or {}
+            game_date = split.get("date")
+            if not game_date:
+                continue
+            entries.append(
+                GameLogEntry(
+                    date=game_date,
+                    innings_pitched=stat.get("inningsPitched"),
+                    earned_runs=stat.get("earnedRuns") or 0,
+                    hits=stat.get("hits") or 0,
+                    walks=stat.get("baseOnBalls") or 0,
+                    strikeouts=stat.get("strikeOuts") or 0,
+                )
+            )
+        return entries
 
     async def get_team_stats(
         self,
