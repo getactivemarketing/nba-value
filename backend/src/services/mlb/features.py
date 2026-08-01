@@ -539,7 +539,11 @@ async def build_training_data(
         run_diff = game.home_score - game.away_score
         total_runs = game.home_score + game.away_score
 
-        row = features.to_dict()
+        # Canonical model feature names FIRST, so a retrain trains on exactly
+        # the names serving will ask for. to_dict() adds the raw dataclass
+        # fields alongside for analysis; where the two overlap the canonical
+        # value wins, since that is what the scorer builds.
+        row = {**features.to_dict(), **features.model_feature_dict()}
         row["target_run_diff"] = run_diff
         row["target_total"] = total_runs
         row["home_won"] = 1 if run_diff > 0 else 0

@@ -186,6 +186,48 @@ Append one row per model/constant change reaching production.
 | 2026-07-28/29 | Grading rewritten to frozen columns | `best_ml` per-row overwrite stranded 109 snapshots as ungradeable | Clean record: ML 343 graded / +24.50u |
 | 2026-07-29 | Totals re-entry gate evaluated | 125 picks, 52.1%, −0.91u | **Gate failed. Stays suppressed** |
 | 2026-07-30 | `RUN_DIFF_LOGISTIC_K` 0.5 → 0.391 | Fitted to measured margin SD 4.64 | Deployed `de196dc`. Backtest +38.90u vs +32.87u |
+| 2026-07-31 | Populate 24 constant-serving features | Train/serve skew: model trained on real variance, served league-average constants | Deployed `481463e`. **Worth +10.0pts of holdout winner accuracy — see below** |
+| 2026-08-01 | Feature vector built by name; 28 → 33 features | Twelve serving names had no counterpart in training output | Deployed `2ccb803`. Behaviour-preserving for the incumbent |
+| 2026-08-01 | **2026 retrain evaluated → NO-GO** | 1,405 point-in-time games, 33 features | **Rejected. Zero skill — see below** |
+
+### 2026 retrain: NO-GO (2026-08-01)
+
+Chronological holdout, 281 games (2026-07-06 → 07-30), both models scored on
+the same games.
+
+| model | MAE | RMSE | hit% |
+|---|---|---|---|
+| challenger — 2026, 1,124 games, 33 features | 3.564 | 4.733 | 45.2 |
+| incumbent — 2024-25, 4,931 games, 28 features | **3.436** | **4.646** | **59.8** |
+| baseline — predict the training mean | 3.565 | 4.725 | 47.7 |
+
+The challenger is **indistinguishable from predicting the mean** (MAE −0.000,
+RMSE +0.008 against baseline) and its winner accuracy is *below* baseline.
+1,124 games cannot support 33 features at `num_leaves=31`; the incumbent had
+4.4× the data. **Keep the incumbent.** Revisit when a second season of
+point-in-time history exists — the pipeline to build it now works.
+
+Of the five recovered features only two carried any gain
+(`away_last_10_win_pct` rank 4, `weather_factor` rank 14); `temperature`,
+`is_dome` and `home_last_10_win_pct` scored exactly zero. That is evidence
+about this sample size, not proof the features are worthless.
+
+### The model was never the problem — the features were
+
+Same incumbent model, same 281-game holdout, only the inputs differ:
+
+| inputs | MAE | RMSE | hit% |
+|---|---|---|---|
+| real features (production since `481463e`) | 3.436 | 4.646 | **59.8** |
+| constants (what production actually served all season) | 3.536 | 4.744 | **49.8** |
+
+**+10.0 percentage points of winner accuracy from the feature fix alone**, on a
+model nobody retrained. Blind, it was a coin flip — worse than always backing
+the home team, who won 52.3% of these games.
+
+Caveat: 281 games, roughly 2–3 standard errors. Real, but confirm forward.
+Note also that sign accuracy is not betting profit — the market prices these
+games too, and CLV remains the instrument that decides whether this converts.
 
 ---
 
