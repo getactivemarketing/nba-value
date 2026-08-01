@@ -494,6 +494,65 @@ class MLBStatsAPIClient:
             response.raise_for_status()
             return response.json()
 
+    async def get_team_game_logs(
+        self,
+        team_id: int,
+        season: int | None = None,
+    ) -> tuple[list, list]:
+        """Per-game hitting and pitching component counts for a team.
+
+        Returns (hitting, pitching) as TeamGameLog lists. The season endpoint
+        gives only a to-date snapshot; these carry dates, so cumulative rates
+        can be rebuilt as of any game.
+        """
+        from src.services.mlb.team_history import TeamGameLog
+
+        if season is None:
+            season = date.today().year
+
+        async def _fetch(group: str) -> list:
+            params = {"stats": "gameLog", "season": season, "group": group}
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.BASE_URL}/teams/{team_id}/stats",
+                    params=params,
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            stats_list = data.get("stats", [])
+            if not stats_list:
+                return []
+
+            out = []
+            for split in stats_list[0].get("splits", []):
+                game_date = split.get("date")
+                if not game_date:
+                    continue
+                stat = split.get("stat", {}) or {}
+                if group == "hitting":
+                    out.append(TeamGameLog(
+                        date=game_date,
+                        at_bats=stat.get("atBats") or 0,
+                        hits=stat.get("hits") or 0,
+                        total_bases=stat.get("totalBases") or 0,
+                        walks=stat.get("baseOnBalls") or 0,
+                        hit_by_pitch=stat.get("hitByPitch") or 0,
+                        sac_flies=stat.get("sacFlies") or 0,
+                    ))
+                else:
+                    out.append(TeamGameLog(
+                        date=game_date,
+                        innings_pitched=stat.get("inningsPitched"),
+                        earned_runs=stat.get("earnedRuns") or 0,
+                        hits_allowed=stat.get("hits") or 0,
+                        walks_allowed=stat.get("baseOnBalls") or 0,
+                    ))
+            return out
+
+        return await _fetch("hitting"), await _fetch("pitching")
+
     async def get_team_standings(
         self,
         season: int | None = None,
