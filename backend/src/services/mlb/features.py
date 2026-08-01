@@ -115,6 +115,74 @@ class MLBGameFeatures:
     has_home_starter: bool = False
     has_away_starter: bool = False
 
+    def model_feature_dict(self) -> dict[str, float]:
+        """Canonical MODEL FEATURE NAME -> value, with defaults applied.
+
+        The single source of truth shared by training and serving. Previously
+        the mapping existed only as the ORDER of expressions inside
+        MLBScorer._build_model_feature_vector, while build_training_data
+        emitted this dataclass's own field names — twelve of the 28 serving
+        names had no counterpart in the training output (home_era vs
+        home_team_era, home_avg vs home_batting_avg, home_starter_k9 vs
+        home_starter_k_rate, ...). Nothing checked the two agreed.
+
+        Defaults live here and only here. They are league-average stand-ins, so
+        a missing value is indistinguishable from an average team — which is
+        precisely how 24 of 28 features served constants unnoticed for a full
+        season. Coverage must be measured, never assumed. See
+        docs/engineering/02 §2 and §7.
+        """
+        home_era = self.home_team_era if self.home_team_era is not None else 4.00
+        away_era = self.away_team_era if self.away_team_era is not None else 4.00
+
+        return {
+            # Offense
+            "home_runs_per_game": self.home_runs_per_game if self.home_runs_per_game is not None else 4.5,
+            "away_runs_per_game": self.away_runs_per_game if self.away_runs_per_game is not None else 4.5,
+            "home_ops": self.home_ops if self.home_ops is not None else 0.720,
+            "away_ops": self.away_ops if self.away_ops is not None else 0.720,
+            "home_avg": self.home_batting_avg if self.home_batting_avg is not None else 0.250,
+            "away_avg": self.away_batting_avg if self.away_batting_avg is not None else 0.250,
+            "home_obp": self.home_obp if self.home_obp is not None else 0.320,
+            "away_obp": self.away_obp if self.away_obp is not None else 0.320,
+            "home_slg": self.home_slg if self.home_slg is not None else 0.400,
+            "away_slg": self.away_slg if self.away_slg is not None else 0.400,
+
+            # Team pitching
+            "home_era": home_era,
+            "away_era": away_era,
+            "home_whip": self.home_team_whip if self.home_team_whip is not None else 1.30,
+            "away_whip": self.away_team_whip if self.away_team_whip is not None else 1.30,
+
+            # Starting pitchers
+            "home_starter_era": self.home_starter_era if self.home_starter_era is not None else 4.00,
+            "away_starter_era": self.away_starter_era if self.away_starter_era is not None else 4.00,
+            "home_starter_whip": self.home_starter_whip if self.home_starter_whip is not None else 1.25,
+            "away_starter_whip": self.away_starter_whip if self.away_starter_whip is not None else 1.25,
+            "home_starter_k9": self.home_starter_k_rate if self.home_starter_k_rate is not None else 8.5,
+            "away_starter_k9": self.away_starter_k_rate if self.away_starter_k_rate is not None else 8.5,
+            "home_starter_bb9": self.home_starter_bb_rate if self.home_starter_bb_rate is not None else 3.0,
+            "away_starter_bb9": self.away_starter_bb_rate if self.away_starter_bb_rate is not None else 3.0,
+            "home_starter_ip": self.home_starter_ip if self.home_starter_ip is not None else 100.0,
+            "away_starter_ip": self.away_starter_ip if self.away_starter_ip is not None else 100.0,
+
+            # Context
+            "park_factor": self.park_factor,
+            "offense_diff": self.offense_matchup_edge if self.offense_matchup_edge is not None else 0.0,
+            "starter_era_diff": self.starter_era_diff if self.starter_era_diff is not None else 0.0,
+            "team_era_diff": away_era - home_era,
+
+            # Added 2026-08-01. Collected all along and dropped before training:
+            # temperature and is_dome sat on this dataclass, weather_factor was
+            # computed from wind speed/direction, and last-10 form came from
+            # team stats — none reached MODEL_FEATURE_NAMES.
+            "temperature": float(self.temperature) if self.temperature is not None else 70.0,
+            "is_dome": 1.0 if self.is_dome else 0.0,
+            "weather_factor": self.weather_factor if self.weather_factor is not None else 1.0,
+            "home_last_10_win_pct": self.home_last_10_win_pct if self.home_last_10_win_pct is not None else 0.5,
+            "away_last_10_win_pct": self.away_last_10_win_pct if self.away_last_10_win_pct is not None else 0.5,
+        }
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for ML model input."""
         return {

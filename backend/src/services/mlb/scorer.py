@@ -38,6 +38,15 @@ logger = structlog.get_logger()
 RUN_DIFF_LOGISTIC_K = 0.391
 
 
+class FeatureContractError(RuntimeError):
+    """A model artifact expects features the feature builder cannot supply.
+
+    Raised loudly rather than defaulted: a silently-filled feature is
+    indistinguishable from a real league-average value, which is exactly how 24
+    of 28 features served constants unnoticed for a full season.
+    """
+
+
 @dataclass
 class MLBGamePrediction:
     """Complete prediction for an MLB game."""
@@ -116,6 +125,12 @@ class MLBScorer:
         "home_starter_ip", "away_starter_ip",
         "park_factor",
         "offense_diff", "starter_era_diff", "team_era_diff",
+        # Added 2026-08-01. Collected all along and dropped before training:
+        # temperature/is_dome sat on MLBGameFeatures, weather_factor was
+        # computed from wind speed+direction, last-10 form came from team
+        # stats. None of them ever reached the model.
+        "temperature", "is_dome", "weather_factor",
+        "home_last_10_win_pct", "away_last_10_win_pct",
     ]
 
     # V2 features — includes first inning data, used when retraining
@@ -162,44 +177,35 @@ class MLBScorer:
             self.totals_model = self.totals_model_data.get("model")
             logger.info("Loaded totals model", path=str(totals_path))
 
-    def _build_model_feature_vector(self, features: MLBGameFeatures) -> np.ndarray:
-        """
-        Build feature vector matching the trained model's expected features.
+    def _build_model_feature_vector(
+        self,
+        features: MLBGameFeatures,
+        feature_cols: list[str] | None = None,
+    ) -> np.ndarray:
+        """Build the feature vector BY NAME from the artifact's own contract.
 
-        The model was trained on specific features in a specific order.
-        This method maps MLBGameFeatures to that expected format.
+        `feature_cols` should come from the loaded model artifact, so serving
+        follows whatever the model was actually trained on rather than a
+        hardcoded order. Falls back to MODEL_FEATURE_NAMES for artifacts
+        predating the metadata.
+
+        This used to be 28 expressions in fixed positional order, with the
+        name->value mapping existing nowhere except that order. Deploying a
+        differently-shaped model would have raised on shape at best, and at
+        worst fed the right numbers into the wrong slots. An unknown name now
+        fails loudly at inference rather than silently producing a plausible
+        prediction from misaligned inputs.
         """
-        vector = [
-            features.home_runs_per_game or self.AVG_RUNS_PER_TEAM,
-            features.away_runs_per_game or self.AVG_RUNS_PER_TEAM,
-            features.home_ops or 0.720,
-            features.away_ops or 0.720,
-            features.home_batting_avg or 0.250,
-            features.away_batting_avg or 0.250,
-            features.home_obp or 0.320,
-            features.away_obp or 0.320,
-            features.home_slg or 0.400,
-            features.away_slg or 0.400,
-            features.home_team_era or 4.00,
-            features.away_team_era or 4.00,
-            features.home_team_whip or 1.30,
-            features.away_team_whip or 1.30,
-            features.home_starter_era or 4.00,
-            features.away_starter_era or 4.00,
-            features.home_starter_whip or 1.25,
-            features.away_starter_whip or 1.25,
-            features.home_starter_k_rate or 8.5,
-            features.away_starter_k_rate or 8.5,
-            features.home_starter_bb_rate or 3.0,
-            features.away_starter_bb_rate or 3.0,
-            features.home_starter_ip or 100.0,
-            features.away_starter_ip or 100.0,
-            features.park_factor,
-            features.offense_matchup_edge or 0.0,
-            features.starter_era_diff or 0.0,
-            (features.away_team_era or 4.0) - (features.home_team_era or 4.0),  # team_era_diff
-        ]
-        return np.array([vector])
+        names = feature_cols or self.MODEL_FEATURE_NAMES
+        values = features.model_feature_dict()
+
+        missing = [n for n in names if n not in values]
+        if missing:
+            raise FeatureContractError(
+                f"model expects features the feature builder cannot supply: {missing}"
+            )
+
+        return np.array([[float(values[n]) for n in names]])
 
     async def score_game(self, game: MLBGame) -> MLBGamePrediction:
         """
@@ -214,9 +220,13 @@ class MLBScorer:
         # Calculate features
         features = await self.feature_calculator.calculate_game_features(game)
 
-        # Predict run differential
+        # Predict run differential. Each artifact declares its own
+        # feature_cols; serving follows that rather than a fixed order, so the
+        # two models may legitimately expect different feature sets.
         if self.run_diff_model:
-            feature_vector = self._build_model_feature_vector(features)
+            feature_vector = self._build_model_feature_vector(
+                features, (self.run_diff_model_data or {}).get("feature_cols")
+            )
             predicted_run_diff = float(self.run_diff_model.predict(feature_vector)[0])
         else:
             # Fallback: use run differential difference + home advantage
@@ -224,7 +234,9 @@ class MLBScorer:
 
         # Predict total
         if self.totals_model:
-            feature_vector = self._build_model_feature_vector(features)
+            feature_vector = self._build_model_feature_vector(
+                features, (self.totals_model_data or {}).get("feature_cols")
+            )
             predicted_total = float(self.totals_model.predict(feature_vector)[0])
         else:
             predicted_total = self._estimate_total(features)
