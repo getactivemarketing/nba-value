@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     # mode: powers best_total only; excluded from best_bet until the
     # re-entry gate passes (see totals_in_best_bet).
     # Missing file -> scorer falls back to v1, then to the heuristic.
+    # Run-diff model path. Was a hardcoded DEFAULT_RUN_DIFF_MODEL constant on
+    # MLBScorer, which meant the only model that actually picks bets could not
+    # be rolled back by config the way the totals model can. Rollback is a
+    # config change, never a code change — see docs/engineering/03 §5.
+    mlb_run_diff_model_path: str = "models/mlb_run_diff_v1.joblib"
+
     mlb_totals_model_path: str = "models/mlb_totals_v2.joblib"
 
     # NFL MOV + totals models (Phase 2, v1) -- trained via src/tasks/nfl_train.py

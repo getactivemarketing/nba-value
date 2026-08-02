@@ -157,7 +157,11 @@ class MLBScorer:
         self.totals_model = None
         self.totals_model_data = None
 
-        run_diff_path = Path(run_diff_model_path or self.DEFAULT_RUN_DIFF_MODEL)
+        run_diff_path = Path(
+            run_diff_model_path
+            or settings.mlb_run_diff_model_path
+            or self.DEFAULT_RUN_DIFF_MODEL
+        )
         totals_path = Path(totals_model_path or settings.mlb_totals_model_path)
         if not totals_path.exists() and totals_path != Path(self.DEFAULT_TOTALS_MODEL):
             logger.warning(

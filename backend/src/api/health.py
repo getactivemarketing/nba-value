@@ -32,7 +32,49 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> dict:
         checks["checks"]["database"] = f"error: {str(e)}"
         checks["status"] = "unhealthy"
 
+    # Model check. Added 2026-08-02 because nothing in the system could say
+    # which model was serving or how old it was — the run-diff model ran six
+    # months stale without a word, and a missing artifact silently falls back
+    # to a hand-written heuristic while picks keep flowing and look normal.
+    #
+    # Reported as "degraded", never "unhealthy": a stale model is a real
+    # problem but the service is still up, and failing the healthcheck here
+    # would take production down over a monitoring signal.
+    try:
+        checks["checks"]["models"] = _model_check()
+        if checks["checks"]["models"]["status"] == "degraded" and checks["status"] == "healthy":
+            checks["status"] = "degraded"
+    except Exception as e:
+        checks["checks"]["models"] = {"status": "unknown", "error": str(e)}
+
     return checks
+
+
+def _model_check() -> dict:
+    """Load-free model status: reads artifact metadata, not the models."""
+    import joblib
+    from pathlib import Path
+
+    from src.config import settings
+    from src.services.mlb.model_status import summarize_models
+
+    def _meta(path: str) -> dict | None:
+        p = Path(path)
+        if not p.exists():
+            return None
+        art = joblib.load(p)
+        # Drop the estimator; only metadata is needed and it keeps this cheap.
+        return {k: v for k, v in art.items() if k != "model"}
+
+    run_diff_path = settings.mlb_run_diff_model_path
+    totals_path = settings.mlb_totals_model_path
+
+    return summarize_models(
+        run_diff=_meta(run_diff_path),
+        totals=_meta(totals_path),
+        run_diff_path=run_diff_path,
+        totals_path=totals_path,
+    )
 
 
 @router.get("/ready")
