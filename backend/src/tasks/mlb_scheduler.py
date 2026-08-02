@@ -818,6 +818,85 @@ def run_grading():
         return {"status": "failed", "error": str(e)}
 
 
+async def diagnose_slate_async(game_date: date | None = None) -> dict:
+    """Report WHY tonight produced the number of picks it did.
+
+    "No picks" is ambiguous by construction: a broken odds feed, an unmapped
+    team name, and a genuinely quiet market are indistinguishable from outside.
+    That ambiguity cost 111 Athletics games, skipped all season on a team-name
+    lookup while this scheduler logged success every 30 minutes.
+
+    It is worse now that moneyline is the only live market — silence is the
+    expected output on many nights, so a broken feed hides inside it.
+    """
+    from sqlalchemy import select, and_, func
+    from src.models import MLBGame, MLBMarket, MLBPredictionSnapshot
+    from src.services.mlb.slate_diagnosis import GameSlot, diagnose_slate
+
+    target = game_date or _today_et()
+
+    async with mlb_session() as session:
+        games = (await session.execute(
+            select(MLBGame).where(MLBGame.game_date == target)
+        )).scalars().all()
+
+        slots = []
+        for game in games:
+            books = (await session.execute(
+                select(func.count()).select_from(MLBMarket).where(
+                    and_(
+                        MLBMarket.game_id == game.game_id,
+                        MLBMarket.market_type == "moneyline",
+                        MLBMarket.home_odds.isnot(None),
+                    )
+                )
+            )).scalar_one()
+
+            # A snapshot row is the record that the model was actually asked.
+            # Its absence before the snapshot window means "not yet", not
+            # "found nothing" — without this distinction a pre-game slate
+            # reports every game as no-edge for most of the day.
+            snap = (await session.execute(
+                select(MLBPredictionSnapshot.id, MLBPredictionSnapshot.best_bet_team)
+                .where(MLBPredictionSnapshot.game_id == game.game_id)
+            )).first()
+
+            slots.append(GameSlot(
+                matchup=f"{game.away_team}@{game.home_team}",
+                ml_books=int(books or 0),
+                has_pick=bool(snap and snap[1]),
+                decided=snap is not None,
+            ))
+
+    result = diagnose_slate(slots)
+
+    # Log at a level that matches severity, so a real gap is not buried in the
+    # same INFO stream as an ordinary quiet night.
+    if result["verdict"] in ("data_gap", "no_games"):
+        logger.error("MLB slate data gap", date=str(target), **{
+            k: v for k, v in result.items() if k != "games_detail"
+        })
+    elif result["verdict"] == "warn":
+        logger.warning("MLB slate partial gap", date=str(target),
+                       explanation=result["explanation"])
+
+    return {k: v for k, v in result.items() if k != "games_detail"} | {"date": str(target)}
+
+
+def run_diagnose_slate():
+    """Sync wrapper for slate diagnosis."""
+    log_task("Diagnosing MLB slate coverage...")
+    try:
+        result = _run_async(diagnose_slate_async())
+        log_task(f"Slate: {result['verdict']} — {result['explanation']}")
+        _last_run_times['diagnose_slate'] = datetime.now(timezone.utc)
+        return result
+    except Exception as e:
+        log_task(f"Slate diagnosis FAILED: {e}")
+        _last_run_times['diagnose_slate'] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
+
+
 async def mark_closing_lines_async(lookback_hours: int = 48) -> dict:
     """Flag the closing quote per (game, book) once first pitch has passed.
 
@@ -1158,6 +1237,9 @@ def run_all():
     run_snapshot()
     time.sleep(2)
 
+    run_diagnose_slate()
+    time.sleep(2)
+
     run_grading()
     time.sleep(2)
 
@@ -1274,6 +1356,9 @@ def start_scheduler():
     mlb_scheduler.every(30).minutes.do(run_ingest_odds)
     mlb_scheduler.every(30).minutes.do(run_scoring)
     mlb_scheduler.every(15).minutes.do(run_snapshot)
+    # Hourly is enough to catch a feed outage within the pre-game window
+    # without spamming on an ordinary quiet slate.
+    mlb_scheduler.every(1).hour.do(run_diagnose_slate)
     mlb_scheduler.every(1).hour.do(run_grading)
     # Runs after games start; a 30m cadence keeps the closing row fresh enough
     # for same-night CLV without hammering the table.
