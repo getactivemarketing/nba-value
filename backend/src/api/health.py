@@ -1,6 +1,7 @@
 """Health check endpoints."""
 
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
@@ -50,28 +51,45 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> dict:
     return checks
 
 
-def _model_check() -> dict:
-    """Load-free model status: reads artifact metadata, not the models."""
+@lru_cache(maxsize=1)
+def _model_metadata() -> tuple[dict | None, dict | None, str, str]:
+    """Read artifact metadata ONCE per process.
+
+    Cached because the first version called joblib.load() on every /health
+    request — synchronous disk I/O and unpickling on the exact endpoint
+    Railway polls during startup, when the event loop is already contended by
+    three scheduler threads. That is a self-inflicted healthcheck failure.
+
+    Model files are baked into the image and cannot change within a process,
+    so caching costs nothing in accuracy. Age is recomputed per request from
+    the cached trained_at, so staleness still advances with the clock.
+    """
     import joblib
     from pathlib import Path
 
     from src.config import settings
-    from src.services.mlb.model_status import summarize_models
 
     def _meta(path: str) -> dict | None:
         p = Path(path)
         if not p.exists():
             return None
         art = joblib.load(p)
-        # Drop the estimator; only metadata is needed and it keeps this cheap.
+        # Drop the estimator; only metadata is needed and it keeps this small.
         return {k: v for k, v in art.items() if k != "model"}
 
     run_diff_path = settings.mlb_run_diff_model_path
     totals_path = settings.mlb_totals_model_path
+    return _meta(run_diff_path), _meta(totals_path), run_diff_path, totals_path
 
+
+def _model_check() -> dict:
+    """Model status from cached metadata; no disk I/O on the request path."""
+    from src.services.mlb.model_status import summarize_models
+
+    run_diff, totals, run_diff_path, totals_path = _model_metadata()
     return summarize_models(
-        run_diff=_meta(run_diff_path),
-        totals=_meta(totals_path),
+        run_diff=run_diff,
+        totals=totals,
         run_diff_path=run_diff_path,
         totals_path=totals_path,
     )
