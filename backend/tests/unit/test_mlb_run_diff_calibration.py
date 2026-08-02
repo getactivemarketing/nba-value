@@ -11,6 +11,8 @@ Backtest through the real gate on 351 graded ML picks: +38.90u at k=0.391 vs
 """
 import math
 
+import pytest
+
 from src.services.mlb.scorer import MLBScorer, RUN_DIFF_LOGISTIC_K
 
 OBSERVED_MARGIN_SD = 4.64  # runs, 1463 completed games
@@ -41,13 +43,24 @@ def test_win_prob_is_less_overconfident_than_the_old_curve():
     assert abs(scorer._run_diff_to_win_prob(0.0) - 0.5) < 1e-9
 
 
-def test_cover_prob_uses_the_same_fitted_constant():
-    """Cover prob must not drift back to its own hardcoded slope."""
+def test_cover_prob_no_longer_shifts_the_win_curve():
+    """SUPERSEDED 2026-08-02 — this once asserted the opposite.
+
+    The cover curve was originally the win curve shifted by the spread, and
+    this test pinned that. Fitting cover outcomes directly showed the
+    assumption was wrong: margins are not logistic with a fixed scale, because
+    27.7% of games end on a one-run margin and the +/-1.5 line sits on that
+    spike. The fitted slope is 1.6x flatter (0.245 vs 0.391), with the win
+    curve's slope falling outside the fitted bootstrap CI [0.168, 0.317].
+
+    Kept as a regression guard so the shifted derivation cannot creep back.
+    See test_mlb_runline_cover_curve.py for the fitted curve's own tests.
+    """
     scorer = object.__new__(MLBScorer)
-    # cover(rd, spread) is the win curve shifted by the spread
-    assert abs(
-        MLBScorer._run_diff_to_cover_prob(2.0, 1.5)
-        - scorer._run_diff_to_win_prob(0.5)
-    ) < 1e-9
-    # and it is likewise flatter than the old curve
-    assert MLBScorer._run_diff_to_cover_prob(3.0, 1.5) < 1 / (1 + math.exp(-0.5 * 1.5))
+    shifted = scorer._run_diff_to_win_prob(2.0 - 1.5)
+    assert MLBScorer._run_diff_to_cover_prob(2.0, 1.5) != pytest.approx(shifted, abs=1e-6)
+
+    # They still agree near rd=0, where both are anchored to the same base rate.
+    assert MLBScorer._run_diff_to_cover_prob(0.0, 1.5) == pytest.approx(
+        scorer._run_diff_to_win_prob(-1.5), abs=0.01
+    )

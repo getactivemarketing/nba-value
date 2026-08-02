@@ -37,6 +37,39 @@ logger = structlog.get_logger()
 # backtest optimum (0.32 and 0.50 both score worse) is corroboration, not a fit.
 RUN_DIFF_LOGISTIC_K = 0.391
 
+# Runline cover curve, FITTED directly rather than derived by shifting the win
+# curve (2026-08-02). Shifting assumes margins are logistic with a fixed scale;
+# they are not. 27.7% of 2026 games were decided by exactly ONE run and the
+# +/-1.5 line sits on that spike, so the shifted curve is most wrong precisely
+# where it matters.
+#
+# Logistic fit over 1,405 games, pooled to 2,810 observations by symmetry
+# (P(margin>=2 | rd) mirrors P(margin<=-2 | -rd)):
+#
+#     P(cover -1.5 | rd) = sigmoid(-0.577 + 0.245*rd)
+#
+# against the shifted curve's implied sigmoid(-0.587 + 0.391*rd). Nearly the
+# same intercept, but a slope 1.6x FLATTER: cover probability responds far less
+# to predicted run differential than winning does, because the one-run spike
+# absorbs the movement. Empirical minus modelled ran +0.033 / +0.039 / +0.009 /
+# -0.030 / -0.026 / -0.086 across predicted-rd buckets — a SIGN FLIP, so
+# betting the disagreement systematically took the wrong side.
+#
+# HONEST LIMIT: a 281-game holdout could NOT separate the two curves (log-loss
+# 0.6364 fitted vs 0.6348 shifted; the shifted curve marginally better, inside
+# noise). The slope difference is significant in-sample — bootstrap 95% CI
+# [0.168, 0.317], excluding 0.391 — and the curves diverge only where
+# |rd| > ~1.5, roughly 17% of games. That is a principled correction, NOT a
+# demonstrated improvement. Runline stays paused (`runline_in_best_bet=False`)
+# and re-entry still requires its own gate on clean forward data.
+RUNLINE_COVER_INTERCEPT = -0.577
+RUNLINE_COVER_SLOPE = 0.245
+
+# The fit is specific to the standard +/-1.5 line. Anything else falls back to
+# the shifted win curve rather than silently reusing coefficients that were
+# never fitted for it.
+STANDARD_RUNLINE = 1.5
+
 
 class FeatureContractError(RuntimeError):
     """A model artifact expects features the feature builder cannot supply.
@@ -367,31 +400,28 @@ class MLBScorer:
 
     @staticmethod
     def _run_diff_to_cover_prob(run_diff: float, spread: float) -> float:
+        """Probability the home team covers `spread`, from a FITTED curve.
+
+        For the standard +/-1.5 runline this uses coefficients fitted directly
+        to observed cover outcomes (RUNLINE_COVER_INTERCEPT / _SLOPE). The old
+        approach — shifting the win curve by the spread — assumed margins are
+        logistic with a fixed scale, which they are not: 27.7% of games are
+        decided by exactly one run and the +/-1.5 line sits on that spike.
+
+        Any other spread falls back to the shifted win curve, since the fit was
+        never estimated for it. Silently reusing the +/-1.5 coefficients on a
+        different line would be the same category of error this replaces.
         """
-        Calculate probability of covering a spread.
-
-        Args:
-            run_diff: Predicted run differential (positive = home favored)
-            spread: The spread to cover (e.g., -1.5 for home favorite)
-
-        Returns:
-            Probability of home team covering
-        """
-        # Adjust run diff by spread
-        # Home covers -1.5 if they win by 2+
-        adjusted_diff = run_diff - spread
-
-        # Same fitted logistic as the win curve.
-        # CAVEAT (2026-07-30 calibration audit): shifting the win curve by the
-        # spread assumes margins are logistic with a fixed scale. They are not —
-        # 27.2% of MLB games are decided by exactly 1 run, and the ±1.5 runline
-        # sits directly on that spike, so this curve is measurably mis-specified
-        # (empirical P(margin>=2) vs this model: +0.039 / +0.059 / -0.043 across
-        # predicted-run-diff buckets — the sign flips). Runline stays paused
-        # (`runline_in_best_bet=False`) until this is rebuilt as an empirical
-        # cover curve and re-validated on clean forward data.
         import math
-        p = 1 / (1 + math.exp(-RUN_DIFF_LOGISTIC_K * adjusted_diff))
+
+        if abs(spread) == STANDARD_RUNLINE:
+            # Fitted from the HOME perspective; the caller mirrors run_diff to
+            # obtain the away side (see _runline_side_values).
+            logit = RUNLINE_COVER_INTERCEPT + RUNLINE_COVER_SLOPE * run_diff
+        else:
+            logit = RUN_DIFF_LOGISTIC_K * (run_diff - spread)
+
+        p = 1 / (1 + math.exp(-logit))
         return max(0.05, min(0.95, p))
 
     @staticmethod
