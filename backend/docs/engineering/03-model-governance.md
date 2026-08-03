@@ -212,6 +212,47 @@ Of the five recovered features only two carried any gain
 `is_dome` and `home_last_10_win_pct` scored exactly zero. That is evidence
 about this sample size, not proof the features are worthless.
 
+### 2024-26 retrain with bullpen + FIP: NO-GO (2026-08-03)
+
+The first NO-GO was reasoned from too little. "1,405 games cannot support 33
+features" was really "not at `num_leaves=31`" — the hyperparameters of a
+4,931-game model applied to a quarter of the data. Prior-season history was
+also fetchable all along (gameLog and schedule both serve 2024/2025), so
+"wait until April" was wrong too.
+
+Rebuilt from the API: **6,012 games** (2024: 2,231 / 2025: 2,247 / 2026: 1,534),
+41 features at 100% coverage, all point-in-time. Chronological
+train/validate/holdout; tuning swept leaf counts on validation only; the
+holdout (902 games, 2026-05-22 → 08-02) was touched once.
+
+| model | MAE | RMSE | hit% |
+|---|---|---|---|
+| challenger — 41 features incl. bullpen + FIP | 3.626 | 4.720 | 54.0 |
+| same, minus bullpen/FIP (33 features) | 3.630 | 4.723 | 54.8 |
+| **incumbent — 2024-25, 28 features** | **3.578** | **4.709** | **55.5** |
+| baseline — predict the training mean | 3.663 | 4.743 | 48.3 |
+
+**Two findings, and they point opposite ways.**
+
+The tuning fix was real: `num_leaves=7` won on validation, and the challenger
+now has genuine skill (RMSE 4.720 vs 4.743 baseline, 54.0% vs 48.3%) where the
+2026-only model had none. The earlier conclusion was too broad.
+
+But **the new features do not earn their place**: removing bullpen and FIP
+entirely changes RMSE by −0.003 and *improves* hit rate by 0.8 points. And the
+incumbent still wins outright, despite the challenger having seen early 2026
+that the incumbent never did.
+
+Feature gains are split rather than uniformly flat: `home_bullpen_whip` ranks
+8/40 — real signal — while `away_bullpen_era` ranks 39/40 and
+`home_bullpen_ip_l3` dead last at 40/40. FIP ranks 23-35/40, plausibly because
+it is highly correlated with the ERA columns already present.
+
+**KEEP THE INCUMBENT.** Bullpen and FIP stay collected but unwired. Why the
+incumbent still wins is not established — its original training set may be
+constructed differently from this reconstruction — and that gap should be
+closed before the next attempt rather than assumed away.
+
 ### The model was never the problem — the features were
 
 Same incumbent model, same 281-game holdout, only the inputs differ:
