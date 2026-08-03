@@ -31,6 +31,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -63,6 +64,19 @@ class NFLShadowPrediction(Base):
     # --- which model is speaking ----------------------------------------
     model_key: Mapped[str] = mapped_column(String(32), nullable=False)     # market_only|incumbent|challenger|v2
     model_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # Stable identity for this priced side at this book: game/book/market/
+    # side/line/odds. Idempotency and "preserve every market update" pull
+    # against each other, so the key is candidate CONTENT, not the timestamp —
+    # re-scoring unchanged prices collides and is a no-op, while a moved line
+    # or shaded juice hashes differently and becomes a new row.
+    candidate_hash: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    # Why this row does or does not carry a prediction. A model that cannot
+    # score still writes a row: omitting it makes "model failed"
+    # indistinguishable from "candidate never existed".
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="ok")
+    status_detail: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     # --- the forecast ----------------------------------------------------
     predicted_value: Mapped[Decimal | None] = mapped_column(Numeric(7, 3), nullable=True)  # margin or total
@@ -100,7 +114,11 @@ class NFLShadowPrediction(Base):
     )
 
     __table_args__ = (
+        # Idempotency: one row per (candidate content, model). Re-running a
+        # scoring pass writes nothing new; a market move writes a new row.
+        UniqueConstraint("candidate_hash", "model_key", name="uq_nfl_shadow_candidate_model"),
         Index("ix_nfl_shadow_game_model", "game_id", "model_key", "scored_at"),
+        Index("ix_nfl_shadow_status", "season", "model_key", "status"),
         Index("ix_nfl_shadow_settle", "game_id", "settled_at"),
         Index("ix_nfl_shadow_season_week", "season", "week", "market_type"),
     )
