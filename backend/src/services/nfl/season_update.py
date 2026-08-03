@@ -10,11 +10,13 @@ steps in one session/commit), mirroring the MLB season-update convention in
 `services/mlb/ingest.py` where the orchestrator (not the low-level ingest
 step) controls commit boundaries for a scheduler run.
 """
+from datetime import datetime, timezone
+
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models import NFLGame, NFLMarket
+from src.models import NFLGame, NFLMarket, NFLOddsSnapshot
 from src.services.nfl.nfl_data import load_schedules, load_pbp, schedule_to_game_rows
 from src.services.nfl.features import team_game_epa, rolling_team_stats
 from src.services.nfl.ingest import upsert_games, upsert_game_context, upsert_team_stats
@@ -22,6 +24,9 @@ from src.services.nfl.odds_client import (
     NFLOddsClient, parse_nfl_odds_to_markets, NFL_TEAM_NAME_TO_ABBR,
 )
 from src.tasks.nfl_backfill import _clean_nan, _compute_candidate_features, _load_injury_depth
+from src.services.nfl.odds_history import (
+    NFLOddsQuote, minutes_to_kickoff, nfl_prices_changed, quote_from_bookmaker,
+)
 
 logger = structlog.get_logger()
 
@@ -160,6 +165,10 @@ async def odds_to_markets(session: AsyncSession, season: int) -> int:
             # dropped all TNF/SNF/MNF odds — fixed 2026-07-18). So this UTC
             # .date() matches the event's UTC commence_date for every game.
             "kickoff_date": r.kickoff_utc.date().isoformat() if r.kickoff_utc else None,
+            # Full instant (not just the date) so odds-history rows can
+            # record minutes_to_kickoff, which is what separates a closing
+            # line from an in-game price.
+            "kickoff_utc": r.kickoff_utc,
         }
         for r in result.all()
     ]
@@ -187,8 +196,101 @@ async def odds_to_markets(session: AsyncSession, season: int) -> int:
         season=season, matched=len(matched_rows), dropped=dropped,
     )
 
+    # Append-only history from the SAME fetched events — nfl_markets is
+    # overwritten and keeps no line movement. Reusing `events` rather than
+    # re-fetching matters: The Odds API is quota-limited, and a second call per
+    # refresh would double consumption for data we already hold.
+    try:
+        written = await _capture_odds_history(session, events, games)
+        logger.info("nfl_odds_history_captured", season=season, rows=written)
+    except Exception as exc:   # never let history capture cost us live odds
+        logger.warning("nfl_odds_history_failed", season=season, error=str(exc))
+
     if not matched_rows:
         return 0
 
     session.add_all([NFLMarket(**r) for r in matched_rows])
     return len(matched_rows)
+
+
+async def _capture_odds_history(
+    session: AsyncSession, events: list[dict], games: list[dict],
+) -> int:
+    """Append one nfl_odds_snapshots row per (game, book) whose prices moved.
+
+    Writing every book on every refresh would be mostly duplicates; writing on
+    change stores exactly the line movement, at a fraction of the volume.
+    """
+    kickoffs = {g["game_id"]: g.get("kickoff_utc") for g in games}
+    written = 0
+    now = datetime.now(timezone.utc)
+
+    # Latest row per (game, book) in ONE query. The first version issued a
+    # SELECT per pair — 272 games x 10 books = ~2,700 round trips, which took
+    # SEVEN MINUTES on a job that runs several times a day. Same class of
+    # mistake as unpickling models on every /health request: per-item work on
+    # a hot path.
+    latest: dict[tuple[str, str], NFLOddsQuote] = {}
+    existing = await session.execute(
+        text("""
+            SELECT DISTINCT ON (game_id, book)
+                   game_id, book, ml_home, ml_away, spread_line,
+                   spread_home_odds, spread_away_odds, total_line,
+                   over_odds, under_odds
+            FROM nfl_odds_snapshots
+            ORDER BY game_id, book, snapshot_time DESC
+        """)
+    )
+    for r in existing.all():
+        latest[(r.game_id, r.book)] = NFLOddsQuote(
+            ml_home=r.ml_home, ml_away=r.ml_away,
+            spread_line=r.spread_line,
+            spread_home_odds=r.spread_home_odds,
+            spread_away_odds=r.spread_away_odds,
+            total_line=r.total_line,
+            over_odds=r.over_odds, under_odds=r.under_odds,
+        )
+
+    for event in events:
+        commence = event.get("commence_time") or ""
+        game_id = match_event_to_game(
+            {
+                "home_team_abbr": NFL_TEAM_NAME_TO_ABBR.get(event.get("home_team")),
+                "away_team_abbr": NFL_TEAM_NAME_TO_ABBR.get(event.get("away_team")),
+                "commence_date": commence[:10] or None,
+            },
+            games,
+        )
+        if game_id is None:
+            continue
+
+        home_abbr = NFL_TEAM_NAME_TO_ABBR.get(event.get("home_team"))
+        kickoff = kickoffs.get(game_id)
+
+        for bookmaker in event.get("bookmakers", []):
+            book = bookmaker.get("key")
+            if not book or not home_abbr:
+                continue
+
+            quote = quote_from_bookmaker(bookmaker, home_abbr, NFL_TEAM_NAME_TO_ABBR)
+            if quote == NFLOddsQuote():
+                continue
+
+            if not nfl_prices_changed(latest.get((game_id, book)), quote):
+                continue
+            latest[(game_id, book)] = quote   # keep in step within this run
+
+            session.add(NFLOddsSnapshot(
+                game_id=game_id, book=book, snapshot_time=now,
+                minutes_to_kickoff=minutes_to_kickoff(now, kickoff) if kickoff else None,
+                ml_home=quote.ml_home, ml_away=quote.ml_away,
+                spread_line=quote.spread_line,
+                spread_home_odds=quote.spread_home_odds,
+                spread_away_odds=quote.spread_away_odds,
+                total_line=quote.total_line,
+                over_odds=quote.over_odds, under_odds=quote.under_odds,
+                created_at=now,
+            ))
+            written += 1
+
+    return written

@@ -32,6 +32,7 @@ from src.models.nfl_game import NFLGame
 from src.models.nfl_game_context import NFLGameContext
 from src.models.nfl_team_stats import NFLTeamStats
 from src.models.nfl_market import NFLMarket
+from src.models.nfl_odds_snapshot import NFLOddsSnapshot
 from src.models.nfl_prediction_snapshot import NFLPredictionSnapshot
 
 __all__ = [
@@ -66,5 +67,6 @@ __all__ = [
     "NFLGameContext",
     "NFLTeamStats",
     "NFLMarket",
+    "NFLOddsSnapshot",
     "NFLPredictionSnapshot",
 ]
