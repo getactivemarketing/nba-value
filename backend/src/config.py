@@ -117,7 +117,16 @@ class Settings(BaseSettings):
     nfl_min_edge: float = 0.05            # floor (P3 gate backtest 2026-07-17)
     nfl_max_edge: float = 0.99            # no ceiling (isotonic calibration handles overconfidence)
     nfl_moderate_threshold: float = 40.0  # gate_score qualification
-    nfl_totals_in_best_bet: bool = True
+    # DISABLED 2026-08-03. Totals was the one live NFL market, enabled on a
+    # historical +10.2u / 53.9%. That figure came from a walk-forward using
+    # RANDOM-SPLIT residuals. Under rolling-origin out-of-fold validation on
+    # 1,537 games it is 52.4% (95% CI [49.9, 54.9]) against a 52.38%
+    # break-even — no edge — and the last three seasons average 50.8%. MOV is
+    # 49.7%, significantly BELOW break-even. Neither model beats the closing
+    # line on MAE. All three NFL markets now run shadow-only; re-enabling
+    # requires the pre-registered gate in
+    # docs/engineering/07-nfl-promotion-gates.md.
+    nfl_totals_in_best_bet: bool = False
     nfl_spread_in_best_bet: bool = False
     nfl_ml_in_best_bet: bool = False
 

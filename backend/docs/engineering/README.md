@@ -16,6 +16,7 @@ Written 2026-07-31, grounded in the system as it actually exists — every claim
 | 04 | [Research & Experimentation](04-research-experimentation.md) | How a hypothesis becomes evidence, and evidence becomes a change |
 | 05 | [API & Data Contracts](05-api-data-contracts.md) | What each component publishes and consumes, and which guarantees hold |
 | 06 | [Roadmap 2026 H2](06-roadmap-2026H2.md) | What we build next, in what order, and why |
+| 07 | [NFL Promotion Gates](07-nfl-promotion-gates.md) | Pre-registered thresholds for enabling any NFL market |
 
 Read 06 first for direction, then 03 and 04 — they govern decisions being made right now. 01 and 05 are reference. 02 sits between.
 
