@@ -34,6 +34,10 @@ class GameLogEntry:
     hits: int = 0
     walks: int = 0
     strikeouts: int = 0
+    # FIP inputs. ERA carries defensive and sequencing luck; FIP uses only
+    # what the pitcher controls almost entirely.
+    home_runs: int = 0
+    hit_by_pitch: int = 0
 
 
 def parse_innings(raw: Any) -> float | None:
@@ -87,7 +91,7 @@ def cumulative_through(
         return None
 
     innings = 0.0
-    earned = hits = walks = strikeouts = 0
+    earned = hits = walks = strikeouts = homers = hbp = 0
     for game in prior:
         ip = parse_innings(game.innings_pitched)
         if ip is None:
@@ -97,9 +101,13 @@ def cumulative_through(
         hits += game.hits or 0
         walks += game.walks or 0
         strikeouts += game.strikeouts or 0
+        homers += game.home_runs or 0
+        hbp += game.hit_by_pitch or 0
 
     if innings <= 0:
         return None
+
+    from src.services.mlb.bullpen import fip as _fip
 
     return {
         "innings_pitched": round(innings, 2),
@@ -107,6 +115,7 @@ def cumulative_through(
         "whip": round((hits + walks) / innings, 3),
         "k_per_9": round(9 * strikeouts / innings, 3),
         "bb_per_9": round(9 * walks / innings, 3),
+        "fip": round(_fip(homers, walks, hbp, strikeouts, innings), 3),
         "games_started": len(prior),
     }
 

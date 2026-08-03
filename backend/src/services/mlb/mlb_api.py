@@ -457,6 +457,8 @@ class MLBStatsAPIClient:
                     hits=stat.get("hits") or 0,
                     walks=stat.get("baseOnBalls") or 0,
                     strikeouts=stat.get("strikeOuts") or 0,
+                    home_runs=stat.get("homeRuns") or 0,
+                    hit_by_pitch=stat.get("hitByPitch") or 0,
                 )
             )
         return entries
