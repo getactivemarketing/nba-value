@@ -200,6 +200,13 @@ class ClvSummary(BaseModel):
     measured: int
     unmeasured: int
     mean_clv: float | None
+    # clv alone conflates skill with cost and is dominated by cost. Split out:
+    #   mean_market_move  did the market move toward us (skill)
+    #   mean_vig_paid     what it cost to place the bet (cost)
+    # clv = market_move - vig_paid
+    mean_market_move: float | None = None
+    mean_vig_paid: float | None = None
+    market_move_positive_rate: float | None = None
     median_clv: float | None
     beat_close_rate: float | None
     std_error: float | None
@@ -623,7 +630,13 @@ async def get_clv_summary(
         snapshots = list(result.scalars().all())
 
     graded = [s for s in snapshots if s.clv is not None]
-    summary = summarize_clv([float(s.clv) for s in graded])
+    parts = [
+        {"clv": float(s.clv),
+         "market_move": float(s.market_move) if s.market_move is not None else None,
+         "vig_paid": float(s.vig_paid) if s.vig_paid is not None else None}
+        for s in graded
+    ]
+    summary = summarize_clv([float(s.clv) for s in graded], rows=parts)
 
     by_type: dict[str, dict] = {}
     for snap in graded:
@@ -651,6 +664,9 @@ async def get_clv_summary(
         beat_close_rate=summary["beat_close_rate"],
         std_error=summary["std_error"],
         verdict=summary["verdict"],
+        mean_market_move=summary["mean_market_move"],
+        mean_vig_paid=summary["mean_vig_paid"],
+        market_move_positive_rate=summary["market_move_positive_rate"],
         by_type=by_type_summary,
         daily=daily_rows,
     )

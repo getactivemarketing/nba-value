@@ -109,6 +109,16 @@ class MLBPredictionSnapshot(Base):
     closing_novig_prob: Mapped[Decimal | None] = mapped_column(Numeric(6, 5), nullable=True)
     clv: Mapped[Decimal | None] = mapped_column(Numeric(7, 5), nullable=True)
     clv_books: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Devigged market price for the side we bet, frozen at snapshot time, and
+    # the decomposition it enables:
+    #   market_move = closing_novig - entry_novig   did the model know something
+    #   vig_paid    = 1/odds        - entry_novig   what it cost to find out
+    #   clv         = market_move - vig_paid
+    # Reporting clv alone conflates the two, and cost dominates: the first 17
+    # picks moved TOWARD us 14 times yet showed clv -0.0111.
+    entry_novig_prob: Mapped[Decimal | None] = mapped_column(Numeric(6, 5), nullable=True)
+    market_move: Mapped[Decimal | None] = mapped_column(Numeric(7, 5), nullable=True)
+    vig_paid: Mapped[Decimal | None] = mapped_column(Numeric(7, 5), nullable=True)
 
     # Social posting tracking
     celebration_tweet_posted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

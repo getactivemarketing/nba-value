@@ -120,7 +120,40 @@ VERDICT_PROVISIONAL_AT = 30
 VERDICT_MEANINGFUL_AT = 100
 
 
-def summarize_clv(values: Iterable[float | None]) -> dict:
+def decompose_clv(
+    bet_odds: Number,
+    entry_novig_prob: float | None,
+    closing_novig_prob: float | None,
+) -> dict:
+    """Split CLV into the market's movement and the vig we paid.
+
+        clv         = closing_novig - 1/bet_odds     was the bet worth making?
+        market_move = closing_novig - entry_novig    did the model know something?
+        vig_paid    = 1/bet_odds     - entry_novig   what it cost to find out
+        clv         = market_move - vig_paid         (identity)
+
+    Reporting only `clv` conflates skill with cost, and the combined number is
+    dominated by cost: on the first 17 MLB picks the market moved TOWARD us 14
+    times, yet stored CLV read -0.0111 and "1 of 17 beat the close" — which
+    looks like a broken model and is actually a small signal buried under vig.
+
+    Any component that cannot be measured stays None. A missing entry price
+    does not license guessing the movement.
+    """
+    clv = clv_from_closing(bet_odds, closing_novig_prob)
+    odds = _f(bet_odds)
+
+    if entry_novig_prob is None or closing_novig_prob is None or odds is None or odds <= 1.0:
+        return {"clv": clv, "market_move": None, "vig_paid": None}
+
+    return {
+        "clv": clv,
+        "market_move": closing_novig_prob - entry_novig_prob,
+        "vig_paid": (1.0 / odds) - entry_novig_prob,
+    }
+
+
+def summarize_clv(values: Iterable[float | None], rows: Sequence[dict] | None = None) -> dict:
     """Aggregate per-pick CLV into a reportable summary.
 
     Unmeasured picks (None) are excluded rather than counted as zero: treating
@@ -135,6 +168,8 @@ def summarize_clv(values: Iterable[float | None]) -> dict:
 
     if n == 0:
         return {
+            "mean_market_move": None, "mean_vig_paid": None,
+            "market_move_positive_rate": None,
             "measured": 0,
             "mean_clv": None,
             "median_clv": None,
@@ -155,7 +190,20 @@ def summarize_clv(values: Iterable[float | None]) -> dict:
     else:
         verdict = "insufficient"
 
+    extra: dict = {"mean_market_move": None, "mean_vig_paid": None,
+                   "market_move_positive_rate": None}
+    if rows:
+        moves = [r["market_move"] for r in rows if r.get("market_move") is not None]
+        vigs = [r["vig_paid"] for r in rows if r.get("vig_paid") is not None]
+        if moves:
+            extra["mean_market_move"] = round(statistics.fmean(moves), 5)
+            extra["market_move_positive_rate"] = round(
+                sum(1 for m in moves if m > 0) / len(moves), 4)
+        if vigs:
+            extra["mean_vig_paid"] = round(statistics.fmean(vigs), 5)
+
     return {
+        **extra,
         "measured": n,
         "mean_clv": round(mean, 5),
         "median_clv": round(statistics.median(measured), 5),

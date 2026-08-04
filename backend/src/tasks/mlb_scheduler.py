@@ -530,6 +530,13 @@ async def snapshot_predictions_async(hours_ahead: float = 1.0) -> dict:
                     snapshot.best_bet_odds = best_bet.odds_decimal
                     snapshot.best_bet_value_score = int(best_bet.value_score)
                     snapshot.best_bet_edge = best_bet.raw_edge
+                    # Devigged market price for the side we took, frozen now.
+                    # Previously this had to be re-derived from
+                    # winner_probability minus edge, and winner_probability is
+                    # max(p_home, p_away) — the PREDICTED WINNER's probability,
+                    # not the home team's. Getting that flip wrong produced an
+                    # implied 15.8-point vig, which is impossible. Store it.
+                    snapshot.entry_novig_prob = best_bet.market_prob
 
                 session.add(snapshot)
                 await session.flush()
@@ -1020,6 +1027,7 @@ async def compute_clv_async(lookback_hours: int = 72) -> dict:
         ClosingQuote,
         clv_from_closing,
         consensus_novig_prob,
+        decompose_clv,
         novig_prob_for_side,
     )
 
@@ -1089,6 +1097,10 @@ async def compute_clv_async(lookback_hours: int = 72) -> dict:
                 unmeasurable += 1
                 continue
 
+            entry = snap.entry_novig_prob
+            parts = decompose_clv(snap.best_bet_odds, 
+                                  float(entry) if entry is not None else None,
+                                  consensus)
             await session.execute(
                 update(MLBPredictionSnapshot)
                 .where(MLBPredictionSnapshot.id == snap.id)
@@ -1096,6 +1108,13 @@ async def compute_clv_async(lookback_hours: int = 72) -> dict:
                     closing_novig_prob=round(consensus, 5),
                     clv=round(value, 5),
                     clv_books=len([p for p in probs if p is not None]),
+                    # Skill and cost, separated. clv alone is dominated by vig
+                    # and reads as a broken model when the signal is merely
+                    # smaller than the spread we pay to place the bet.
+                    market_move=(None if parts["market_move"] is None
+                                 else round(parts["market_move"], 5)),
+                    vig_paid=(None if parts["vig_paid"] is None
+                              else round(parts["vig_paid"], 5)),
                 )
             )
             measured += 1
