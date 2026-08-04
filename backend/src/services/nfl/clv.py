@@ -21,29 +21,39 @@ KEY_NUMBERS = (3, 7, 10, 14, 6, 4)
 
 
 def line_clv(bet_line: float | None, closing_line: float | None, side: str) -> float | None:
-    """Points of line value captured, positive when the market moved our way.
+    """Points of line value captured, positive when we got the better number.
 
-    Sign conventions:
-      home  spread stored from the HOME perspective; a more negative close
-            means we bought the number cheaper
-      over  total; a LOWER close is better for the over
-      under a HIGHER close is better for the under
+    LINES ARE IN EACH SIDE'S OWN PERSPECTIVE, matching how the shadow store
+    holds them (the away spread is mirrored: home -3.5 is stored as away +3.5).
+    Getting this wrong inverts CLV, which is the metric promotion is gated on.
 
-    Returns None when there is no closing line — an unmeasured pick must never
-    read as neutral, or a broken capture pipeline looks like an absence of edge.
+    Derived from what each side actually wants:
+
+      spread home   -3.5 lays 3.5. Laying FEWER points is better, so a higher
+                    (less negative) line is better ->  bet - close
+      spread away   +3.5 receives 3.5. Receiving MORE is better, so a higher
+                    line is better, and we are worse off when it rose
+                                                      ->  bet - close
+      total over    needs the total ABOVE the line. A LOWER line is easier, so
+                    we gain when the close is higher  ->  close - bet
+      total under   needs the total BELOW the line. A HIGHER line is easier, so
+                    we gain when the close is lower   ->  bet - close
+
+    Only `over` inverts. That asymmetry is real: for a total, the two sides
+    want the number to move in opposite directions, whereas both spread sides
+    want a higher stored line.
+
+    Returns None with no closing line — an unmeasured pick must never read as
+    neutral, or a broken capture pipeline looks like an absence of edge.
     """
     if bet_line is None or closing_line is None:
         return None
 
     bet, close = float(bet_line), float(closing_line)
-    if side == "home":
-        return bet - close
-    if side == "away":
-        return close - bet
     if side == "over":
-        return bet - close
-    if side == "under":
         return close - bet
+    if side in ("home", "away", "under"):
+        return bet - close
     return None
 
 

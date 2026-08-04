@@ -20,21 +20,40 @@ from src.services.nfl.clv import (
 
 
 class TestLineClv:
-    def test_positive_when_the_line_moves_toward_our_side(self):
-        """Took home -3.5; it closed -4.5. We got the better number."""
+    """Lines are in each side's OWN perspective (away spread is mirrored)."""
+
+    def test_home_gains_when_it_lays_fewer_points(self):
+        """Took -3.5, closed -4.5: we laid less than the close."""
         assert line_clv(bet_line=-3.5, closing_line=-4.5, side="home") == pytest.approx(1.0)
 
-    def test_negative_when_the_line_moves_against_us(self):
+    def test_home_loses_when_it_lays_more(self):
         assert line_clv(bet_line=-3.5, closing_line=-2.5, side="home") == pytest.approx(-1.0)
 
-    def test_away_side_mirrors_the_home_side(self):
-        assert line_clv(bet_line=-3.5, closing_line=-4.5, side="away") == pytest.approx(-1.0)
+    def test_away_loses_when_the_close_gives_more_points(self):
+        """Took +3.5, closed +4.5: the close receives more, so ours is worse."""
+        assert line_clv(bet_line=3.5, closing_line=4.5, side="away") == pytest.approx(-1.0)
 
-    def test_over_gains_when_the_total_drops(self):
-        assert line_clv(bet_line=44.5, closing_line=43.0, side="over") == pytest.approx(1.5)
+    def test_away_gains_when_the_close_gives_fewer_points(self):
+        assert line_clv(bet_line=3.5, closing_line=2.5, side="away") == pytest.approx(1.0)
 
-    def test_under_gains_when_the_total_rises(self):
-        assert line_clv(bet_line=44.5, closing_line=46.0, side="under") == pytest.approx(1.5)
+    def test_over_gains_when_the_total_rises(self):
+        """Over needs points; a higher close means ours was the easier number."""
+        assert line_clv(bet_line=44.5, closing_line=46.0, side="over") == pytest.approx(1.5)
+
+    def test_over_loses_when_the_total_drops(self):
+        assert line_clv(bet_line=44.5, closing_line=43.0, side="over") == pytest.approx(-1.5)
+
+    def test_under_gains_when_the_total_drops(self):
+        assert line_clv(bet_line=44.5, closing_line=43.0, side="under") == pytest.approx(1.5)
+
+    def test_under_loses_when_the_total_rises(self):
+        assert line_clv(bet_line=44.5, closing_line=46.0, side="under") == pytest.approx(-1.5)
+
+    def test_over_and_under_move_in_opposite_directions(self):
+        """The asymmetry is real and is the easiest thing to get backwards."""
+        o = line_clv(bet_line=44.5, closing_line=46.0, side="over")
+        u = line_clv(bet_line=44.5, closing_line=46.0, side="under")
+        assert o == pytest.approx(-u)
 
     def test_unmoved_line_is_zero_not_none(self):
         assert line_clv(bet_line=-3.0, closing_line=-3.0, side="home") == 0.0

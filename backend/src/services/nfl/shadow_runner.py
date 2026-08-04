@@ -86,13 +86,19 @@ def candidate_hash(candidate: dict) -> str:
     null line because Postgres treats NULLs as distinct in unique indexes,
     which would silently break idempotency for moneylines.
     """
+    # Canonicalised before hashing: -3.50 and -3.5 are the same line, -0.0 and
+    # 0.0 the same pick'em, 1.9100000001 and 1.91 the same price. Without this,
+    # float noise silently splits one candidate into two rows and idempotency
+    # stops working without any error.
+    from src.services.nfl.settlement import canonical_line, canonical_price
+
     parts = [
         str(candidate.get("game_id")),
         str(candidate.get("book")),
         str(candidate.get("market_type")),
         str(candidate.get("side")),
-        "NONE" if candidate.get("line") is None else f"{float(candidate['line']):.2f}",
-        "NONE" if candidate.get("odds_decimal") is None else f"{float(candidate['odds_decimal']):.4f}",
+        canonical_line(candidate.get("line")),
+        canonical_price(candidate.get("odds_decimal")),
     ]
     return hashlib.sha1("|".join(parts).encode()).hexdigest()
 
