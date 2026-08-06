@@ -134,6 +134,14 @@ class Settings(BaseSettings):
     # a deliberate go-live switch for ~Sept 2026 (nothing calls
     # nfl_scheduler.start_scheduler() until then).
     nfl_scheduler_enabled: bool = False
+
+    # Odds/shadow CAPTURE runs independently of the betting scheduler.
+    # These were originally the same switch, which meant NFL market history
+    # stopped accumulating the moment betting was disabled — 56 hours lost
+    # before the 2026 preseason, and market history is unrecoverable once the
+    # window passes. Capture places no bets and reads no gate; it only writes
+    # nfl_odds_snapshots and nfl_shadow_predictions.
+    nfl_capture_enabled: bool = True
     nfl_snapshot_minutes_before: int = 90
 
     @property

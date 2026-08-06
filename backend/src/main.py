@@ -84,6 +84,32 @@ def _run_social_scheduler():
         logger.error(f"Social scheduler thread crashed: {e}")
 
 
+def _run_nfl_scheduler():
+    """Run the NFL scheduler in a background thread.
+
+    With nfl_scheduler_enabled=False this enters CAPTURE-ONLY mode: odds
+    history and shadow predictions accumulate, nothing bets and nothing is
+    graded. Capture was previously gated behind the betting switch, so NFL
+    market history stopped the moment betting was disabled — and market
+    history is unrecoverable once the window passes.
+    """
+    try:
+        print("[NFL-SCHEDULER] Importing NFL scheduler module...", flush=True)
+        from src.tasks.nfl_scheduler import start_scheduler as start_nfl_scheduler
+        print("[NFL-SCHEDULER] NFL background thread started", flush=True)
+        start_nfl_scheduler()
+    except Exception as e:
+        print(f"[NFL-SCHEDULER] CRASHED: {e}", flush=True)
+        logger.error(f"NFL scheduler thread crashed: {e}")
+
+
+def _start_nfl_scheduler_thread():
+    """Create and start the NFL (capture-only) thread. Returns the thread."""
+    thread = threading.Thread(target=_run_nfl_scheduler, daemon=True, name="nfl-scheduler")
+    thread.start()
+    return thread
+
+
 def _start_social_scheduler_thread():
     """Create and start social scheduler thread. Returns the thread."""
     thread = threading.Thread(target=_run_social_scheduler, daemon=True, name="social-scheduler")
@@ -155,6 +181,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _scheduler_should_run = True
 
         _scheduler_thread = _start_scheduler_thread()
+        _start_nfl_scheduler_thread()
         print("[SCHEDULER] NBA background thread started", flush=True)
 
         _mlb_scheduler_thread = _start_mlb_scheduler_thread()

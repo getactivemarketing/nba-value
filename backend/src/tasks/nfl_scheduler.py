@@ -439,6 +439,53 @@ def run_refresh_odds():
         return {"status": "failed", "error": str(e)}
 
 
+def _run_capture_only():
+    """Collect odds history and shadow predictions. Places no bets.
+
+    Deliberately does NOT register run_snapshot or run_grade — those write
+    prediction snapshots that feed evaluation, and nothing should be evaluated
+    until the pre-registered window opens
+    (docs/engineering/07-nfl-promotion-gates.md).
+    """
+    global _nfl_loop
+    _nfl_loop = asyncio.new_event_loop()
+
+    log_task("Waiting 150s before initial capture (healthcheck headroom)...")
+    time.sleep(150)
+    _init_engine()
+
+    inst = schedule.Scheduler()
+    # Every 4h rather than daily: line movement is the signal, and a daily
+    # sample cannot see a number move through a key value and back.
+    inst.every(4).hours.do(run_refresh_odds)
+    inst.every(4).hours.do(run_shadow_capture)
+
+    log_task("NFL CAPTURE-ONLY configured:")
+    log_task("  - Odds refresh + history: every 4 hours")
+    log_task("  - Shadow candidate capture: every 4 hours")
+    log_task("  - NO betting, NO alerts, NO snapshots, NO grading")
+
+    run_refresh_odds()
+    run_shadow_capture()
+
+    while True:
+        inst.run_pending()
+        time.sleep(60)
+
+
+def run_shadow_capture():
+    """Sync wrapper: score every market candidate with every shadow model."""
+    log_task("NFL shadow capture...")
+    try:
+        from src.tasks.nfl_shadow_capture import capture
+        result = _run_async(capture(settings.nfl_season if hasattr(settings, "nfl_season") else 2026))
+        log_task("NFL shadow capture complete", **{k: str(v) for k, v in result.items()})
+        return result
+    except Exception as e:
+        log_task(f"NFL shadow capture FAILED: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
 def start_scheduler():
     """Start the NFL scheduler loop. Ships DISABLED.
 
@@ -453,7 +500,15 @@ def start_scheduler():
     same process.
     """
     if not settings.nfl_scheduler_enabled:
-        log_task("NFL scheduler disabled (nfl_scheduler_enabled=False) -- not starting.")
+        if settings.nfl_capture_enabled:
+            # Betting is off, but collection must not be. Market history is
+            # unrecoverable once the window passes: MLB lost April-July that
+            # way, and NFL already lost 56 hours before anyone noticed the two
+            # were on the same switch.
+            log_task("NFL betting scheduler disabled -- starting CAPTURE-ONLY mode.")
+            _run_capture_only()
+        else:
+            log_task("NFL scheduler and capture both disabled -- not starting.")
         return
 
     global _nfl_loop

@@ -1,3 +1,4 @@
+import pytest
 # tests/unit/test_nfl_scheduler_tasks.py
 """P4 Task 4: nfl_scheduler weekly orchestration. Ships DISABLED.
 
@@ -350,8 +351,10 @@ async def test_refresh_odds_no_op_out_of_season(monkeypatch):
 # ---------------------------------------------------------------------------
 # 6. start_scheduler guard
 # ---------------------------------------------------------------------------
-def test_start_scheduler_early_returns_when_disabled(monkeypatch):
+def test_nothing_starts_when_betting_AND_capture_are_both_disabled(monkeypatch):
+    """The original guard: betting off + capture off => completely inert."""
     monkeypatch.setattr(sched.settings, "nfl_scheduler_enabled", False)
+    monkeypatch.setattr(sched.settings, "nfl_capture_enabled", False)
 
     scheduler_ctor = MagicMock(side_effect=AssertionError("should never build a Scheduler"))
     monkeypatch.setattr(sched.schedule, "Scheduler", scheduler_ctor)
@@ -360,9 +363,66 @@ def test_start_scheduler_early_returns_when_disabled(monkeypatch):
     init_engine_mock = MagicMock(side_effect=AssertionError("should never init the engine"))
     monkeypatch.setattr(sched, "_init_engine", init_engine_mock)
 
-    # Should return immediately without raising.
     sched.start_scheduler()
 
     scheduler_ctor.assert_not_called()
     sleep_mock.assert_not_called()
     init_engine_mock.assert_not_called()
+
+
+def test_capture_only_runs_when_betting_is_disabled(monkeypatch):
+    """UPDATED 2026-08-05, deliberately.
+
+    Capture used to share the betting switch, so NFL market history stopped
+    the instant betting was disabled — 56 hours lost before the preseason, and
+    market history cannot be recovered once the window passes. Collection is
+    not betting and now has its own switch.
+    """
+    monkeypatch.setattr(sched.settings, "nfl_scheduler_enabled", False)
+    monkeypatch.setattr(sched.settings, "nfl_capture_enabled", True)
+
+    capture_mock = MagicMock()
+    monkeypatch.setattr(sched, "_run_capture_only", capture_mock)
+
+    sched.start_scheduler()
+
+    capture_mock.assert_called_once()
+
+
+def test_capture_only_registers_no_betting_jobs(monkeypatch):
+    """Capture must never schedule snapshotting or grading.
+
+    Those feed evaluation, and nothing may be evaluated before the
+    pre-registered window opens (docs/engineering/07-nfl-promotion-gates.md).
+    """
+    monkeypatch.setattr(sched.time, "sleep", MagicMock())
+    monkeypatch.setattr(sched, "_init_engine", MagicMock())
+    monkeypatch.setattr(sched, "run_refresh_odds", MagicMock())
+    monkeypatch.setattr(sched, "run_shadow_capture", MagicMock())
+
+    registered = []
+
+    class _Rec:
+        def __init__(self): pass
+        def every(self, n=1):
+            outer = self
+            class _E:
+                def __getattr__(self, unit):
+                    def do(fn, *a, **k):
+                        registered.append(fn)
+                        return fn
+                    return type("J", (), {"do": staticmethod(do)})()
+                @property
+                def hours(self):
+                    return type("J", (), {"do": staticmethod(
+                        lambda fn, *a, **k: registered.append(fn) or fn)})()
+            return _E()
+        def run_pending(self): raise SystemExit  # break the infinite loop
+
+    monkeypatch.setattr(sched.schedule, "Scheduler", _Rec)
+    with pytest.raises(SystemExit):
+        sched._run_capture_only()
+
+    names = {getattr(f, "__name__", str(f)) for f in registered}
+    assert "run_snapshot" not in names
+    assert "run_grade" not in names
