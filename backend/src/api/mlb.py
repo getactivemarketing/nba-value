@@ -1689,10 +1689,10 @@ async def _build_pick_preview(session, snapshot: MLBPredictionSnapshot) -> PickP
 
     The video project holds no database access, so everything it needs —
     derivations included — is assembled here rather than there. Returns None
-    when the snapshot lacks the minimum data (team, game date) needed to do
-    point-in-time derivation at all; callers should already have filtered
-    with `eligible_for_preview`, so this is a defensive second line, not the
-    primary gate.
+    when the snapshot lacks the minimum data (team, game date, a resolvable
+    model probability) needed to do point-in-time derivation at all; callers
+    should already have filtered with `eligible_for_preview`, so this is a
+    defensive second line, not the primary gate.
 
     `build_beats` can raise `NarrationContractError` if banned copy reaches a
     beat. That is intentionally NOT caught here — a pick that trips it must
@@ -1709,10 +1709,29 @@ async def _build_pick_preview(session, snapshot: MLBPredictionSnapshot) -> PickP
         return None
     as_of = snapshot.game_date.isoformat()
 
+    # winner_probability is P(predicted_winner), not P(best_ml_team) — the
+    # best-value side is chosen by edge against the market price and carries
+    # no requirement that it be the model's favourite. Invert whenever the
+    # backed team differs from the predicted winner (p_home + p_away == 1).
+    # A null predicted_winner means the probability can't be attributed to
+    # either side, so the pick is unmeasurable rather than guessed.
+    if not snapshot.predicted_winner:
+        return None
+    if team == snapshot.predicted_winner:
+        model_prob = float(snapshot.winner_probability)
+    else:
+        model_prob = 1.0 - float(snapshot.winner_probability)
+
+    # Bounded to the current season: both derivations below apply their own
+    # strict `< as_of` cutoff, but an unbounded WHERE would fetch full career
+    # history per pick. The season floor just keeps the SQL fetch small.
+    season_floor = date(snapshot.game_date.year, 1, 1)
+
     games = (await session.execute(
         select(MLBGame).where(
             and_(
                 MLBGame.status == "final",
+                MLBGame.game_date >= season_floor,
                 or_(MLBGame.home_team == team, MLBGame.away_team == team),
             )
         )
@@ -1732,8 +1751,15 @@ async def _build_pick_preview(session, snapshot: MLBPredictionSnapshot) -> PickP
     starter_name = snapshot.home_starter_name if is_home_pick else snapshot.away_starter_name
     starter_era = snapshot.home_starter_era if is_home_pick else snapshot.away_starter_era
 
+    # Looked up directly by game_id, unconditional on status: the previewed
+    # game is always "scheduled" (eligible_for_preview only admits games
+    # ≥45 minutes from first pitch), so it is never in the final-only
+    # `games` list above. Starter ids are populated at ingest, well before
+    # first pitch, so this is available on the only path that runs in prod.
+    game_row = (await session.execute(
+        select(MLBGame).where(MLBGame.game_id == snapshot.game_id)
+    )).scalars().first()
     starter_id = None
-    game_row = next((g for g in games if g.game_id == snapshot.game_id), None)
     if game_row is not None:
         starter_id = game_row.home_starter_id if is_home_pick else game_row.away_starter_id
 
@@ -1741,9 +1767,12 @@ async def _build_pick_preview(session, snapshot: MLBPredictionSnapshot) -> PickP
     if starter_id is not None:
         starts = (await session.execute(
             select(MLBGame).where(
-                or_(
-                    MLBGame.home_starter_id == starter_id,
-                    MLBGame.away_starter_id == starter_id,
+                and_(
+                    MLBGame.game_date >= season_floor,
+                    or_(
+                        MLBGame.home_starter_id == starter_id,
+                        MLBGame.away_starter_id == starter_id,
+                    ),
                 )
             )
         )).scalars().all()
@@ -1770,7 +1799,7 @@ async def _build_pick_preview(session, snapshot: MLBPredictionSnapshot) -> PickP
         team_abbr=team,
         team_name=TEAM_NAMES.get(team, team),
         odds_american=odds_american,
-        model_prob=float(snapshot.winner_probability),
+        model_prob=model_prob,
         last_10_record=stats.last_10_record if stats else None,
         streak=streak,
         starter_name=starter_name,
