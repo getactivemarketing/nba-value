@@ -1,4 +1,5 @@
 import { execFileSync } from 'child_process';
+import { statSync, unlinkSync } from 'fs';
 import type { TtsAdapter } from './types';
 
 /**
@@ -7,11 +8,16 @@ import type { TtsAdapter } from './types';
  * refuses to upload renders narrated with it.
  */
 export function sayAdapter(): TtsAdapter {
-  return {
+  return Object.freeze({
     id: 'say',
     publishable: false,
     async synthesize(text, outPath) {
       execFileSync('say', ['-v', 'Samantha', '-o', outPath, '--data-format=LEF32@22050', text]);
+      const stats = statSync(outPath);
+      if (stats.size === 0) {
+        unlinkSync(outPath);
+        throw new Error('say produced empty audio');
+      }
     },
-  };
+  });
 }

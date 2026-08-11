@@ -1,11 +1,11 @@
 import axios from 'axios';
-import { writeFileSync } from 'fs';
+import { writeFileSync, statSync, unlinkSync } from 'fs';
 import type { TtsAdapter } from './types';
 
 const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'JBFqnCBsd6RMkjVDRZzb';
 
 export function elevenLabsAdapter(apiKey: string): TtsAdapter {
-  return {
+  return Object.freeze({
     id: 'elevenlabs',
     publishable: true,
     async synthesize(text, outPath) {
@@ -19,6 +19,11 @@ export function elevenLabsAdapter(apiKey: string): TtsAdapter {
         },
       );
       writeFileSync(outPath, Buffer.from(resp.data));
+      const stats = statSync(outPath);
+      if (stats.size === 0) {
+        unlinkSync(outPath);
+        throw new Error('ElevenLabs returned empty audio');
+      }
     },
-  };
+  });
 }

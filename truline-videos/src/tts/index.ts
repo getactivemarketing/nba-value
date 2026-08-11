@@ -9,16 +9,21 @@ export function selectAdapter(env: NodeJS.ProcessEnv = process.env): TtsAdapter 
   const explicit = env.TTS_PROVIDER;
 
   if (explicit === 'elevenlabs') {
-    if (!env.ELEVENLABS_API_KEY) throw new Error('TTS_PROVIDER=elevenlabs but ELEVENLABS_API_KEY is unset');
-    return elevenLabsAdapter(env.ELEVENLABS_API_KEY);
+    const key = env.ELEVENLABS_API_KEY?.trim();
+    if (!key) throw new Error('TTS_PROVIDER=elevenlabs but ELEVENLABS_API_KEY is unset');
+    return elevenLabsAdapter(key);
   }
   if (explicit === 'openai') {
-    if (!env.OPENAI_API_KEY) throw new Error('TTS_PROVIDER=openai but OPENAI_API_KEY is unset');
-    return openAiAdapter(env.OPENAI_API_KEY);
+    const key = env.OPENAI_API_KEY?.trim();
+    if (!key) throw new Error('TTS_PROVIDER=openai but OPENAI_API_KEY is unset');
+    return openAiAdapter(key);
   }
   if (explicit === 'say') return sayAdapter();
+  if (explicit) throw new Error(`TTS_PROVIDER="${explicit}" is unrecognised. Valid options: elevenlabs, openai, say`);
 
-  if (env.ELEVENLABS_API_KEY) return elevenLabsAdapter(env.ELEVENLABS_API_KEY);
-  if (env.OPENAI_API_KEY) return openAiAdapter(env.OPENAI_API_KEY);
+  const elevenKey = env.ELEVENLABS_API_KEY?.trim();
+  if (elevenKey) return elevenLabsAdapter(elevenKey);
+  const openaiKey = env.OPENAI_API_KEY?.trim();
+  if (openaiKey) return openAiAdapter(openaiKey);
   return sayAdapter();
 }

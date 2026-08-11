@@ -1,9 +1,9 @@
 import axios from 'axios';
-import { writeFileSync } from 'fs';
+import { writeFileSync, statSync, unlinkSync } from 'fs';
 import type { TtsAdapter } from './types';
 
 export function openAiAdapter(apiKey: string): TtsAdapter {
-  return {
+  return Object.freeze({
     id: 'openai',
     publishable: true,
     async synthesize(text, outPath) {
@@ -17,6 +17,11 @@ export function openAiAdapter(apiKey: string): TtsAdapter {
         },
       );
       writeFileSync(outPath, Buffer.from(resp.data));
+      const stats = statSync(outPath);
+      if (stats.size === 0) {
+        unlinkSync(outPath);
+        throw new Error('OpenAI returned empty audio');
+      }
     },
-  };
+  });
 }
