@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calculatePickPreviewMetadata, type BeatClip } from './PickPreview';
+import { PICK_PREVIEW_DEFAULT_PROPS } from '../pick-preview-defaults';
 
 const beat = (durationInFrames: number): BeatClip => ({
   key: 'x', overlay: {}, audioSrc: 'a.mp3', durationInFrames,
@@ -30,16 +31,25 @@ describe('calculatePickPreviewMetadata', () => {
   });
 
   it('default props produce a real video duration, not a still', () => {
-    const defaultBeats: BeatClip[] = [
-      { key: 'hook', overlay: {}, audioSrc: '', durationInFrames: 60 },
-      { key: 'pick', overlay: { team: 'CWS', price: '-110', priceLabel: 'Moneyline' }, audioSrc: '', durationInFrames: 90 },
-      { key: 'turn', overlay: { stat: '4.2% Edge', statLabel: 'Model Edge' }, audioSrc: '', durationInFrames: 75 },
-      { key: 'numbers', overlay: { number: '71.3%', numberLabel: 'Win Probability' }, audioSrc: '', durationInFrames: 75 },
-      { key: 'close', overlay: { cta: 'Follow for Updates', disclaimer: 'Not investment advice' }, audioSrc: '', durationInFrames: 60 },
-    ];
-    const props = { beats: defaultBeats, teamColor: '#27251F', logoUrl: 'https://a.espncdn.com/i/teamlogos/mlb/500/chw.png' };
-    const result = calculatePickPreviewMetadata({ props });
-    expect(result.durationInFrames).toBe(360);
+    const result = calculatePickPreviewMetadata({ props: PICK_PREVIEW_DEFAULT_PROPS });
     expect(result.durationInFrames).toBeGreaterThan(1);
+  });
+});
+
+describe('Narration contract guard — copy must match backend constraints', () => {
+  it('no default beat overlay contains "edge" (case-insensitive)', () => {
+    for (const beat of PICK_PREVIEW_DEFAULT_PROPS.beats) {
+      for (const [key, value] of Object.entries(beat.overlay)) {
+        expect(value.toLowerCase(),
+          `Beat "${beat.key}" overlay[${key}] must not contain "edge": ${value}`
+        ).not.toContain('edge');
+      }
+    }
+  });
+
+  it('close beat disclaimer is exactly "Not betting advice. 21+."', () => {
+    const closeBeat = PICK_PREVIEW_DEFAULT_PROPS.beats.find(b => b.key === 'close');
+    expect(closeBeat).toBeDefined();
+    expect(closeBeat?.overlay.disclaimer).toBe('Not betting advice. 21+.');
   });
 });
