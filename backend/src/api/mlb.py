@@ -6,7 +6,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Query, HTTPException, Path
 from pydantic import BaseModel
-from sqlalchemy import select, and_, desc, func
+from sqlalchemy import select, and_, or_, desc, func
 
 from src.database import async_session
 from src.models import (
@@ -213,6 +213,54 @@ class ClvSummary(BaseModel):
     verdict: str
     by_type: dict = {}
     daily: list[dict] = []
+
+
+class PickPreviewBeat(BaseModel):
+    key: str
+    narration: str
+    overlay: dict[str, str]
+
+
+class PickPreviewItem(BaseModel):
+    game_id: str
+    game_date: str
+    game_time: str
+    team_abbr: str
+    team_name: str
+    logo_url: str
+    odds_american: int
+    beats: list[PickPreviewBeat]
+
+
+class PickPreviewList(BaseModel):
+    generated_at: str
+    previews: list[PickPreviewItem]
+
+
+# Minutes of clearance required before first pitch. Measured at UPLOAD time,
+# not render time — Blotato's useNextFreeSlot can hold a post for minutes, and
+# a pick published after first pitch is worthless as a receipt.
+PREVIEW_MIN_LEAD_MINUTES = 45
+
+
+def eligible_for_preview(snapshot, min_lead_minutes: int = PREVIEW_MIN_LEAD_MINUTES) -> bool:
+    """Whether a snapshot may be published as a pre-game video.
+
+    Restricting to moneyline is what mechanically keeps the paused runline and
+    suppressed totals out of published video.
+    """
+    if (snapshot.best_bet_type or "").lower() != "moneyline":
+        return False
+    if not snapshot.best_ml_team or snapshot.best_ml_odds is None:
+        return False
+    if snapshot.game_time is None:
+        return False
+
+    kickoff = snapshot.game_time
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=timezone.utc)
+    lead = (kickoff - datetime.now(timezone.utc)).total_seconds() / 60.0
+    return lead > min_lead_minutes
 
 
 # Endpoints
@@ -1634,3 +1682,145 @@ async def get_underdog_evaluation(
             "avg_odds_american": avg_american,
             "biggest_wins": biggest_wins,
         }
+
+
+async def _build_pick_preview(session, snapshot: MLBPredictionSnapshot) -> PickPreviewItem | None:
+    """Assemble one fully-rendered pick preview from a snapshot.
+
+    The video project holds no database access, so everything it needs —
+    derivations included — is assembled here rather than there. Returns None
+    when the snapshot lacks the minimum data (team, game date) needed to do
+    point-in-time derivation at all; callers should already have filtered
+    with `eligible_for_preview`, so this is a defensive second line, not the
+    primary gate.
+
+    `build_beats` can raise `NarrationContractError` if banned copy reaches a
+    beat. That is intentionally NOT caught here — a pick that trips it must
+    fail loudly rather than publish or be silently skipped.
+    """
+    from src.services.mlb.first_inning import StarterAppearance, starter_first_inning_split
+    from src.services.mlb.pick_script import PickPayload, build_beats
+    from src.services.mlb.team_form import GameResult, current_streak
+    from src.services.mlb.value_calculator import MLBValueCalculator
+    from src.services.social.content import TEAM_NAMES
+
+    team = snapshot.best_ml_team
+    if not team or snapshot.game_date is None:
+        return None
+    as_of = snapshot.game_date.isoformat()
+
+    games = (await session.execute(
+        select(MLBGame).where(
+            and_(
+                MLBGame.status == "final",
+                or_(MLBGame.home_team == team, MLBGame.away_team == team),
+            )
+        )
+    )).scalars().all()
+
+    results = []
+    for g in games:
+        if g.home_score is None or g.away_score is None:
+            continue
+        is_home = g.home_team == team
+        mine = g.home_score if is_home else g.away_score
+        theirs = g.away_score if is_home else g.home_score
+        results.append(GameResult(g.game_date.isoformat(), won=mine > theirs))
+    streak = current_streak(results, as_of=as_of)
+
+    is_home_pick = team == snapshot.home_team
+    starter_name = snapshot.home_starter_name if is_home_pick else snapshot.away_starter_name
+    starter_era = snapshot.home_starter_era if is_home_pick else snapshot.away_starter_era
+
+    starter_id = None
+    game_row = next((g for g in games if g.game_id == snapshot.game_id), None)
+    if game_row is not None:
+        starter_id = game_row.home_starter_id if is_home_pick else game_row.away_starter_id
+
+    split = None
+    if starter_id is not None:
+        starts = (await session.execute(
+            select(MLBGame).where(
+                or_(
+                    MLBGame.home_starter_id == starter_id,
+                    MLBGame.away_starter_id == starter_id,
+                )
+            )
+        )).scalars().all()
+        apps = [
+            StarterAppearance(
+                g.game_date.isoformat(),
+                g.away_first_inning_runs if g.home_starter_id == starter_id
+                else g.home_first_inning_runs,
+            )
+            for g in starts
+        ]
+        split = starter_first_inning_split(apps, as_of=as_of)
+
+    stats = (await session.execute(
+        select(MLBTeamStats)
+        .where(and_(MLBTeamStats.team_abbr == team,
+                    MLBTeamStats.stat_date < snapshot.game_date))
+        .order_by(desc(MLBTeamStats.stat_date))
+        .limit(1)
+    )).scalars().first()
+
+    odds_american = MLBValueCalculator.decimal_to_american(float(snapshot.best_ml_odds))
+    beats = build_beats(PickPayload(
+        team_abbr=team,
+        team_name=TEAM_NAMES.get(team, team),
+        odds_american=odds_american,
+        model_prob=float(snapshot.winner_probability),
+        last_10_record=stats.last_10_record if stats else None,
+        streak=streak,
+        starter_name=starter_name,
+        starter_era=float(starter_era) if starter_era is not None else None,
+        first_inning=split,
+    ))
+
+    return PickPreviewItem(
+        game_id=snapshot.game_id,
+        game_date=as_of,
+        game_time=snapshot.game_time.isoformat(),
+        team_abbr=team,
+        team_name=TEAM_NAMES.get(team, team),
+        logo_url=f"https://a.espncdn.com/i/teamlogos/mlb/500/{team.lower()}.png",
+        odds_american=odds_american,
+        beats=[PickPreviewBeat(**b.__dict__) for b in beats],
+    )
+
+
+@router.get("/video/pick-previews", response_model=PickPreviewList)
+async def get_pick_previews(
+    days: int = Query(1, ge=1, le=3, description="Slate look-ahead in days"),
+) -> PickPreviewList:
+    """Publishable pre-game pick previews, fully rendered to narration beats.
+
+    The video project holds no database access, so everything it needs —
+    derivations included — is assembled here. Same split the celebration flow
+    already uses against /mlb/evaluation/underdogs.
+    """
+    today = date.today()
+    horizon = today + timedelta(days=days)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(MLBPredictionSnapshot).where(
+                and_(
+                    MLBPredictionSnapshot.game_date >= today,
+                    MLBPredictionSnapshot.game_date <= horizon,
+                )
+            )
+        )
+        snapshots = [s for s in result.scalars().all() if eligible_for_preview(s)]
+
+        previews: list[PickPreviewItem] = []
+        for snap in snapshots:
+            preview = await _build_pick_preview(session, snap)
+            if preview is not None:
+                previews.append(preview)
+
+    return PickPreviewList(
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        previews=previews,
+    )
