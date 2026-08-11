@@ -1,6 +1,9 @@
-import { describe, expect, it, afterEach, vi } from 'vitest';
+import { describe, expect, it, afterEach, vi, beforeEach } from 'vitest';
 import { selectAdapter } from './index';
-import { writeFileSync, unlinkSync } from 'fs';
+import { writeFileSync, unlinkSync, statSync, existsSync } from 'fs';
+import axios from 'axios';
+import { elevenLabsAdapter } from './elevenlabs';
+import { openAiAdapter } from './openai';
 
 describe('selectAdapter', () => {
   it('prefers elevenlabs when its key is present', () => {
@@ -59,28 +62,98 @@ describe('selectAdapter', () => {
   });
 });
 
-describe('synthesize', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-    try {
-      unlinkSync('/tmp/test-say-empty.wav');
-    } catch {
-      // cleanup
-    }
+describe('synthesize - file size validation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  it('adapters check file size and reject empty output', () => {
-    // Verify the adapter structure - the key validation is that
-    // statSync is called after writing, and unlinkSync is imported
-    // for cleanup if the file is empty.
-    const adapter = selectAdapter({});
-    expect(typeof adapter.synthesize).toBe('function');
-    expect(adapter.id).toBe('say');
+  afterEach(() => {
+    vi.restoreAllMocks();
+    // Cleanup test files
+    const tmpFiles = [
+      '/tmp/test-elevenlabs-empty.wav',
+      '/tmp/test-elevenlabs-valid.wav',
+      '/tmp/test-openai-empty.wav',
+      '/tmp/test-openai-valid.wav',
+    ];
+    tmpFiles.forEach((f) => {
+      try {
+        unlinkSync(f);
+      } catch {
+        // ignore
+      }
+    });
+  });
 
-    // Additional validation: test the whitespace trimming in selection
-    // which prevents empty credentials from being passed to adapters
-    const badKey = selectAdapter({ ELEVENLABS_API_KEY: '   ' });
-    expect(badKey.publishable).toBe(false);
-    expect(badKey.id).toBe('say');
+  it('elevenlabs adapter rejects empty responses and deletes the file', async () => {
+    const postSpy = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      data: new ArrayBuffer(0), // Empty response
+    });
+
+    const adapter = elevenLabsAdapter('test-key');
+    const tmpPath = '/tmp/test-elevenlabs-empty.wav';
+
+    await expect(adapter.synthesize('test text', tmpPath)).rejects.toThrow(/empty audio/);
+
+    // Verify file was deleted
+    expect(existsSync(tmpPath)).toBe(false);
+
+    postSpy.mockRestore();
+  });
+
+  it('elevenlabs adapter accepts non-empty responses and creates file', async () => {
+    const audioData = Buffer.from('fake audio data');
+    const postSpy = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      data: audioData,
+    });
+
+    const adapter = elevenLabsAdapter('test-key');
+    const tmpPath = '/tmp/test-elevenlabs-valid.wav';
+
+    await adapter.synthesize('test text', tmpPath);
+
+    // Verify file exists with correct content
+    expect(existsSync(tmpPath)).toBe(true);
+    const stats = statSync(tmpPath);
+    expect(stats.size).toBe(audioData.length);
+    expect(stats.size).toBeGreaterThan(0);
+
+    postSpy.mockRestore();
+  });
+
+  it('openai adapter rejects empty responses and deletes the file', async () => {
+    const postSpy = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      data: new ArrayBuffer(0), // Empty response
+    });
+
+    const adapter = openAiAdapter('test-key');
+    const tmpPath = '/tmp/test-openai-empty.wav';
+
+    await expect(adapter.synthesize('test text', tmpPath)).rejects.toThrow(/empty audio/);
+
+    // Verify file was deleted
+    expect(existsSync(tmpPath)).toBe(false);
+
+    postSpy.mockRestore();
+  });
+
+  it('openai adapter accepts non-empty responses and creates file', async () => {
+    const audioData = Buffer.from('fake audio data');
+    const postSpy = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      data: audioData,
+    });
+
+    const adapter = openAiAdapter('test-key');
+    const tmpPath = '/tmp/test-openai-valid.wav';
+
+    await adapter.synthesize('test text', tmpPath);
+
+    // Verify file exists with correct content
+    expect(existsSync(tmpPath)).toBe(true);
+    const stats = statSync(tmpPath);
+    expect(stats.size).toBe(audioData.length);
+    expect(stats.size).toBeGreaterThan(0);
+
+    postSpy.mockRestore();
   });
 });
