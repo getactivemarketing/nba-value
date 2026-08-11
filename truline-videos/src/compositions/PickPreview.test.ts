@@ -28,4 +28,18 @@ describe('calculatePickPreviewMetadata', () => {
     const result = calculatePickPreviewMetadata({ props });
     expect(result.durationInFrames).toBeGreaterThan(0);
   });
+
+  it('default props produce a real video duration, not a still', () => {
+    const defaultBeats: BeatClip[] = [
+      { key: 'hook', overlay: {}, audioSrc: '', durationInFrames: 60 },
+      { key: 'pick', overlay: { team: 'CWS', price: '-110', priceLabel: 'Moneyline' }, audioSrc: '', durationInFrames: 90 },
+      { key: 'turn', overlay: { stat: '4.2% Edge', statLabel: 'Model Edge' }, audioSrc: '', durationInFrames: 75 },
+      { key: 'numbers', overlay: { number: '71.3%', numberLabel: 'Win Probability' }, audioSrc: '', durationInFrames: 75 },
+      { key: 'close', overlay: { cta: 'Follow for Updates', disclaimer: 'Not investment advice' }, audioSrc: '', durationInFrames: 60 },
+    ];
+    const props = { beats: defaultBeats, teamColor: '#27251F', logoUrl: 'https://a.espncdn.com/i/teamlogos/mlb/500/chw.png' };
+    const result = calculatePickPreviewMetadata({ props });
+    expect(result.durationInFrames).toBe(360);
+    expect(result.durationInFrames).toBeGreaterThan(1);
+  });
 });

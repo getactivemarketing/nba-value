@@ -99,7 +99,7 @@ export const PickPreview: React.FC<PickPreviewProps> = ({
         cursor += clampedDuration;
         return (
           <Sequence key={beat.key} from={from} durationInFrames={clampedDuration}>
-            <Audio src={beat.audioSrc} />
+            {beat.audioSrc && <Audio src={beat.audioSrc} />}
             <BeatText overlay={beat.overlay} teamColor={teamColor} logoUrl={logoUrl} />
           </Sequence>
         );
