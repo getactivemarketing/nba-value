@@ -13,7 +13,7 @@ import pytest
 
 from src.services.mlb.first_inning import FirstInningSplit
 from src.services.mlb.pick_script import (
-    Beat, PickPayload, breakeven_prob, build_beats,
+    Beat, PickPayload, breakeven_prob, build_beats, NarrationContractError,
 )
 from src.services.mlb.team_form import Streak
 
@@ -95,3 +95,84 @@ class TestContent:
     def test_turn_beat_states_the_split(self):
         turn = next(b for b in build_beats(payload()) if b.key == "turn")
         assert "10 of 17" in turn.narration
+
+
+class TestCaseAgainstGrammar:
+    """All 7 non-empty subsets of optional case_against fields.
+
+    The first included clause must always stand on its own as a complete
+    sentence with a subject, capitalized and capable of being spoken aloud.
+    """
+
+    def test_form_only(self):
+        """last_10_record present, streak and starter absent."""
+        case = next(b for b in build_beats(
+            payload(streak=None, starter_name=None, starter_era=None)
+        ) if b.key == "case_against")
+        assert case.narration == "They're 5-5 in their last ten."
+        assert case.narration[0].isupper()
+
+    def test_streak_only(self):
+        """Streak present, form and starter absent."""
+        case = next(b for b in build_beats(
+            payload(last_10_record=None, starter_name=None, starter_era=None)
+        ) if b.key == "case_against")
+        assert case.narration == "They're on a 2-game losing streak."
+        assert case.narration[0].isupper()
+
+    def test_starter_only(self):
+        """Starter present, form and streak absent."""
+        case = next(b for b in build_beats(
+            payload(last_10_record=None, streak=None)
+        ) if b.key == "case_against")
+        assert case.narration == "Castillo carries a 5.06 ERA."
+        assert case.narration[0].isupper()
+
+    def test_form_and_streak(self):
+        """Form and streak present, starter absent."""
+        case = next(b for b in build_beats(
+            payload(starter_name=None, starter_era=None)
+        ) if b.key == "case_against")
+        assert case.narration == "They're 5-5 in their last ten, on a 2-game losing streak."
+        assert case.narration[0].isupper()
+
+    def test_form_and_starter(self):
+        """Form and starter present, streak absent."""
+        case = next(b for b in build_beats(
+            payload(streak=None)
+        ) if b.key == "case_against")
+        assert case.narration == "They're 5-5 in their last ten, Castillo carries a 5.06 ERA."
+        assert case.narration[0].isupper()
+
+    def test_streak_and_starter(self):
+        """Streak and starter present, form absent."""
+        case = next(b for b in build_beats(
+            payload(last_10_record=None)
+        ) if b.key == "case_against")
+        assert case.narration == "They're on a 2-game losing streak, Castillo carries a 5.06 ERA."
+        assert case.narration[0].isupper()
+
+    def test_all_three_present(self):
+        """Form, streak, and starter all present."""
+        case = next(b for b in build_beats(payload()) if b.key == "case_against")
+        assert case.narration == "They're 5-5 in their last ten, on a 2-game losing streak, Castillo carries a 5.06 ERA."
+        assert case.narration[0].isupper()
+
+
+class TestNarrationContractGuard:
+    """The 'edge' ban is enforced at the guard, not just in templates."""
+
+    def test_normal_payload_does_not_raise(self):
+        """A payload with clean fields should not raise."""
+        beats = build_beats(payload())
+        assert len(beats) == 6
+
+    def test_team_name_with_edge_raises(self):
+        """Payload with 'Edge' in team_name should raise NarrationContractError."""
+        with pytest.raises(NarrationContractError):
+            build_beats(payload(team_name="Edge City"))
+
+    def test_starter_name_with_edge_raises(self):
+        """Payload with 'edge' in starter_name should raise NarrationContractError."""
+        with pytest.raises(NarrationContractError):
+            build_beats(payload(starter_name="Wedge"))

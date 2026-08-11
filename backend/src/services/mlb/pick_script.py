@@ -28,6 +28,15 @@ from src.services.mlb.value_calculator import MLBValueCalculator
 DISCLAIMER = "Not betting advice. 21+."
 
 
+class NarrationContractError(RuntimeError):
+    """Published narration violates a hard constraint.
+
+    Raised loudly rather than published: a video narration claiming an unpaid
+    result (like 'edge') or containing a banned word from database fields is
+    a public factual claim with odds attached and must never ship.
+    """
+
+
 @dataclass(frozen=True)
 class Beat:
     """One narrated segment and the graphic shown over it."""
@@ -92,16 +101,26 @@ def build_beats(payload: PickPayload) -> list[Beat]:
     # -- case against --------------------------------------------------------
     clauses: list[str] = []
     chips: list[str] = []
+
     if payload.last_10_record:
         clauses.append(f"They're {payload.last_10_record} in their last ten")
         chips.append(f"{payload.last_10_record} L10")
-    if payload.streak is not None and payload.streak.length > 1:
-        verb = "losing" if payload.streak.direction == "lost" else "winning"
-        clauses.append(f"on a {payload.streak.length}-game {verb} streak")
-        chips.append(f"{payload.streak.length}-game {verb} streak")
+        # If form exists, other clauses can be lowercase continuations
+        if payload.streak is not None and payload.streak.length > 1:
+            verb = "losing" if payload.streak.direction == "lost" else "winning"
+            clauses.append(f"on a {payload.streak.length}-game {verb} streak")
+            chips.append(f"{payload.streak.length}-game {verb} streak")
+    else:
+        # Form not present, so streak needs to be its own complete sentence
+        if payload.streak is not None and payload.streak.length > 1:
+            verb = "losing" if payload.streak.direction == "lost" else "winning"
+            clauses.append(f"They're on a {payload.streak.length}-game {verb} streak")
+            chips.append(f"{payload.streak.length}-game {verb} streak")
+
+    # Starter always stands on its own with subject
     if payload.starter_name and payload.starter_era is not None:
         clauses.append(
-            f"and {payload.starter_name} carries a {payload.starter_era:.2f} ERA"
+            f"{payload.starter_name} carries a {payload.starter_era:.2f} ERA"
         )
         chips.append(f"{payload.starter_name} {payload.starter_era:.2f} ERA")
 
@@ -144,5 +163,17 @@ def build_beats(payload: PickPayload) -> list[Beat]:
         "Full model at truline dot app.",
         {"cta": "truline.app", "disclaimer": DISCLAIMER},
     ))
+
+    # -- contract: no banned words in opaque fields ---------------------------
+    for beat in beats:
+        if "edge" in beat.narration.lower():
+            raise NarrationContractError(
+                f"Narration contains 'edge': {beat.narration}"
+            )
+        for key, value in beat.overlay.items():
+            if "edge" in value.lower():
+                raise NarrationContractError(
+                    f"Overlay[{key}] contains 'edge': {value}"
+                )
 
     return beats
