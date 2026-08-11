@@ -1,6 +1,7 @@
 import React from 'react';
 import { Composition } from 'remotion';
 import { ModelHit, type ModelHitProps } from './compositions/ModelHit';
+import { PickPreview, calculatePickPreviewMetadata, type PickPreviewProps } from './compositions/PickPreview';
 import { FPS, WIDTH, HEIGHT, seconds } from './constants';
 
 export const Root: React.FC = () => {
@@ -15,14 +16,26 @@ export const Root: React.FC = () => {
   };
 
   return (
-    <Composition
-      id="model-hit"
-      component={ModelHit as unknown as React.ComponentType<Record<string, unknown>>}
-      durationInFrames={seconds(8)}
-      fps={FPS}
-      width={WIDTH}
-      height={HEIGHT}
-      defaultProps={defaultProps as unknown as Record<string, unknown>}
-    />
+    <>
+      <Composition
+        id="model-hit"
+        component={ModelHit as unknown as React.ComponentType<Record<string, unknown>>}
+        durationInFrames={seconds(8)}
+        fps={FPS}
+        width={WIDTH}
+        height={HEIGHT}
+        defaultProps={defaultProps as unknown as Record<string, unknown>}
+      />
+      <Composition
+        id="pick-preview"
+        component={PickPreview as unknown as React.ComponentType<Record<string, unknown>>}
+        durationInFrames={900}
+        fps={FPS}
+        width={WIDTH}
+        height={HEIGHT}
+        defaultProps={{ beats: [], teamColor: '#27251F', logoUrl: '' } as unknown as Record<string, unknown>}
+        calculateMetadata={calculatePickPreviewMetadata as never}
+      />
+    </>
   );
 };
