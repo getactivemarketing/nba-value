@@ -3,7 +3,7 @@ import { writeFileSync, statSync, unlinkSync } from 'fs';
 import type { TtsAdapter } from './types';
 
 export function openAiAdapter(apiKey: string): TtsAdapter {
-  return Object.freeze({
+  return Object.freeze<TtsAdapter>({
     id: 'openai',
     publishable: true,
     async synthesize(text, outPath) {

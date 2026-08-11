@@ -8,7 +8,7 @@ import type { TtsAdapter } from './types';
  * refuses to upload renders narrated with it.
  */
 export function sayAdapter(): TtsAdapter {
-  return Object.freeze({
+  return Object.freeze<TtsAdapter>({
     id: 'say',
     publishable: false,
     async synthesize(text, outPath) {

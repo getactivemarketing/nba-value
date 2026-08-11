@@ -5,7 +5,7 @@ import type { TtsAdapter } from './types';
 const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'JBFqnCBsd6RMkjVDRZzb';
 
 export function elevenLabsAdapter(apiKey: string): TtsAdapter {
-  return Object.freeze({
+  return Object.freeze<TtsAdapter>({
     id: 'elevenlabs',
     publishable: true,
     async synthesize(text, outPath) {
