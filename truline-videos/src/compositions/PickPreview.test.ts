@@ -22,4 +22,10 @@ describe('calculatePickPreviewMetadata', () => {
     const props = { beats: [], teamColor: '#000', logoUrl: '' };
     expect(calculatePickPreviewMetadata({ props }).durationInFrames).toBeGreaterThan(0);
   });
+
+  it('a beat with zero duration does not crash the render', () => {
+    const props = { beats: [beat(0), beat(90)], teamColor: '#000', logoUrl: '' };
+    const result = calculatePickPreviewMetadata({ props });
+    expect(result.durationInFrames).toBeGreaterThan(0);
+  });
 });

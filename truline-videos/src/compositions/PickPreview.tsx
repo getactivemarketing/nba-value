@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  AbsoluteFill, Audio, Img, OffthreadVideo, Sequence,
+  AbsoluteFill, Audio, Img, Loop, OffthreadVideo, Sequence,
   interpolate, spring, staticFile, useCurrentFrame, useVideoConfig,
 } from 'remotion';
 import { COLORS, FONTS, FPS } from '../constants';
@@ -48,7 +48,7 @@ const BeatText: React.FC<{ overlay: Record<string, string>; teamColor: string; l
       justifyContent: 'center', alignItems: 'center', padding: 80,
       opacity, transform: `scale(${scale})`,
     }}>
-      {overlay.team && (
+      {overlay.team && logoUrl && (
         <Img src={logoUrl} width={280} height={280}
              style={{ filter: `drop-shadow(0 0 60px ${teamColor})`, marginBottom: 40 }} />
       )}
@@ -73,14 +73,17 @@ const BeatText: React.FC<{ overlay: Record<string, string>; teamColor: string; l
 export const PickPreview: React.FC<PickPreviewProps> = ({
   beats, teamColor, logoUrl, brollSrc, musicFile,
 }) => {
+  const { durationInFrames } = useVideoConfig();
   let cursor = 0;
 
   return (
     <AbsoluteFill style={{ backgroundColor: COLORS.bg }}>
       {brollSrc && (
         <AbsoluteFill style={{ opacity: 0.15 }}>
-          <OffthreadVideo src={brollSrc} muted
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <Loop durationInFrames={durationInFrames}>
+            <OffthreadVideo src={brollSrc} muted
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          </Loop>
         </AbsoluteFill>
       )}
 
@@ -91,10 +94,11 @@ export const PickPreview: React.FC<PickPreviewProps> = ({
       {musicFile && <Audio src={staticFile(musicFile)} volume={0.15} />}
 
       {beats.map((beat) => {
+        const clampedDuration = Math.max(1, beat.durationInFrames);
         const from = cursor;
-        cursor += beat.durationInFrames;
+        cursor += clampedDuration;
         return (
-          <Sequence key={beat.key} from={from} durationInFrames={beat.durationInFrames}>
+          <Sequence key={beat.key} from={from} durationInFrames={clampedDuration}>
             <Audio src={beat.audioSrc} />
             <BeatText overlay={beat.overlay} teamColor={teamColor} logoUrl={logoUrl} />
           </Sequence>
