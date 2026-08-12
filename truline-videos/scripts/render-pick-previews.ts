@@ -21,8 +21,9 @@ import { relative, resolve, sep } from 'path';
 import { selectAdapter, type TtsAdapter } from '../src/tts';
 import { fetchBroll, pickBrollQuery } from '../src/broll';
 import { teamColor } from '../src/teams';
-import { blotatoConfigFromEnv, uploadToBlotato } from '../src/blotato';
+import { blotatoConfigFromEnv, uploadToBlotato, type BlotatoConfig } from '../src/blotato';
 import { mayPublish } from '../src/publish-guard';
+import { addOutcome, decidePreviewResult, emptyTally, formatTally, type PreviewResult } from '../src/preview-outcome';
 import { FPS } from '../src/constants';
 import type { BeatClip } from '../src/compositions/PickPreview';
 
@@ -124,8 +125,14 @@ async function loadPreviews(): Promise<ApiPreview[]> {
   }
 }
 
-/** One preview end to end: narrate, fetch b-roll, render, gate, upload. */
-async function processPreview(preview: ApiPreview, tts: TtsAdapter): Promise<'posted' | 'skipped'> {
+/** One preview end to end: narrate, fetch b-roll, render, gate, upload.
+ *  Returns the outcome AND whether it is safe to dedupe — see
+ *  decidePreviewResult in src/preview-outcome.ts for the rule. */
+async function processPreview(
+  preview: ApiPreview,
+  tts: TtsAdapter,
+  blotatoCfg: BlotatoConfig,
+): Promise<PreviewResult> {
   // 1. narration, one clip per beat. Extension follows the adapter: `say`
   // writes a WAV container (its fixed --data-format only opens under .wav/
   // .caf — .mp3 fails outright), elevenlabs/openai both return real MP3 bytes.
@@ -169,12 +176,13 @@ async function processPreview(preview: ApiPreview, tts: TtsAdapter): Promise<'po
 
   // 4. re-check the gate at UPLOAD time — rendering just consumed minutes
   const minutesLeft = (new Date(preview.game_time).getTime() - Date.now()) / 60000;
-  if (!mayPublish(tts.publishable, minutesLeft)) {
+  const clearance = mayPublish(tts.publishable, minutesLeft);
+  if (!clearance) {
     console.log(
       `SKIP upload ${preview.game_id}: publishable=${tts.publishable}, ` +
       `${minutesLeft.toFixed(0)}min to first pitch. Render kept at ${outPath}`,
     );
-    return 'skipped';
+    return decidePreviewResult(false, null);
   }
 
   const caption = [
@@ -186,8 +194,27 @@ async function processPreview(preview: ApiPreview, tts: TtsAdapter): Promise<'po
     '#MLB #SportsAnalytics',
   ].filter(Boolean).join('\n');
 
-  await uploadToBlotato(outPath, caption, blotatoConfigFromEnv());
-  return 'posted';
+  // Defence in depth: the backend enforces the banned-word contract and
+  // fails closed (NarrationContractError), so the realistic failure mode is
+  // "nothing renders", not "banned word ships" — but this caption is the one
+  // thing that actually posts publicly, and it embeds the turn beat's
+  // narration unvalidated. Cheap insurance against a backend regression.
+  if (/edge/i.test(caption)) {
+    console.error(`REFUSED upload ${preview.game_id}: caption contains banned word "edge":\n${caption}`);
+    return decidePreviewResult(true, null);
+  }
+
+  const upload = await uploadToBlotato(outPath, caption, blotatoCfg);
+  const result = decidePreviewResult(true, upload);
+  if (result.outcome === 'posted') {
+    console.log(`Posted: ${preview.game_id} -> ${upload.posted.join(', ')}`);
+  } else {
+    console.error(
+      `Upload for ${preview.game_id} did not confirm any platform post ` +
+      `(uploaded=${upload.uploaded}, posted=[${upload.posted.join(', ')}]) — leaving un-deduped for retry.`,
+    );
+  }
+  return result;
 }
 
 async function main() {
@@ -197,12 +224,20 @@ async function main() {
   const tts = selectAdapter(process.env);
   console.log(`TTS provider: ${tts.id} (publishable: ${tts.publishable})`);
 
+  const blotatoCfg = blotatoConfigFromEnv();
+  if (blotatoCfg.apiKey && !blotatoCfg.tiktokAccountId && !blotatoCfg.instagramAccountId) {
+    console.warn(
+      'WARNING: BLOTATO_API_KEY is set but neither BLOTATO_TIKTOK_ACCOUNT_ID nor ' +
+      'BLOTATO_INSTAGRAM_ACCOUNT_ID is configured. No platform can confirm a post this run — ' +
+      'every upload will be treated as failed (and left un-deduped) rather than posted.',
+    );
+  }
+
   const posted = loadPosted();
   const previews = await loadPreviews();
   console.log(`${previews.length} eligible pick(s)`);
 
-  let succeeded = 0;
-  let failed = 0;
+  let tally = emptyTally();
 
   for (const preview of previews) {
     if (posted.includes(preview.game_id)) continue;
@@ -211,20 +246,19 @@ async function main() {
     // a synthesis failure, a render crash — must not take down the rest of
     // the slate. Log clearly and move on to the next pick.
     try {
-      const outcome = await processPreview(preview, tts);
-      if (outcome === 'posted') {
+      const result = await processPreview(preview, tts, blotatoCfg);
+      tally = addOutcome(tally, result.outcome);
+      if (result.dedupe) {
         posted.push(preview.game_id);
         savePosted(posted);
-        console.log(`Posted: ${preview.game_id}`);
       }
-      succeeded++;
     } catch (err: any) {
-      failed++;
+      tally = addOutcome(tally, 'failed');
       console.error(`FAILED ${preview.game_id}: ${err?.message || err}`);
     }
   }
 
-  console.log(`Done. ${succeeded} succeeded, ${failed} failed.`);
+  console.log(formatTally(tally));
 }
 
 main().catch((err: any) => {
