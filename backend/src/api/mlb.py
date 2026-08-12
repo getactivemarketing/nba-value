@@ -1,9 +1,11 @@
 """MLB API endpoints for games, picks, and evaluation."""
 
+import re
 from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal
 from typing import Literal
 
+import structlog
 from fastapi import APIRouter, Query, HTTPException, Path
 from pydantic import BaseModel
 from sqlalchemy import select, and_, or_, desc, func
@@ -235,6 +237,11 @@ class PickPreviewItem(BaseModel):
 class PickPreviewList(BaseModel):
     generated_at: str
     previews: list[PickPreviewItem]
+    # Eligible snapshots that produced no preview this run — either the copy
+    # contract refused them (NarrationContractError and friends) or they were
+    # unmeasurable. Surfaced so the orchestrator can report "3 picks, 2
+    # skipped" instead of an empty slate that looks like a quiet day.
+    skipped: int = 0
 
 
 # Minutes of clearance required before first pitch. Measured at UPLOAD time,
@@ -1684,6 +1691,34 @@ async def get_underdog_evaluation(
         }
 
 
+_LAST_10_RECORD = re.compile(r"^\d{1,2}-\d{1,2}$")
+
+
+def _usable_last_10(record: str | None) -> str | None:
+    """The last-ten record if it is real, otherwise None.
+
+    ingest.py builds this column as f"{last_10_wins}-{last_10_losses}" with
+    both sides defaulting to 0, so a team whose standings payload was missing
+    the last-ten block is stored as the TRUTHY string "0-0". Handed straight
+    to build_beats that is narrated aloud, with odds attached, as "They're 0-0
+    in their last ten" — a fabricated claim dressed as a measured one.
+
+    Guarded here at the consumer rather than in ingest: the stored value is a
+    faithful record of what the standings feed returned, and rewriting it to
+    NULL would change what every other reader of that column sees. What must
+    not happen is publishing it.
+
+    Rejects anything that is not a plain W-L pair, and rejects a 0-0 pair,
+    which is indistinguishable from "no data" and unmeasurable either way.
+    """
+    if not record or not _LAST_10_RECORD.match(record):
+        return None
+    wins, losses = (int(part) for part in record.split("-"))
+    if wins + losses == 0:
+        return None
+    return record
+
+
 async def _build_pick_preview(session, snapshot: MLBPredictionSnapshot) -> PickPreviewItem | None:
     """Assemble one fully-rendered pick preview from a snapshot.
 
@@ -1786,10 +1821,18 @@ async def _build_pick_preview(session, snapshot: MLBPredictionSnapshot) -> PickP
         ]
         split = starter_first_inning_split(apps, as_of=as_of)
 
+    # `<=`, not `<`: MLBTeamStats rows are written daily with stat_date =
+    # today from LIVE standings, so the row stamped with the game's own date
+    # is the pre-game state, not a post-game leak (the previewed game has not
+    # been played — eligible_for_preview only admits games ≥45 minutes out).
+    # With `<` the narrated last-ten lags a day behind the streak derivation
+    # above, which does include yesterday's results, and the same spoken
+    # sentence can read "They're 10-0 in their last ten, on a 1-game losing
+    # streak." Still point-in-time safe; just no longer a day stale.
     stats = (await session.execute(
         select(MLBTeamStats)
         .where(and_(MLBTeamStats.team_abbr == team,
-                    MLBTeamStats.stat_date < snapshot.game_date))
+                    MLBTeamStats.stat_date <= snapshot.game_date))
         .order_by(desc(MLBTeamStats.stat_date))
         .limit(1)
     )).scalars().first()
@@ -1800,7 +1843,7 @@ async def _build_pick_preview(session, snapshot: MLBPredictionSnapshot) -> PickP
         team_name=TEAM_NAMES.get(team, team),
         odds_american=odds_american,
         model_prob=model_prob,
-        last_10_record=stats.last_10_record if stats else None,
+        last_10_record=_usable_last_10(stats.last_10_record if stats else None),
         streak=streak,
         starter_name=starter_name,
         starter_era=float(starter_era) if starter_era is not None else None,
@@ -1830,13 +1873,33 @@ async def get_pick_previews(
     already uses against /mlb/evaluation/underdogs.
     """
     today = date.today()
+
+    # The floor is a FULL DAY BACK, deliberately. Do not "tidy" it to `today`.
+    #
+    # date.today() is the UTC date (Railway sets no TZ). game_date is MLB's
+    # officialDate — the US LOCAL calendar date. A 10:10pm ET first pitch is
+    # 02:10Z, so its game_date is the PREVIOUS day in UTC terms, and its
+    # snapshot is written within ~60 minutes of first pitch, i.e. after
+    # 01:10Z — by which point date.today() has already rolled over. Floored
+    # at `today` those rows are filtered out before anything else runs: 395
+    # of 1643 production snapshots (24.0%) have a game_date behind the UTC
+    # date of their own first pitch. That is every West Coast game, every
+    # day, structurally invisible.
+    #
+    # Widening the window cannot leak yesterday's completed games, because
+    # eligible_for_preview independently rejects anything less than
+    # PREVIEW_MIN_LEAD_MINUTES from first pitch — a finished game is
+    # necessarily in the past and fails that gate regardless of its date.
+    floor = today - timedelta(days=1)
     horizon = today + timedelta(days=days)
+
+    log = structlog.get_logger()
 
     async with async_session() as session:
         result = await session.execute(
             select(MLBPredictionSnapshot).where(
                 and_(
-                    MLBPredictionSnapshot.game_date >= today,
+                    MLBPredictionSnapshot.game_date >= floor,
                     MLBPredictionSnapshot.game_date <= horizon,
                 )
             )
@@ -1844,12 +1907,33 @@ async def get_pick_previews(
         snapshots = [s for s in result.scalars().all() if eligible_for_preview(s)]
 
         previews: list[PickPreviewItem] = []
+        skipped = 0
         for snap in snapshots:
-            preview = await _build_pick_preview(session, snap)
-            if preview is not None:
-                previews.append(preview)
+            # One pick must never take the slate down with it. build_beats
+            # fails CLOSED on banned copy (NarrationContractError) and the
+            # guard is a naive substring check, so an ordinary surname like
+            # "Wedge" trips it — and unguarded that 500s the whole request,
+            # which the orchestrator reads as "no picks today". The pick that
+            # tripped still does not publish; it just no longer silences the
+            # others.
+            try:
+                preview = await _build_pick_preview(session, snap)
+            except Exception as exc:
+                skipped += 1
+                log.error(
+                    "pick_preview_build_failed",
+                    game_id=getattr(snap, "game_id", None),
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+                continue
+            if preview is None:
+                skipped += 1
+                continue
+            previews.append(preview)
 
     return PickPreviewList(
         generated_at=datetime.now(timezone.utc).isoformat(),
         previews=previews,
+        skipped=skipped,
     )

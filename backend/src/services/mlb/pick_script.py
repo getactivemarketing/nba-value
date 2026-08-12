@@ -27,6 +27,16 @@ from src.services.mlb.value_calculator import MLBValueCalculator
 
 DISCLAIMER = "Not betting advice. 21+."
 
+# Minimum starts before the first-inning split may be narrated as evidence.
+#
+# The turn beat is the video's centrepiece argument, and FirstInningSplit(1, 1)
+# renders as "held opponents scoreless in the first in 1 of 1 starts" — a coin
+# flip presented as a reason to bet, published with odds attached. Below this
+# floor the beat is dropped entirely rather than softened: absent is not
+# neutral, which is the same rule every other beat in this module follows for
+# data it cannot stand behind.
+MIN_TURN_BEAT_STARTS = 5
+
 
 class NarrationContractError(RuntimeError):
     """Published narration violates a hard constraint.
@@ -102,20 +112,32 @@ def build_beats(payload: PickPayload) -> list[Beat]:
     clauses: list[str] = []
     chips: list[str] = []
 
+    # LOSING streaks only. This beat's entire job is the strongest reason NOT
+    # to take the pick, and the turn beat that follows opens with "But" —
+    # which only parses after a negative. A winning streak argues FOR the
+    # pick, so admitting it here produced routine output like "They're 6-4 in
+    # their last ten, on a 4-game winning streak. But Castillo has held..."
+    # — a case against that makes the case for, then rebuts itself.
+    losing_streak = (
+        payload.streak
+        if payload.streak is not None
+        and payload.streak.direction == "lost"
+        and payload.streak.length > 1
+        else None
+    )
+
     if payload.last_10_record:
         clauses.append(f"They're {payload.last_10_record} in their last ten")
         chips.append(f"{payload.last_10_record} L10")
         # If form exists, other clauses can be lowercase continuations
-        if payload.streak is not None and payload.streak.length > 1:
-            verb = "losing" if payload.streak.direction == "lost" else "winning"
-            clauses.append(f"on a {payload.streak.length}-game {verb} streak")
-            chips.append(f"{payload.streak.length}-game {verb} streak")
+        if losing_streak is not None:
+            clauses.append(f"on a {losing_streak.length}-game losing streak")
+            chips.append(f"{losing_streak.length}-game losing streak")
     else:
         # Form not present, so streak needs to be its own complete sentence
-        if payload.streak is not None and payload.streak.length > 1:
-            verb = "losing" if payload.streak.direction == "lost" else "winning"
-            clauses.append(f"They're on a {payload.streak.length}-game {verb} streak")
-            chips.append(f"{payload.streak.length}-game {verb} streak")
+        if losing_streak is not None:
+            clauses.append(f"They're on a {losing_streak.length}-game losing streak")
+            chips.append(f"{losing_streak.length}-game losing streak")
 
     # Starter always stands on its own with subject
     if payload.starter_name and payload.starter_era is not None:
@@ -132,7 +154,11 @@ def build_beats(payload: PickPayload) -> list[Beat]:
         ))
 
     # -- turn: the retention anchor ------------------------------------------
-    if payload.first_inning is not None and payload.starter_name:
+    if (
+        payload.first_inning is not None
+        and payload.first_inning.starts >= MIN_TURN_BEAT_STARTS
+        and payload.starter_name
+    ):
         split = payload.first_inning
         beats.append(Beat(
             "turn",

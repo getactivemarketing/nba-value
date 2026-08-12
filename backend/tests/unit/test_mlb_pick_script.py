@@ -13,7 +13,8 @@ import pytest
 
 from src.services.mlb.first_inning import FirstInningSplit
 from src.services.mlb.pick_script import (
-    Beat, PickPayload, breakeven_prob, build_beats, NarrationContractError,
+    MIN_TURN_BEAT_STARTS, Beat, PickPayload, breakeven_prob, build_beats,
+    NarrationContractError,
 )
 from src.services.mlb.team_form import Streak
 
@@ -157,6 +158,89 @@ class TestCaseAgainstGrammar:
         case = next(b for b in build_beats(payload()) if b.key == "case_against")
         assert case.narration == "They're 5-5 in their last ten, on a 2-game losing streak, Castillo carries a 5.06 ERA."
         assert case.narration[0].isupper()
+
+
+class TestCaseAgainstAdmitsOnlyLosingStreaks:
+    """The case-against beat must never argue FOR the pick.
+
+    Its whole job is the strongest reason not to bet, and the turn beat that
+    follows opens with "But" — which only parses after a negative. A winning
+    streak is an argument for the pick, so it is excluded outright rather
+    than reworded. These mirror the subsets in TestCaseAgainstGrammar with
+    the streak flipped to "won".
+    """
+
+    def test_form_and_winning_streak_narrates_form_only(self):
+        case = next(b for b in build_beats(payload(
+            streak=Streak("won", 4), starter_name=None, starter_era=None,
+        )) if b.key == "case_against")
+        assert case.narration == "They're 5-5 in their last ten."
+        assert "winning" not in case.narration.lower()
+        assert "streak" not in case.narration.lower()
+
+    def test_winning_streak_only_drops_the_beat_entirely(self):
+        """Nothing else to say against the pick, so there is no beat at all —
+        rather than a beat that reads as a reason to take it."""
+        keys = [b.key for b in build_beats(payload(
+            last_10_record=None, streak=Streak("won", 4),
+            starter_name=None, starter_era=None,
+        ))]
+        assert "case_against" not in keys
+        assert "numbers" in keys  # the rest of the video survives
+
+    def test_winning_streak_and_starter_narrates_starter_only(self):
+        case = next(b for b in build_beats(payload(
+            last_10_record=None, streak=Streak("won", 4),
+        )) if b.key == "case_against")
+        assert case.narration == "Castillo carries a 5.06 ERA."
+        assert case.narration[0].isupper()
+
+    def test_all_three_with_a_winning_streak_omits_the_streak(self):
+        case = next(b for b in build_beats(payload(streak=Streak("won", 4))
+                                           ) if b.key == "case_against")
+        assert case.narration == "They're 5-5 in their last ten, Castillo carries a 5.06 ERA."
+        assert "streak" not in case.narration.lower()
+
+    def test_winning_streak_never_reaches_the_overlay_chips(self):
+        case = next(b for b in build_beats(payload(streak=Streak("won", 4))
+                                           ) if b.key == "case_against")
+        assert "winning" not in case.overlay["chips"].lower()
+
+    def test_a_losing_streak_is_still_admitted(self):
+        """Guard against the fix over-correcting into dropping all streaks."""
+        case = next(b for b in build_beats(payload(streak=Streak("lost", 4))
+                                           ) if b.key == "case_against")
+        assert "4-game losing streak" in case.narration
+
+
+class TestTurnBeatSampleFloor:
+    """The turn beat is the video's centrepiece evidence, so it needs a real
+    sample behind it. One-of-one is a coin flip published with odds attached.
+    """
+
+    def test_the_floor_is_five_starts(self):
+        assert MIN_TURN_BEAT_STARTS == 5
+
+    def test_one_of_one_is_dropped(self):
+        keys = [b.key for b in build_beats(payload(first_inning=FirstInningSplit(1, 1)))]
+        assert "turn" not in keys
+
+    def test_four_starts_is_dropped(self):
+        keys = [b.key for b in build_beats(payload(first_inning=FirstInningSplit(3, 4)))]
+        assert "turn" not in keys
+        assert "numbers" in keys  # the rest of the video survives
+
+    def test_five_starts_is_kept(self):
+        beats = build_beats(payload(first_inning=FirstInningSplit(3, 5)))
+        turn = next(b for b in beats if b.key == "turn")
+        assert "3 of 5" in turn.narration
+        assert turn.overlay["stat"] == "3 of 5"
+
+    def test_a_perfect_but_tiny_sample_is_still_dropped(self):
+        """2-of-2 is the most tempting number in the dataset and the least
+        supported. It must not ship."""
+        keys = [b.key for b in build_beats(payload(first_inning=FirstInningSplit(2, 2)))]
+        assert "turn" not in keys
 
 
 class TestNarrationContractGuard:
