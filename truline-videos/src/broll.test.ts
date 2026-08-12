@@ -11,6 +11,28 @@ describe('pickBrollQuery', () => {
     expect(q).toMatch(/baseball|stadium|crowd/i);
     expect(q).not.toMatch(/yankees|dodgers|white sox/i);
   });
+
+  it('without a seed, keeps returning the first query in the pool', () => {
+    expect(pickBrollQuery('mlb')).toBe(pickBrollQuery('mlb'));
+  });
+
+  it('is deterministic for a given seed — same game_id, same query', () => {
+    const q1 = pickBrollQuery('mlb', 'game-123');
+    const q2 = pickBrollQuery('mlb', 'game-123');
+    expect(q1).toBe(q2);
+  });
+
+  it('varies the query across different seeds — no shared background across a slate', () => {
+    const seeds = Array.from({ length: 12 }, (_, i) => `2026-08-11_TEAM_${i}`);
+    const results = new Set(seeds.map((s) => pickBrollQuery('mlb', s)));
+    expect(results.size).toBeGreaterThan(1);
+  });
+
+  it('a seeded query is still unbranded — never a team or player name', () => {
+    const q = pickBrollQuery('mlb', 'game-456');
+    expect(q).toMatch(/baseball|stadium|crowd/i);
+    expect(q).not.toMatch(/yankees|dodgers|white sox/i);
+  });
 });
 
 describe('fetchBroll', () => {

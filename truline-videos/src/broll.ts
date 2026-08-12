@@ -13,9 +13,18 @@ const QUERIES: Record<string, string[]> = {
   nba: ['basketball court', 'arena crowd', 'basketball hoop night'],
 };
 
-export function pickBrollQuery(sport: string): string {
+/**
+ * Deterministically varies the query within a sport's pool, keyed on `seed`
+ * (pass the game_id). Every video otherwise shares one identical background
+ * clip — TikTok's unoriginal-content classifier penalises exactly that, and
+ * consecutive posts must not repeat a background. Omitting `seed` keeps the
+ * old pool[0] behaviour for any caller that has no natural key to hash.
+ */
+export function pickBrollQuery(sport: string, seed?: string): string {
   const pool = QUERIES[sport.toLowerCase()] || QUERIES.mlb;
-  return pool[0];
+  if (!seed) return pool[0];
+  const hash = createHash('sha1').update(seed).digest();
+  return pool[hash[0] % pool.length];
 }
 
 export interface BrollDeps {

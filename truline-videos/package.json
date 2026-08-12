@@ -6,7 +6,8 @@
     "test": "vitest run",
     "studio": "remotion studio",
     "render:test": "remotion render src/index.ts model-hit rendered/test.mp4 --props='{\"winnerTeam\":\"GSW\",\"winnerName\":\"Warriors\",\"oddsAmerican\":180,\"profitUnits\":1.80,\"scoreText\":\"GSW 118, LAC 105\",\"sport\":\"nba\",\"teamColor\":\"#1D428A\"}'",
-    "celebrate": "tsx scripts/render-celebrations.ts"
+    "celebrate": "tsx scripts/render-celebrations.ts",
+    "previews": "tsx scripts/render-pick-previews.ts"
   },
   "dependencies": {
     "@remotion/bundler": "^4.0.447",
