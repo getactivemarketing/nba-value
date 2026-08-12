@@ -7,6 +7,11 @@
  * - test files for composition behavior verification
  *
  * Keep these aligned with backend/src/services/mlb/pick_script.py Beat structure.
+ * The overlay KEY SETS are pinned by src/pick-preview-contract.ts and asserted
+ * in pick-preview-contract.test.ts — a default whose keys the backend cannot
+ * emit is not a harmless placeholder, it makes Studio and every composition
+ * test exercise a shape that never occurs in production.
+ *
  * Hard constraints enforced by NarrationContractError:
  * - No beat overlay contains "edge" (case-insensitive)
  * - Close beat disclaimer is EXACTLY "Not betting advice. 21+."
@@ -17,7 +22,14 @@ import type { PickPreviewProps } from './compositions/PickPreview';
 
 export const PICK_PREVIEW_DEFAULT_PROPS: PickPreviewProps = {
   beats: [
-    { key: 'hook', overlay: {}, audioSrc: '', durationInFrames: 60 },
+    {
+      key: 'hook',
+      // The backend always emits {line: <the hook sentence>} — never an empty
+      // overlay. An empty one renders as a blank screen for the whole beat.
+      overlay: { line: "Backing a team that's lost 2 straight." },
+      audioSrc: '',
+      durationInFrames: 60,
+    },
     {
       key: 'pick',
       overlay: { team: 'CWS', market: 'MONEYLINE', price: '+155' },

@@ -1,12 +1,25 @@
 /**
  * Render and publish pre-game pick previews.
  *
- * Run manually: npx tsx scripts/render-pick-previews.ts
- * Dry-run against hand-built data instead of the live API by setting
- * PICK_PREVIEWS_FIXTURE to a local JSON file shaped like the endpoint's
- * response ({ generated_at, previews }) — useful before today's snapshots
- * have landed (they land ~30-45min before first pitch) or while the
- * pick-previews endpoint hasn't shipped to the deployed backend yet.
+ * THIS SCRIPT POSTS PUBLICLY TO TIKTOK AND INSTAGRAM. With a BLOTATO_API_KEY,
+ * account IDs and a publishable TTS provider in .env, a plain run is a live
+ * publish — not a rehearsal. Two ways to render without publishing:
+ *
+ *   DRY_RUN=1 npx tsx scripts/render-pick-previews.ts
+ *       live API data, renders kept on disk, nothing uploaded.
+ *
+ *   PICK_PREVIEWS_FIXTURE=./some.json npx tsx scripts/render-pick-previews.ts
+ *       reads a local payload shaped like the endpoint's response
+ *       ({ generated_at, previews }) instead of calling the API — useful
+ *       before today's snapshots have landed (they land ~30-45min before
+ *       first pitch). Uploading is REFUSED outright in this mode and cannot
+ *       be re-enabled: fixture JSON is hand-written or stale and has never
+ *       been through the backend's NarrationContractError guard, so it must
+ *       not be able to reach a public account.
+ *
+ * Both refusals, the per-run post cap (MAX_POSTS_PER_RUN, default 3) and the
+ * lead-time gate are decided in ONE place — mayPublish() in
+ * src/publish-guard.ts. Do not add a publish condition anywhere else.
  *
  * Mirrors render-celebrations.ts, which is left untouched. Reuses its Blotato
  * upload path and rendered.json-style dedupe.
@@ -21,8 +34,11 @@ import { relative, resolve, sep } from 'path';
 import { selectAdapter, type TtsAdapter } from '../src/tts';
 import { fetchBroll, pickBrollQuery } from '../src/broll';
 import { teamColor } from '../src/teams';
+import { buildPreviewCaption } from '../src/caption';
 import { blotatoConfigFromEnv, uploadToBlotato, type BlotatoConfig } from '../src/blotato';
-import { mayPublish } from '../src/publish-guard';
+import {
+  describeDecision, dryRunFromEnv, mayPublish, maxPostsPerRunFromEnv, refusedBeforeRender,
+} from '../src/publish-guard';
 import { addOutcome, decidePreviewResult, emptyTally, formatTally, type PreviewResult } from '../src/preview-outcome';
 import { FPS } from '../src/constants';
 import type { BeatClip } from '../src/compositions/PickPreview';
@@ -72,6 +88,17 @@ interface ApiPreview {
  * which is what staticFile() prefixes onto its argument via
  * window.remotion_staticBase at runtime). getAbsoluteSrc then resolves that
  * path against the dev server's own origin.
+ *
+ * LOAD-BEARING PIN: every one of those behaviours is Remotion INTERNALS, not
+ * public API — `staticHash`/the "/public" mount point in @remotion/bundler and
+ * getAbsoluteSrc's resolution rules in remotion. Nothing here is covered by
+ * semver, so a patch bump can silently break the audio and b-roll of every
+ * render (which still exits 0 — you get a silent video, not an error). That is
+ * why remotion, @remotion/bundler, @remotion/cli, @remotion/google-fonts,
+ * react and react-dom are pinned to EXACT versions in package.json with no
+ * caret. Do not re-loosen them in a dependency sweep; upgrading means bumping
+ * all four Remotion packages together and re-rendering one preview to confirm
+ * the audio and background actually made it into the file.
  */
 const toPublicSrc = (absolutePath: string): string =>
   `/public/${relative(PUBLIC_DIR, absolutePath).split(sep).join('/')}`;
@@ -103,26 +130,38 @@ function measureSeconds(path: string): number {
 /**
  * Fetches eligible pick previews. A non-200 response, or the request failing
  * outright, is logged as one clear line and treated as an empty slate —
- * nothing to render this run, not a crash. Set PICK_PREVIEWS_FIXTURE to dry
- * -run against a local payload instead of the live endpoint.
+ * nothing to render this run, not a crash.
+ *
+ * `fromFixture` is carried out of here rather than re-read from the
+ * environment later, so the flag that forbids publishing is the same fact
+ * that chose the data source.
  */
-async function loadPreviews(): Promise<ApiPreview[]> {
+async function loadPreviews(): Promise<{ previews: ApiPreview[]; fromFixture: boolean }> {
   const fixture = process.env.PICK_PREVIEWS_FIXTURE;
   if (fixture) {
     console.log(`Reading previews from local fixture: ${fixture}`);
     const data = JSON.parse(readFileSync(fixture, 'utf-8'));
-    return data.previews || [];
+    return { previews: data.previews || [], fromFixture: true };
   }
 
   try {
     const resp = await axios.get(`${API_BASE}/mlb/video/pick-previews?days=1`, { timeout: 20000 });
-    return resp.data.previews || [];
+    return { previews: resp.data.previews || [], fromFixture: false };
   } catch (err: any) {
     const status = err?.response?.status;
     const detail = err?.response?.data?.detail || err.message;
     console.error(`Failed to fetch pick previews (${status ?? 'network error'}): ${detail}`);
-    return [];
+    return { previews: [], fromFixture: false };
   }
+}
+
+/** Everything about the RUN that feeds the publish gate. Assembled once in
+ *  main() and threaded through, so no per-preview code re-reads the
+ *  environment and reaches a different conclusion. */
+interface RunGate {
+  fromFixture: boolean;
+  dryRun: boolean;
+  maxPostsPerRun: number;
 }
 
 /** One preview end to end: narrate, fetch b-roll, render, gate, upload.
@@ -132,6 +171,8 @@ async function processPreview(
   preview: ApiPreview,
   tts: TtsAdapter,
   blotatoCfg: BlotatoConfig,
+  gate: RunGate,
+  postsThisRun: number,
 ): Promise<PreviewResult> {
   // 1. narration, one clip per beat. Extension follows the adapter: `say`
   // writes a WAV container (its fixed --data-format only opens under .wav/
@@ -151,14 +192,33 @@ async function processPreview(
     });
   }
 
-  // 2. b-roll (optional — absence never blocks a render). Query is seeded on
-  // game_id so consecutive posts in a slate don't share a background clip.
-  const brollPath = await fetchBroll(pickBrollQuery('mlb', preview.game_id), BROLL_DIR, {
-    get: (url, cfg) => axios.get(url, cfg as never),
-    exists: existsSync,
-    write: (p, b) => writeFileSync(p, b),
-    apiKey: process.env.PEXELS_API_KEY,
-  });
+  // 2. b-roll (optional — absence never blocks a render). Both the query and
+  // the clip chosen within that query's results are seeded on game_id, so
+  // consecutive posts in a slate don't share a background clip.
+  const brollPath = await fetchBroll(
+    pickBrollQuery('mlb', preview.game_id),
+    BROLL_DIR,
+    {
+      get: (url, cfg) => axios.get(url, cfg as never),
+      exists: existsSync,
+      write: (p, b) => writeFileSync(p, b),
+      apiKey: process.env.PEXELS_API_KEY,
+    },
+    preview.game_id,
+  );
+
+  // The b-roll clip is shorter than the video, so <Loop> needs ONE
+  // iteration's length — the clip's own duration, not the composition's.
+  // Measured the same way the narration is. A clip ffprobe cannot read must
+  // not take the render down with it: fall back to no loop (plays once).
+  let brollDurationInFrames: number | undefined;
+  if (brollPath) {
+    try {
+      brollDurationInFrames = Math.round(measureSeconds(brollPath) * FPS);
+    } catch (err: any) {
+      console.warn(`Could not measure b-roll ${brollPath} — it will play once, un-looped: ${err?.message || err}`);
+    }
+  }
 
   // 3. render
   const outPath = resolve(OUT_DIR, `${preview.game_id}.mp4`);
@@ -168,6 +228,7 @@ async function processPreview(
     teamColor: teamColor(preview.team_abbr),
     logoUrl: preview.logo_url,
     brollSrc: brollPath ? toPublicSrc(brollPath) : undefined,
+    brollDurationInFrames,
   }));
   execSync(
     `npx remotion render src/index.ts pick-preview "${outPath}" --props="${propsFile}"`,
@@ -176,23 +237,28 @@ async function processPreview(
 
   // 4. re-check the gate at UPLOAD time — rendering just consumed minutes
   const minutesLeft = (new Date(preview.game_time).getTime() - Date.now()) / 60000;
-  const clearance = mayPublish(tts.publishable, minutesLeft);
-  if (!clearance) {
+  const clearance = mayPublish({
+    adapterPublishable: tts.publishable,
+    minutesToFirstPitch: minutesLeft,
+    fixture: gate.fromFixture,
+    dryRun: gate.dryRun,
+    postsThisRun,
+    maxPostsPerRun: gate.maxPostsPerRun,
+  });
+  if (!clearance.allowed) {
     console.log(
-      `SKIP upload ${preview.game_id}: publishable=${tts.publishable}, ` +
-      `${minutesLeft.toFixed(0)}min to first pitch. Render kept at ${outPath}`,
+      `WITHHELD upload ${preview.game_id}: ${describeDecision(clearance)} ` +
+      `(publishable=${tts.publishable}, ${minutesLeft.toFixed(0)}min to first pitch). ` +
+      `Render kept at ${outPath}`,
     );
-    return decidePreviewResult(false, null);
+    return decidePreviewResult(clearance, null);
   }
 
-  const caption = [
-    `${preview.team_name} ML ${preview.odds_american > 0 ? '+' : ''}${preview.odds_american}.`,
-    '',
-    preview.beats.find((b) => b.key === 'turn')?.narration || '',
-    '',
-    'Not betting advice. 21+.',
-    '#MLB #SportsAnalytics',
-  ].filter(Boolean).join('\n');
+  const caption = buildPreviewCaption({
+    teamName: preview.team_name,
+    oddsAmerican: preview.odds_american,
+    turnNarration: preview.beats.find((b) => b.key === 'turn')?.narration,
+  });
 
   // Defence in depth: the backend enforces the banned-word contract and
   // fails closed (NarrationContractError), so the realistic failure mode is
@@ -201,11 +267,11 @@ async function processPreview(
   // narration unvalidated. Cheap insurance against a backend regression.
   if (/edge/i.test(caption)) {
     console.error(`REFUSED upload ${preview.game_id}: caption contains banned word "edge":\n${caption}`);
-    return decidePreviewResult(true, null);
+    return decidePreviewResult(clearance, null);
   }
 
   const upload = await uploadToBlotato(outPath, caption, blotatoCfg);
-  const result = decidePreviewResult(true, upload);
+  const result = decidePreviewResult(clearance, upload);
   if (result.outcome === 'posted') {
     console.log(`Posted: ${preview.game_id} -> ${upload.posted.join(', ')}`);
   } else {
@@ -234,20 +300,61 @@ async function main() {
   }
 
   const posted = loadPosted();
-  const previews = await loadPreviews();
+  const { previews, fromFixture } = await loadPreviews();
   console.log(`${previews.length} eligible pick(s)`);
 
+  const gate: RunGate = {
+    fromFixture,
+    dryRun: dryRunFromEnv(),
+    maxPostsPerRun: maxPostsPerRunFromEnv(),
+  };
+  if (fromFixture) {
+    console.log(
+      'FIXTURE MODE: uploading is refused for this entire run. Fixture data ' +
+      'never passed the backend narration contract, so it must not reach a ' +
+      'public account. Renders will still be produced and kept on disk.',
+    );
+  } else if (gate.dryRun) {
+    console.log('DRY_RUN: renders will be produced and kept on disk; nothing will be uploaded.');
+  }
+  console.log(`Post cap: ${gate.maxPostsPerRun} per run`);
+
   let tally = emptyTally();
+  let postsThisRun = 0;
 
   for (const preview of previews) {
     if (posted.includes(preview.game_id)) continue;
+
+    // Ask the gate BEFORE spending render time. The cap is the only refusal
+    // worth acting on this early: a capped preview's render would just be
+    // thrown away (nothing reuses the mp4 — the next run re-renders from
+    // fresh odds), whereas a fixture/dry-run/lead-time render is still
+    // wanted on disk. Capped picks are never deduped, so the next run picks
+    // them up exactly as if this run had not seen them.
+    const preflight = mayPublish({
+      adapterPublishable: tts.publishable,
+      minutesToFirstPitch: (new Date(preview.game_time).getTime() - Date.now()) / 60000,
+      fixture: gate.fromFixture,
+      dryRun: gate.dryRun,
+      postsThisRun,
+      maxPostsPerRun: gate.maxPostsPerRun,
+    });
+    if (refusedBeforeRender(preflight)) {
+      console.log(
+        `CAPPED ${preview.game_id}: ${describeDecision(preflight)} ` +
+        `(${postsThisRun}/${gate.maxPostsPerRun}). Not rendered, not deduped — eligible next run.`,
+      );
+      tally = addOutcome(tally, 'capped');
+      continue;
+    }
 
     // One bad pick — banned narration copy that slipped past the backend,
     // a synthesis failure, a render crash — must not take down the rest of
     // the slate. Log clearly and move on to the next pick.
     try {
-      const result = await processPreview(preview, tts, blotatoCfg);
+      const result = await processPreview(preview, tts, blotatoCfg, gate, postsThisRun);
       tally = addOutcome(tally, result.outcome);
+      if (result.outcome === 'posted') postsThisRun += 1;
       if (result.dedupe) {
         posted.push(preview.game_id);
         savePosted(posted);
