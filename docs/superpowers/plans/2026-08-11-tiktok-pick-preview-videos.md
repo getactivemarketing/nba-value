@@ -53,7 +53,14 @@
 | `scripts/render-pick-previews.ts` | Orchestrator: fetch → TTS → render → upload |
 | `src/tts/*.test.ts`, `src/*.test.ts` | vitest unit tests |
 
-`src/compositions/ModelHit.tsx` and `scripts/render-celebrations.ts` are **not modified**.
+`src/compositions/ModelHit.tsx` is **not modified**.
+
+`scripts/render-celebrations.ts` is modified in Task 7 only to import the two
+modules extracted from it (`src/blotato.ts`, `src/teams.ts`). Its behaviour is
+unchanged. This overrides the spec's "not modified" line, by decision of
+2026-08-11: duplicating ~40 lines of upload logic into a second script leaves
+two copies that must change together, and the review rubric would flag it
+correctly.
 
 ---
 
@@ -1324,11 +1331,12 @@ git commit -m "feat(video): PickPreview composition with narration-driven durati
 
 ---
 
-### Task 7: Pexels b-roll fetch and team colours
+### Task 7: Pexels b-roll fetch, plus shared team colours and Blotato upload
 
 **Files:**
 - Create: `truline-videos/src/broll.ts`, `truline-videos/src/broll.test.ts`
-- Create: `truline-videos/src/teams.ts`
+- Create: `truline-videos/src/teams.ts`, `truline-videos/src/blotato.ts`
+- Modify: `truline-videos/scripts/render-celebrations.ts` (import the extracted modules)
 
 **Interfaces:**
 - Consumes: nothing
@@ -1461,31 +1469,133 @@ export async function fetchBroll(
 Run: `cd truline-videos && npm test`
 Expected: PASS, 16 tests total
 
-- [ ] **Step 5: Add the team colour table**
+- [ ] **Step 5: Extract the team tables**
 
-Create `truline-videos/src/teams.ts`. Copy the `TEAM_COLORS` object verbatim
-from `scripts/render-celebrations.ts:31-48`, which stays untouched:
+**Move** (do not copy) `TEAM_COLORS` and `TEAM_NAMES` out of
+`scripts/render-celebrations.ts` into a new `truline-videos/src/teams.ts`:
 
 ```ts
-/**
- * MLB team colours for the video projects.
- *
- * scripts/render-celebrations.ts still carries its own copy. Dedupe it to
- * import from here once the celebration flow is next touched — not as a
- * drive-by change to a working, unrelated script.
- */
+/** MLB and NBA team colours and display names, shared by the video scripts. */
 export const TEAM_COLORS: Record<string, string> = {
-  // ...copied verbatim from render-celebrations.ts
+  // ...moved verbatim from render-celebrations.ts
+};
+
+export const TEAM_NAMES: Record<string, string> = {
+  // ...moved verbatim from render-celebrations.ts
 };
 
 export const teamColor = (abbr: string): string => TEAM_COLORS[abbr] || '#059669';
+export const teamName = (abbr: string): string => TEAM_NAMES[abbr] || abbr;
 ```
 
-- [ ] **Step 6: Commit**
+Delete both dict literals from `render-celebrations.ts` and add
+`import { TEAM_COLORS, TEAM_NAMES } from '../src/teams';`. Its existing uses
+of both names then resolve unchanged.
+
+- [ ] **Step 6: Extract the Blotato upload**
+
+**Move** `uploadToBlotato` out of `scripts/render-celebrations.ts` into a new
+`truline-videos/src/blotato.ts`, taking its module-level config as parameters
+so it has no hidden environment dependency:
+
+```ts
+import axios from 'axios';
+import { readFileSync } from 'fs';
+
+const BLOTATO_API = 'https://backend.blotato.com/v2';
+
+export interface BlotatoConfig {
+  apiKey: string;
+  tiktokAccountId?: string;
+  instagramAccountId?: string;
+}
+
+export function blotatoConfigFromEnv(env: NodeJS.ProcessEnv = process.env): BlotatoConfig {
+  return {
+    apiKey: env.BLOTATO_API_KEY || '',
+    tiktokAccountId: env.BLOTATO_TIKTOK_ACCOUNT_ID,
+    instagramAccountId: env.BLOTATO_INSTAGRAM_ACCOUNT_ID,
+  };
+}
+
+/** Uploads and schedules. A missing apiKey is a DRY RUN, never an error —
+ *  that is how both scripts are exercised without posting. */
+export async function uploadToBlotato(
+  videoPath: string,
+  caption: string,
+  cfg: BlotatoConfig,
+): Promise<void> {
+  if (!cfg.apiKey) {
+    console.log('[DRY-RUN] Would upload:', videoPath);
+    console.log('[DRY-RUN] Caption:', caption);
+    return;
+  }
+
+  const headers = { 'blotato-api-key': cfg.apiKey, 'Content-Type': 'application/json' };
+  const filename = videoPath.split('/').pop() || 'video.mp4';
+
+  try {
+    const { data: { presignedUrl, publicUrl } } =
+      await axios.post(`${BLOTATO_API}/media/uploads`, { filename }, { headers, timeout: 60000 });
+    await axios.put(presignedUrl, readFileSync(videoPath), {
+      headers: { 'Content-Type': 'video/mp4' }, timeout: 120000, maxBodyLength: Infinity,
+    });
+    console.log(`Uploaded: ${publicUrl}`);
+
+    for (const [platform, accountId] of [
+      ['tiktok', cfg.tiktokAccountId],
+      ['instagram', cfg.instagramAccountId],
+    ] as const) {
+      if (!accountId) continue;
+      try {
+        const { data } = await axios.post(`${BLOTATO_API}/posts`, {
+          post: {
+            accountId,
+            content: { text: caption, mediaUrls: [publicUrl], platform },
+            target: { targetType: platform },
+          },
+          useNextFreeSlot: true,
+        }, { headers, timeout: 30000 });
+        console.log(`Posted to ${platform}:`, data.postSubmissionId);
+      } catch (err: any) {
+        console.error(`Failed to post to ${platform}:`, err?.response?.data || err.message);
+      }
+    }
+  } catch (err: any) {
+    console.error('Upload failed:', err?.response?.data || err.message);
+  }
+}
+```
+
+In `render-celebrations.ts`: delete its local `uploadToBlotato` and the three
+`BLOTATO_*` module constants, add
+`import { blotatoConfigFromEnv, uploadToBlotato } from '../src/blotato';`, and
+change its one call site to
+`await uploadToBlotato(outputPath, caption, blotatoConfigFromEnv());`.
+
+- [ ] **Step 7: Verify the celebration script still type-checks and dry-runs**
 
 ```bash
-git add truline-videos/src/broll.ts truline-videos/src/broll.test.ts truline-videos/src/teams.ts
-git commit -m "feat(video): unbranded Pexels b-roll fetch and team colour table"
+cd truline-videos
+npx tsc --noEmit
+npx tsx scripts/render-celebrations.ts
+```
+
+Expected: `tsc` clean. The script fetches underdogs and either finds none
+(prints `Done. 0 new video(s) rendered.`) or renders and prints
+`[DRY-RUN] Would upload` — the same behaviour as before the extraction. Run
+with `BLOTATO_API_KEY` unset so nothing posts.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add truline-videos/src/broll.ts truline-videos/src/broll.test.ts \
+        truline-videos/src/teams.ts truline-videos/src/blotato.ts \
+        truline-videos/scripts/render-celebrations.ts
+git commit -m "feat(video): b-roll fetch; extract shared team tables and Blotato upload
+
+Both video scripts now share one upload path. Duplicating it would have
+left two copies to change together."
 ```
 
 ---
@@ -1498,7 +1608,7 @@ git commit -m "feat(video): unbranded Pexels b-roll fetch and team colour table"
 - Modify: `truline-videos/package.json` (add `previews` script)
 
 **Interfaces:**
-- Consumes: `selectAdapter` (Task 5), `calculatePickPreviewMetadata` / `BeatClip` (Task 6), `fetchBroll` / `pickBrollQuery` (Task 7), `GET /api/v1/mlb/video/pick-previews` (Task 4)
+- Consumes: `selectAdapter` (Task 5), `BeatClip` (Task 6), `fetchBroll` / `pickBrollQuery` / `teamColor` / `uploadToBlotato` / `blotatoConfigFromEnv` (Task 7), `GET /api/v1/mlb/video/pick-previews` (Task 4)
 - Produces: `mayPublish(adapterPublishable: boolean, minutesToFirstPitch: number, minLeadMinutes?: number): boolean`
 
 - [ ] **Step 1: Write the failing test**
@@ -1581,6 +1691,7 @@ import { resolve } from 'path';
 import { selectAdapter } from '../src/tts';
 import { fetchBroll, pickBrollQuery } from '../src/broll';
 import { teamColor } from '../src/teams';
+import { blotatoConfigFromEnv, uploadToBlotato } from '../src/blotato';
 import { mayPublish } from '../src/publish-guard';
 import { FPS } from '../src/constants';
 import type { BeatClip } from '../src/compositions/PickPreview';
@@ -1588,10 +1699,6 @@ import type { BeatClip } from '../src/compositions/PickPreview';
 config({ path: resolve(__dirname, '..', '.env') });
 
 const API_BASE = 'https://nba-value-production.up.railway.app/api/v1';
-const BLOTATO_API = 'https://backend.blotato.com/v2';
-const BLOTATO_API_KEY = process.env.BLOTATO_API_KEY || '';
-const BLOTATO_TIKTOK_ACCOUNT_ID = process.env.BLOTATO_TIKTOK_ACCOUNT_ID || '';
-const BLOTATO_INSTAGRAM_ACCOUNT_ID = process.env.BLOTATO_INSTAGRAM_ACCOUNT_ID || '';
 
 const OUT_DIR = resolve(__dirname, '..', 'rendered', 'previews');
 const AUDIO_DIR = resolve(OUT_DIR, 'audio');
@@ -1680,45 +1787,10 @@ async function main() {
       '#MLB #SportsAnalytics',
     ].filter(Boolean).join('\n');
 
-    await uploadToBlotato(outPath, caption);
+    await uploadToBlotato(outPath, caption, blotatoConfigFromEnv());
     posted.push(preview.game_id);
     savePosted(posted);
     console.log(`Posted: ${preview.game_id}`);
-  }
-}
-
-async function uploadToBlotato(videoPath: string, caption: string) {
-  if (!BLOTATO_API_KEY) {
-    console.log('[DRY-RUN] Would upload:', videoPath, '\n', caption);
-    return;
-  }
-  const headers = { 'blotato-api-key': BLOTATO_API_KEY, 'Content-Type': 'application/json' };
-  const filename = videoPath.split('/').pop() || 'video.mp4';
-
-  const { data: { presignedUrl, publicUrl } } =
-    await axios.post(`${BLOTATO_API}/media/uploads`, { filename }, { headers, timeout: 60000 });
-  await axios.put(presignedUrl, readFileSync(videoPath), {
-    headers: { 'Content-Type': 'video/mp4' }, timeout: 120000, maxBodyLength: Infinity,
-  });
-
-  for (const [platform, accountId] of [
-    ['tiktok', BLOTATO_TIKTOK_ACCOUNT_ID],
-    ['instagram', BLOTATO_INSTAGRAM_ACCOUNT_ID],
-  ]) {
-    if (!accountId) continue;
-    try {
-      const { data } = await axios.post(`${BLOTATO_API}/posts`, {
-        post: {
-          accountId,
-          content: { text: caption, mediaUrls: [publicUrl], platform },
-          target: { targetType: platform },
-        },
-        useNextFreeSlot: true,
-      }, { headers, timeout: 30000 });
-      console.log(`Posted to ${platform}:`, data.postSubmissionId);
-    } catch (err: any) {
-      console.error(`Failed to post to ${platform}:`, err?.response?.data || err.message);
-    }
   }
 }
 

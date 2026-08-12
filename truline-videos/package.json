@@ -3,23 +3,27 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "test": "vitest run",
     "studio": "remotion studio",
     "render:test": "remotion render src/index.ts model-hit rendered/test.mp4 --props='{\"winnerTeam\":\"GSW\",\"winnerName\":\"Warriors\",\"oddsAmerican\":180,\"profitUnits\":1.80,\"scoreText\":\"GSW 118, LAC 105\",\"sport\":\"nba\",\"teamColor\":\"#1D428A\"}'",
-    "celebrate": "tsx scripts/render-celebrations.ts"
+    "celebrate": "tsx scripts/render-celebrations.ts",
+    "previews": "tsx scripts/render-pick-previews.ts",
+    "previews:dry": "DRY_RUN=1 tsx scripts/render-pick-previews.ts"
   },
   "dependencies": {
-    "@remotion/bundler": "^4.0.447",
-    "@remotion/cli": "^4.0.447",
-    "@remotion/google-fonts": "^4.0.447",
+    "@remotion/bundler": "4.0.448",
+    "@remotion/cli": "4.0.448",
+    "@remotion/google-fonts": "4.0.448",
     "axios": "^1.7.0",
     "dotenv": "^17.4.2",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "remotion": "^4.0.447",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.448",
     "tsx": "^4.7.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.9"
   }
 }

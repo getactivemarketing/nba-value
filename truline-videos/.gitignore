@@ -1,3 +1,7 @@
 node_modules/
 rendered/*.mp4
+rendered/previews/*.mp4
+rendered/*_props.json
+rendered/previews/*_props.json
+public/
 .env
