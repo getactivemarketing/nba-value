@@ -39,7 +39,7 @@ import { blotatoConfigFromEnv, uploadToBlotato, type BlotatoConfig } from '../sr
 import {
   describeDecision, dryRunFromEnv, mayPublish, maxPostsPerRunFromEnv, refusedBeforeRender,
 } from '../src/publish-guard';
-import { addOutcome, decidePreviewResult, emptyTally, formatTally, type PreviewResult } from '../src/preview-outcome';
+import { addOutcome, decidePreviewResult, describeSlate, emptyTally, formatTally, type PreviewResult } from '../src/preview-outcome';
 import { FPS } from '../src/constants';
 import type { BeatClip } from '../src/compositions/PickPreview';
 
@@ -135,23 +135,34 @@ function measureSeconds(path: string): number {
  * `fromFixture` is carried out of here rather than re-read from the
  * environment later, so the flag that forbids publishing is the same fact
  * that chose the data source.
+ *
+ * `skipped` is the endpoint's count of eligible snapshots that produced no
+ * preview — the copy contract refused them, or they were unmeasurable. It
+ * exists precisely so a slate the backend silently dropped does not read
+ * here as a quiet night, so it must be carried and logged, not discarded.
  */
-async function loadPreviews(): Promise<{ previews: ApiPreview[]; fromFixture: boolean }> {
+async function loadPreviews(): Promise<{
+  previews: ApiPreview[]; fromFixture: boolean; skipped: number;
+}> {
   const fixture = process.env.PICK_PREVIEWS_FIXTURE;
   if (fixture) {
     console.log(`Reading previews from local fixture: ${fixture}`);
     const data = JSON.parse(readFileSync(fixture, 'utf-8'));
-    return { previews: data.previews || [], fromFixture: true };
+    return { previews: data.previews || [], fromFixture: true, skipped: data.skipped || 0 };
   }
 
   try {
     const resp = await axios.get(`${API_BASE}/mlb/video/pick-previews?days=1`, { timeout: 20000 });
-    return { previews: resp.data.previews || [], fromFixture: false };
+    return {
+      previews: resp.data.previews || [],
+      fromFixture: false,
+      skipped: resp.data.skipped || 0,
+    };
   } catch (err: any) {
     const status = err?.response?.status;
     const detail = err?.response?.data?.detail || err.message;
     console.error(`Failed to fetch pick previews (${status ?? 'network error'}): ${detail}`);
-    return { previews: [], fromFixture: false };
+    return { previews: [], fromFixture: false, skipped: 0 };
   }
 }
 
@@ -300,8 +311,8 @@ async function main() {
   }
 
   const posted = loadPosted();
-  const { previews, fromFixture } = await loadPreviews();
-  console.log(`${previews.length} eligible pick(s)`);
+  const { previews, fromFixture, skipped } = await loadPreviews();
+  console.log(describeSlate(previews.length, skipped));
 
   const gate: RunGate = {
     fromFixture,

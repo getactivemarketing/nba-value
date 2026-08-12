@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addOutcome, decidePreviewResult, emptyTally, formatTally } from './preview-outcome';
+import { addOutcome, decidePreviewResult, describeSlate, emptyTally, formatTally } from './preview-outcome';
 import type { PublishDecision } from './publish-guard';
 
 const ALLOWED: PublishDecision = { allowed: true };
@@ -117,5 +117,29 @@ describe('run tally — outcomes never bleed into each other', () => {
 
   it('still starts with "Done." — the string the pipeline is monitored by', () => {
     expect(formatTally(emptyTally()).startsWith('Done.')).toBe(true);
+  });
+});
+
+describe('describeSlate — an empty slate must not hide a refused one', () => {
+  it('says nothing extra when the backend dropped nothing', () => {
+    expect(describeSlate(3, 0)).toBe('3 eligible pick(s)');
+  });
+
+  it('reports the dropped count so a silenced slate is not read as a quiet night', () => {
+    const line = describeSlate(0, 5);
+    expect(line).toContain('0 eligible pick(s)');
+    expect(line).toContain('5 dropped by the backend');
+    // The distinction that matters: this cannot be confused with a genuinely
+    // empty schedule.
+    expect(line).not.toBe(describeSlate(0, 0));
+  });
+
+  it('reports drops alongside a partial slate too', () => {
+    expect(describeSlate(2, 1)).toContain('2 eligible pick(s), 1 dropped by the backend');
+  });
+
+  it('treats a missing or nonsense count as no drops', () => {
+    expect(describeSlate(1, 0)).toBe('1 eligible pick(s)');
+    expect(describeSlate(1, -3)).toBe('1 eligible pick(s)');
   });
 });

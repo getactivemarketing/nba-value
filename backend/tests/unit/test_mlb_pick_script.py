@@ -243,6 +243,46 @@ class TestTurnBeatSampleFloor:
         assert "turn" not in keys
 
 
+class TestTurnBeatConnective:
+    """'But' is a rebuttal, so it only parses after something was argued.
+
+    case_against is conditional, and two recent changes widened the path where
+    it drops: winning streaks no longer count as a case against, and a stored
+    "0-0" last-ten is rejected as unmeasurable. With both, a pick whose starter
+    has no ERA on file produces no clauses at all — and the turn beat was the
+    first thing spoken after the hook, opening "But ..." with nothing before it.
+    """
+
+    def test_but_is_kept_when_a_case_was_actually_made(self):
+        beats = build_beats(payload())
+        assert any(b.key == "case_against" for b in beats)
+        turn = next(b for b in beats if b.key == "turn")
+        assert turn.narration.startswith("But Castillo has held")
+
+    def test_but_is_dropped_when_case_against_was_dropped(self):
+        beats = build_beats(payload(
+            last_10_record=None,
+            streak=Streak("won", 4),   # excluded: argues FOR the pick
+            starter_era=None,          # starter clause needs both name and ERA
+        ))
+        assert not any(b.key == "case_against" for b in beats)
+        turn = next(b for b in beats if b.key == "turn")
+        assert turn.narration.startswith("Castillo has held")
+        assert "But" not in turn.narration
+
+    def test_the_stat_itself_is_unchanged_either_way(self):
+        with_case = next(b for b in build_beats(payload()) if b.key == "turn")
+        without = next(
+            b for b in build_beats(payload(
+                last_10_record=None, streak=None, starter_era=None,
+            ))
+            if b.key == "turn"
+        )
+        assert with_case.overlay == without.overlay
+        assert "10 of 17 starts." in with_case.narration
+        assert "10 of 17 starts." in without.narration
+
+
 class TestNarrationContractGuard:
     """The 'edge' ban is enforced at the guard, not just in templates."""
 

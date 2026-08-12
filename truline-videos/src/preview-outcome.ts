@@ -63,6 +63,25 @@ export function decidePreviewResult(
   return { outcome: 'failed', dedupe: false };
 }
 
+/**
+ * The slate line, logged before any work starts.
+ *
+ * The endpoint returns a `skipped` count for eligible snapshots it refused —
+ * the narration contract rejected them (its banned-word check is a naive
+ * substring match, so an ordinary surname like "Wedge" trips it), or their
+ * data was unmeasurable. Without that count in the log, a night where the
+ * backend dropped the entire slate is byte-identical to a night with no
+ * games, which is exactly the confusion the field was added to remove.
+ */
+export function describeSlate(eligible: number, skipped: number): string {
+  const base = `${eligible} eligible pick(s)`;
+  if (skipped <= 0) return base;
+  return (
+    `${base}, ${skipped} dropped by the backend ` +
+    '(narration contract refused them, or their data was unmeasurable)'
+  );
+}
+
 export interface RunTally {
   posted: number;
   skipped: number;

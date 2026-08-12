@@ -146,7 +146,8 @@ def build_beats(payload: PickPayload) -> list[Beat]:
         )
         chips.append(f"{payload.starter_name} {payload.starter_era:.2f} ERA")
 
-    if clauses:
+    has_case_against = bool(clauses)
+    if has_case_against:
         beats.append(Beat(
             "case_against",
             ", ".join(clauses) + ".",
@@ -160,9 +161,15 @@ def build_beats(payload: PickPayload) -> list[Beat]:
         and payload.starter_name
     ):
         split = payload.first_inning
+        # "But" only lands as a rebuttal if something was actually argued.
+        # case_against is conditional — it drops when no clause survives, which
+        # is reachable now that winning streaks are excluded and a "0-0"
+        # last-ten is rejected — and an opening "But" with nothing before it is
+        # a non-sequitur in the first spoken line of the video.
+        opener = "But " if has_case_against else ""
         beats.append(Beat(
             "turn",
-            f"But {payload.starter_name} has held opponents scoreless in the "
+            f"{opener}{payload.starter_name} has held opponents scoreless in the "
             f"first in {split.scoreless} of {split.starts} starts.",
             {
                 "stat": f"{split.scoreless} of {split.starts}",

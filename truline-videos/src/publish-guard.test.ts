@@ -103,12 +103,26 @@ describe('mayPublish — per-run post cap', () => {
     expect(mayPublish(clear({ postsThisRun: DEFAULT_MAX_POSTS_PER_RUN - 1 })).allowed).toBe(true);
   });
 
-  it('the cap is reported ahead of every other refusal, so the caller can skip the render', () => {
+  it('the cap is reported ahead of the per-preview gates, so the caller can skip the render', () => {
     const decision = mayPublish(clear({
       postsThisRun: 5, maxPostsPerRun: 3,
-      fixture: true, dryRun: true, adapterPublishable: false, minutesToFirstPitch: -100,
+      adapterPublishable: false, minutesToFirstPitch: -100,
     }));
     expect(decision).toEqual({ allowed: false, reason: 'post-cap' });
+  });
+
+  it('a whole-run refusal outranks the cap, so a dry run still renders everything', () => {
+    // MAX_POSTS_PER_RUN=0 with DRY_RUN=1 previously reported 'post-cap' for
+    // every preview, and the caller skips the render on 'post-cap' — so the
+    // one combination that means "render it all, upload none of it" produced
+    // nothing at all.
+    const dry = mayPublish(clear({ dryRun: true, postsThisRun: 0, maxPostsPerRun: 0 }));
+    expect(dry).toEqual({ allowed: false, reason: 'dry-run' });
+    expect(refusedBeforeRender(dry)).toBe(false);
+
+    const fixture = mayPublish(clear({ fixture: true, postsThisRun: 9, maxPostsPerRun: 0 }));
+    expect(fixture).toEqual({ allowed: false, reason: 'fixture' });
+    expect(refusedBeforeRender(fixture)).toBe(false);
   });
 });
 

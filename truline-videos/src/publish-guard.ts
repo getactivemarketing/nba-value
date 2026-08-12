@@ -21,7 +21,9 @@ export const DEFAULT_MAX_POSTS_PER_RUN = 3;
  * - 'post-cap'        the per-run cap is already used up. The ONLY reason
  *                     that is worth knowing before rendering: a capped
  *                     preview's render would be thrown away, and it must
- *                     stay un-deduped so the next run picks it up.
+ *                     stay un-deduped so the next run picks it up. Reported
+ *                     only when the run could otherwise have published —
+ *                     see the ordering note on mayPublish.
  * - 'fixture'         previews came from PICK_PREVIEWS_FIXTURE. Hand-built
  *                     or stale JSON never passed the backend's
  *                     NarrationContractError guard, so it must never reach
@@ -64,10 +66,15 @@ export interface PublishContext {
  * "could this run have posted?". Do not add publish conditions to the
  * orchestrator.
  *
- * Order is deliberate: the cap is checked first because it is the only
- * refusal the caller acts on BEFORE spending render time; fixture beats
- * dry-run so a fixture run reports the more specific reason; the safety
- * gates (adapter, lead time) come last because they are per-preview facts.
+ * Order is deliberate. The whole-run refusals come first: a run that cannot
+ * publish anything makes the post cap meaningless, and the cap is the one
+ * refusal that suppresses the RENDER as well as the upload — so checking it
+ * ahead of them made `DRY_RUN=1 MAX_POSTS_PER_RUN=0` produce nothing at all
+ * when the entire point of that combination is to render everything and
+ * upload none of it. Fixture beats dry-run so a fixture run reports the more
+ * specific reason. The cap comes next, before the per-preview safety gates,
+ * because it is the only refusal the caller acts on BEFORE spending render
+ * time. Adapter and lead time come last: they are facts about one preview.
  */
 export function mayPublish(ctx: PublishContext): PublishDecision {
   const {
@@ -80,9 +87,9 @@ export function mayPublish(ctx: PublishContext): PublishDecision {
     minLeadMinutes = MIN_LEAD_MINUTES,
   } = ctx;
 
-  if (postsThisRun >= maxPostsPerRun) return { allowed: false, reason: 'post-cap' };
   if (fixture) return { allowed: false, reason: 'fixture' };
   if (dryRun) return { allowed: false, reason: 'dry-run' };
+  if (postsThisRun >= maxPostsPerRun) return { allowed: false, reason: 'post-cap' };
   if (!adapterPublishable) return { allowed: false, reason: 'not-publishable' };
   if (!(minutesToFirstPitch > minLeadMinutes)) return { allowed: false, reason: 'lead-time' };
   return { allowed: true };
