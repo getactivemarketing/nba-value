@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchBroll, pickBrollQuery } from './broll';
+import { fetchBroll, isPreferredLength, pickBrollQuery, pickRendition } from './broll';
 
 const deps = (over: Partial<Parameters<typeof fetchBroll>[2]> = {}) => ({
   get: vi.fn(), exists: () => false, write: vi.fn(), apiKey: 'k', ...over,
@@ -180,5 +180,107 @@ describe('fetchBroll — cache key covers whatever selects the clip', () => {
     const d = deps({ exists: () => true });
     await expect(fetchBroll('baseball', '/tmp', d, 'game-a')).resolves.toContain('/tmp');
     expect(d.get).not.toHaveBeenCalled();
+  });
+});
+
+describe('pickRendition — the background must not be an upscaled thumbnail', () => {
+  /** Pexels returns video_files sorted ASCENDING by resolution. */
+  const ladder = [
+    { link: 'http://v/360.mp4', width: 360, height: 640 },
+    { link: 'http://v/540.mp4', width: 540, height: 960 },
+    { link: 'http://v/720.mp4', width: 720, height: 1280 },
+    { link: 'http://v/1080.mp4', width: 1080, height: 1920 },
+    { link: 'http://v/2160.mp4', width: 2160, height: 3840 },
+  ];
+
+  it('never takes video_files[0], which is always the 360p preview', () => {
+    expect(pickRendition(ladder)).not.toBe('http://v/360.mp4');
+  });
+
+  it('takes the smallest rendition that fills the 1080x1920 frame', () => {
+    expect(pickRendition(ladder)).toBe('http://v/1080.mp4');
+  });
+
+  it('does not take the largest either — 4K is tens of MB for a 15%-opacity background', () => {
+    expect(pickRendition(ladder)).not.toBe('http://v/2160.mp4');
+  });
+
+  it('is order-independent, since the API ordering is not a contract', () => {
+    expect(pickRendition([...ladder].reverse())).toBe('http://v/1080.mp4');
+  });
+
+  it('falls back to the largest available when nothing reaches the frame', () => {
+    expect(pickRendition(ladder.slice(0, 3))).toBe('http://v/720.mp4');
+  });
+
+  it('ignores renditions with no link', () => {
+    expect(pickRendition([{ width: 1080, height: 1920 }, ...ladder.slice(0, 2)]))
+      .toBe('http://v/540.mp4');
+  });
+
+  it('survives missing dimensions rather than throwing', () => {
+    expect(pickRendition([{ link: 'http://v/x.mp4' }])).toBe('http://v/x.mp4');
+    expect(pickRendition([])).toBeUndefined();
+    expect(pickRendition(undefined)).toBeUndefined();
+  });
+
+  it('is what fetchBroll actually downloads', async () => {
+    const get = vi.fn()
+      .mockResolvedValueOnce({ data: { videos: [{ video_files: ladder }] } })
+      .mockResolvedValueOnce({ data: new ArrayBuffer(8) });
+    await fetchBroll('q', '/tmp', deps({ get }), 'seed');
+    expect(get.mock.calls[1][0]).toBe('http://v/1080.mp4');
+  });
+});
+
+describe('clip length — the cache keeps one clip per game for a season', () => {
+  const files = [{ link: 'http://v/hd.mp4', width: 1080, height: 1920 }];
+  const vid = (duration: number | null | undefined, link: string) => ({
+    duration, video_files: [{ ...files[0], link }],
+  });
+
+  it('accepts the sane band and rejects either extreme', () => {
+    expect(isPreferredLength({ duration: 12 })).toBe(true);
+    expect(isPreferredLength({ duration: 8 })).toBe(true);
+    expect(isPreferredLength({ duration: 30 })).toBe(true);
+    expect(isPreferredLength({ duration: 88 })).toBe(false);  // the 77MB case
+    expect(isPreferredLength({ duration: 3 })).toBe(false);
+  });
+
+  it('treats a missing or nonsense duration as not-preferred, never as a crash', () => {
+    expect(isPreferredLength({})).toBe(false);
+    expect(isPreferredLength({ duration: null })).toBe(false);
+    expect(isPreferredLength({ duration: NaN })).toBe(false);
+    expect(isPreferredLength({ duration: Infinity })).toBe(false);
+  });
+
+  it('skips an over-long clip in favour of a short one', async () => {
+    const get = vi.fn()
+      .mockResolvedValueOnce({ data: { videos: [vid(88, 'http://v/long.mp4'), vid(12, 'http://v/short.mp4')] } })
+      .mockResolvedValueOnce({ data: new ArrayBuffer(8) });
+    await fetchBroll('q', '/tmp', deps({ get }), 'seed-a');
+    expect(get.mock.calls[1][0]).toBe('http://v/short.mp4');
+  });
+
+  it('still returns b-roll when every result is over-long', async () => {
+    const get = vi.fn()
+      .mockResolvedValueOnce({ data: { videos: [vid(88, 'http://v/a.mp4'), vid(120, 'http://v/b.mp4')] } })
+      .mockResolvedValueOnce({ data: new ArrayBuffer(8) });
+    const out = await fetchBroll('q', '/tmp', deps({ get }), 'seed-a');
+    expect(out).toBeDefined();
+    expect(['http://v/a.mp4', 'http://v/b.mp4']).toContain(get.mock.calls[1][0]);
+  });
+
+  it('still varies by seed within the preferred set', async () => {
+    const page = Array.from({ length: 12 }, (_, i) => vid(10 + (i % 5), `http://v/${i}.mp4`));
+    const chosen = new Set<string>();
+    for (const seed of ['g1', 'g2', 'g3', 'g4', 'g5', 'g6']) {
+      const get = vi.fn()
+        .mockResolvedValueOnce({ data: { videos: page } })
+        .mockResolvedValueOnce({ data: new ArrayBuffer(8) });
+      await fetchBroll('q', '/tmp', deps({ get }), seed);
+      chosen.add(get.mock.calls[1][0]);
+    }
+    expect(chosen.size).toBeGreaterThan(1);
   });
 });
