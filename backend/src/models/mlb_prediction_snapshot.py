@@ -116,6 +116,19 @@ class MLBPredictionSnapshot(Base):
     #   clv         = market_move - vig_paid
     # Reporting clv alone conflates the two, and cost dominates: the first 17
     # picks moved TOWARD us 14 times yet showed clv -0.0111.
+    #
+    # NEVER DERIVE THIS COLUMN. It is written once, frozen at snapshot time,
+    # from the value calculator's own market_prob. It may only be non-NULL for
+    # a game whose pre-game price was actually recorded in mlb_odds_snapshots.
+    #
+    # This is not a style preference. 9f278a9 froze the column BECAUSE the
+    # derivation (winner_probability minus edge) is unsafe — winner_probability
+    # is max(p_home, p_away), the PREDICTED WINNER's probability, not the
+    # backed side's — and then backfilled 964 historical rows with that same
+    # derivation. Those rows read 0.231 implied against 0.490 actual, a price
+    # that cannot exist, and they silently corrupted market_move and vig_paid
+    # for the entire pre-August season. Retracted by
+    # src/tasks/repair_entry_novig_backfill.py; see docs/engineering/03 §10.
     entry_novig_prob: Mapped[Decimal | None] = mapped_column(Numeric(6, 5), nullable=True)
     market_move: Mapped[Decimal | None] = mapped_column(Numeric(7, 5), nullable=True)
     vig_paid: Mapped[Decimal | None] = mapped_column(Numeric(7, 5), nullable=True)

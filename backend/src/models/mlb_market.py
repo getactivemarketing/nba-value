@@ -14,7 +14,23 @@ if TYPE_CHECKING:
 
 
 class MLBMarket(Base):
-    """MLB betting market lines."""
+    """MLB betting market lines — CURRENT state only, updated IN PLACE.
+
+    NOT USABLE FOR HISTORICAL ANALYSIS. Rows are overwritten as odds move and
+    keep being overwritten after first pitch, so a completed game holds
+    post-game settled prices. Devigging them and bucketing against outcomes
+    gives implied 0.244 -> actual 0.037 and implied 0.774 -> actual 0.995: the
+    "market" appears to know the result, because it does. Any backtest joined
+    to this table will show a spectacular edge that does not exist.
+
+    Odds are stored DECIMAL (2.350, 1.540), not American. A converter that
+    assumes American silently produces plausible-looking nonsense.
+
+    For anything historical use `mlb_odds_snapshots`, which is append-only,
+    stamped with `minutes_to_first_pitch`, and flags the closing line. It
+    begins 2026-07-31; before that no pre-game price was recorded and the
+    honest answer is that the market price is unknown.
+    """
 
     __tablename__ = "mlb_markets"
 
