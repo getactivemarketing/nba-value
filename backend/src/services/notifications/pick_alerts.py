@@ -2,7 +2,22 @@
 
 from datetime import datetime, timedelta
 
+from src.config import settings
 from src.services.social.content import _fmt_american
+
+
+def pick_alerts_enabled(live: bool | None = None, **_ignored) -> bool:
+    """Whether founder pick alerts may be texted.
+
+    A text is the surface that actually prompts a bet, so it is gated on the
+    same switch as every other best_bet output and on nothing else — no
+    "but there are picks today" condition may re-open it. Extra keyword
+    arguments are accepted and ignored precisely so a future caller cannot
+    accidentally widen the gate by passing one.
+
+    See `settings.mlb_best_bet_live` for why this is paused.
+    """
+    return bool(settings.mlb_best_bet_live if live is None else live)
 
 
 def _last_name(full_name: str | None) -> str | None:

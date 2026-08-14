@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query, HTTPException, Path
 from pydantic import BaseModel
 from sqlalchemy import select, and_, or_, desc, func
 
+from src.config import settings
 from src.database import async_session
 from src.models import (
     MLBGame, MLBTeam, MLBPitcher, MLBPitcherStats,
@@ -164,6 +165,10 @@ class TopPicksResponse(BaseModel):
     picks: list[TopPickResponse]
     total: int
     min_value_score: float
+    # True when best_bet output is paused (settings.mlb_best_bet_live=False).
+    # An empty `picks` list otherwise reads as "nothing qualified today",
+    # which is a very different statement from "we are not publishing".
+    paused: bool = False
 
 
 class DailyPerformance(BaseModel):
@@ -250,12 +255,24 @@ class PickPreviewList(BaseModel):
 PREVIEW_MIN_LEAD_MINUTES = 45
 
 
-def eligible_for_preview(snapshot, min_lead_minutes: int = PREVIEW_MIN_LEAD_MINUTES) -> bool:
+def eligible_for_preview(
+    snapshot,
+    min_lead_minutes: int = PREVIEW_MIN_LEAD_MINUTES,
+    live: bool | None = None,
+) -> bool:
     """Whether a snapshot may be published as a pre-game video.
 
     Restricting to moneyline is what mechanically keeps the paused runline and
     suppressed totals out of published video.
+
+    `live` is the best_bet output pause. A pick-preview is a public
+    recommendation with odds attached and a permanent timestamped record, so
+    pausing best_bet while still publishing videos of it would be incoherent.
+    This is an ADDITIONAL gate — being live never smuggles a non-moneyline or
+    past-lead-time pick through.
     """
+    if not (settings.mlb_best_bet_live if live is None else live):
+        return False
     if (snapshot.best_bet_type or "").lower() != "moneyline":
         return False
     if not snapshot.best_ml_team or snapshot.best_ml_odds is None:
@@ -418,7 +435,15 @@ async def get_top_picks(
     Get top value picks based on value score threshold.
 
     Returns picks with value_score >= min_value_score, sorted by value.
+
+    Returns nothing while best_bet output is paused. Picks are still scored,
+    frozen and CLV-measured behind this — see settings.mlb_best_bet_live.
     """
+    if not settings.mlb_best_bet_live:
+        return TopPicksResponse(
+            picks=[], total=0, min_value_score=min_value_score, paused=True,
+        )
+
     if game_date:
         try:
             target_date = datetime.strptime(game_date, "%Y-%m-%d").date()
@@ -468,6 +493,7 @@ async def get_top_picks(
             picks=picks,
             total=len(picks),
             min_value_score=min_value_score,
+            paused=False,
         )
 
 

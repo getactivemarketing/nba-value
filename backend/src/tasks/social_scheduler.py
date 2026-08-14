@@ -700,8 +700,18 @@ async def _post_pick_alerts_async() -> dict:
     """Text the founder each frozen best_bet pick (score >= 40), once per snapshot."""
     from sqlalchemy import select, and_, text
     from src.models.mlb_prediction_snapshot import MLBPredictionSnapshot
-    from src.services.notifications.pick_alerts import format_pick_alert
+    from src.services.notifications.pick_alerts import (
+        format_pick_alert, pick_alerts_enabled,
+    )
     from src.services.notifications.sms import send_sms
+
+    # A text is the surface that actually prompts a bet, so the pause is
+    # enforced BEFORE the query — no snapshot is read, no sms_alert_sent flag
+    # is touched, and nothing is consumed that would need replaying if the
+    # pause is lifted. See settings.mlb_best_bet_live.
+    if not pick_alerts_enabled():
+        log_task("Pick alerts PAUSED (mlb_best_bet_live=False) — nothing sent.")
+        return {"sent": 0, "skipped": 0, "paused": True, "type": "pick_alerts"}
 
     sent = 0
     skipped = 0

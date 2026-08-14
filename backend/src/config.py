@@ -85,6 +85,32 @@ class Settings(BaseSettings):
     # filters on best_total_is_value.
     totals_in_best_bet: bool = False
 
+    # best_bet OUTPUT PAUSED 2026-08-13. Founder decision after the §10
+    # investigation in docs/engineering/03-model-governance.md.
+    #
+    # This does NOT stop best_bet being computed, and deliberately so. Nulling
+    # it at the scorer would look like the obvious pause and would silently
+    # blind the instrument: the CLV job selects on `best_bet_team IS NOT NULL`,
+    # so no best_bet means no CLV, and CLV is the only measurement with enough
+    # power to ever justify turning this back on. Picks are still scored,
+    # frozen, graded and CLV-measured exactly as before — they simply stop
+    # reaching anyone.
+    #
+    # Why: on 177 games with a validated pre-game consensus, logit(model) is
+    # beta -0.084 (t -0.20) alone and -0.544 (t -1.11) alongside the market,
+    # while model probabilities are as widely spread as the market's (SD 0.0889
+    # vs 0.0877). So model-minus-market is noise with SD ~0.090 and
+    # MIN_EDGE=0.10 bets its tail — selecting the games where the model's own
+    # error is largest. Out-of-sample R^2 is -0.00665 on 1,534 games: worse
+    # than predicting the mean.
+    #
+    # Re-entry gate, pre-registered so it cannot be moved because the data got
+    # interesting: >=100 CLV-measured picks with mean CLV > 0 and a lower 95%
+    # bound above zero. Mean market_move alone is NOT sufficient — it has been
+    # positive (+0.0063, 90% of picks) throughout the losing period, because
+    # vig_paid (0.0140) exceeds it.
+    mlb_best_bet_live: bool = False
+
     # Runline PAUSED out of best_bet 2026-07-21: a scorer sign-pairing bug
     # labeled favorite -1.5 prices (plus-money) as "+1.5" and scored them with
     # the +1.5 cover probability, inflating the tracked runline record. best_rl

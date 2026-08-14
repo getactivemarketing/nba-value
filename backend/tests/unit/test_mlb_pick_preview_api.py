@@ -16,6 +16,22 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _best_bet_live(monkeypatch):
+    """These tests exercise the LIVE path.
+
+    best_bet output is paused by default (settings.mlb_best_bet_live=False,
+    2026-08-13), which correctly makes alerts and previews no-ops. That pause
+    is covered by tests/unit/test_mlb_best_bet_output_gate.py. Everything here
+    is about the mechanics underneath it — delivery isolation, slate
+    resilience, per-pick assembly — so it opts back in explicitly rather than
+    the pause being weakened to accommodate it.
+    """
+    from src.config import settings
+    monkeypatch.setattr(settings, "mlb_best_bet_live", True)
+
+
 import src.api.mlb as mlb_api
 from src.api.mlb import (
     PickPreviewItem, _build_pick_preview, _usable_last_10,
