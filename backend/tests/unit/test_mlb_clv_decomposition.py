@@ -18,7 +18,7 @@ is actually a small real signal buried under cost.
 """
 import pytest
 
-from src.services.mlb.clv import decompose_clv, summarize_clv
+from src.services.mlb.clv import decompose_clv, summarize_by_type, summarize_clv
 
 
 class TestDecomposeClv:
@@ -86,3 +86,60 @@ class TestSummaryIncludesDecomposition:
         got = summarize_clv([-0.01, -0.02])
         assert got["mean_clv"] is not None
         assert got["mean_market_move"] is None
+
+
+class TestSummarizeByType:
+    """The by_type slice must decompose too.
+
+    /mlb/evaluation/clv built its per-market buckets from bare clv floats and
+    called summarize_clv without rows=, so every by_type entry reported
+    mean_market_move / mean_vig_paid / market_move_positive_rate as null — even
+    when all measured picks were that one market and the top level computed
+    them fine. The per-market view is exactly where the skill-vs-cost split
+    matters, since moneyline, runline and totals pay different vig.
+
+    Testing summarize_clv directly cannot catch that: the bug was the caller
+    dropping the rows, not the summariser. So the bucketing itself is the unit
+    under test.
+    """
+
+    def test_a_single_market_slice_carries_the_decomposition(self):
+        rows = [
+            {"bet_type": "moneyline", "clv": -0.011, "market_move": 0.004, "vig_paid": 0.015},
+            {"bet_type": "moneyline", "clv": -0.009, "market_move": 0.006, "vig_paid": 0.015},
+        ]
+        got = summarize_by_type(rows)
+        assert got["moneyline"]["mean_market_move"] == pytest.approx(0.005)
+        assert got["moneyline"]["mean_vig_paid"] == pytest.approx(0.015)
+        assert got["moneyline"]["market_move_positive_rate"] == pytest.approx(1.0)
+
+    def test_markets_are_decomposed_independently(self):
+        rows = [
+            {"bet_type": "moneyline", "clv": -0.005, "market_move": 0.010, "vig_paid": 0.015},
+            {"bet_type": "total", "clv": -0.030, "market_move": -0.005, "vig_paid": 0.025},
+        ]
+        got = summarize_by_type(rows)
+        # Different vig and opposite movement — merging them would hide both.
+        assert got["moneyline"]["mean_vig_paid"] == pytest.approx(0.015)
+        assert got["total"]["mean_vig_paid"] == pytest.approx(0.025)
+        assert got["moneyline"]["market_move_positive_rate"] == pytest.approx(1.0)
+        assert got["total"]["market_move_positive_rate"] == pytest.approx(0.0)
+
+    def test_a_market_with_no_decomposition_still_reports_clv(self):
+        rows = [{"bet_type": "runline", "clv": -0.02, "market_move": None, "vig_paid": None}]
+        got = summarize_by_type(rows)
+        assert got["runline"]["mean_clv"] == pytest.approx(-0.02)
+        assert got["runline"]["mean_market_move"] is None
+
+    def test_a_missing_bet_type_is_bucketed_not_dropped(self):
+        rows = [{"bet_type": None, "clv": -0.01, "market_move": 0.003, "vig_paid": 0.013}]
+        got = summarize_by_type(rows)
+        assert "unknown" in got
+        assert got["unknown"]["mean_market_move"] == pytest.approx(0.003)
+
+    def test_bet_type_is_normalised(self):
+        rows = [{"bet_type": "MoneyLine", "clv": -0.01, "market_move": 0.003, "vig_paid": 0.013}]
+        assert "moneyline" in summarize_by_type(rows)
+
+    def test_no_rows_is_an_empty_mapping_not_an_error(self):
+        assert summarize_by_type([]) == {}

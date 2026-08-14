@@ -213,6 +213,34 @@ def summarize_clv(values: Iterable[float | None], rows: Sequence[dict] | None = 
     }
 
 
+def summarize_by_type(rows: Sequence[dict]) -> dict[str, dict]:
+    """Per-market CLV summaries, decomposition included.
+
+    Buckets whole rows rather than bare clv floats. The endpoint used to build
+    its per-market buckets by appending `float(snap.clv)` and then calling
+    `summarize_clv(values)` with no `rows=`, so every by_type entry reported
+    mean_market_move / mean_vig_paid / market_move_positive_rate as null — even
+    when every measured pick was one market and the top-level summary computed
+    them fine.
+
+    The per-market view is where the split matters most: moneyline, runline and
+    totals pay materially different vig, so a market whose movement is real can
+    look identical to one whose movement is absent when only clv is shown.
+
+    Rows carry `bet_type`, `clv`, and optionally `market_move` / `vig_paid`. A
+    missing bet_type buckets as "unknown" rather than being dropped — an
+    unlabelled pick is still a pick that was made.
+    """
+    buckets: dict[str, list[dict]] = {}
+    for row in rows:
+        key = str(row.get("bet_type") or "unknown").lower()
+        buckets.setdefault(key, []).append(row)
+    return {
+        key: summarize_clv([r.get("clv") for r in group], rows=group)
+        for key, group in buckets.items()
+    }
+
+
 def clv_from_closing(
     bet_odds: Number,
     closing_novig_prob: float | None,

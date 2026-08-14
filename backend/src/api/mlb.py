@@ -669,7 +669,7 @@ async def get_clv_summary(
     must be visible rather than silently shrinking the sample.
     """
     from datetime import date as _date, timedelta as _timedelta
-    from src.services.mlb.clv import summarize_clv
+    from src.services.mlb.clv import summarize_by_type, summarize_clv
 
     cutoff = _date.today() - _timedelta(days=days)
 
@@ -686,18 +686,18 @@ async def get_clv_summary(
 
     graded = [s for s in snapshots if s.clv is not None]
     parts = [
-        {"clv": float(s.clv),
+        {"bet_type": s.best_bet_type,
+         "clv": float(s.clv),
          "market_move": float(s.market_move) if s.market_move is not None else None,
          "vig_paid": float(s.vig_paid) if s.vig_paid is not None else None}
         for s in graded
     ]
     summary = summarize_clv([float(s.clv) for s in graded], rows=parts)
 
-    by_type: dict[str, dict] = {}
-    for snap in graded:
-        bucket = by_type.setdefault((snap.best_bet_type or "unknown").lower(), [])
-        bucket.append(float(snap.clv))
-    by_type_summary = {k: summarize_clv(v) for k, v in by_type.items()}
+    # Bucket the ROWS, not bare clv floats. Rebucketing floats here and calling
+    # summarize_clv without rows= is what made every by_type entry report a
+    # null decomposition while the top-level summary computed it fine.
+    by_type_summary = summarize_by_type(parts)
 
     daily: dict = {}
     for snap in graded:
