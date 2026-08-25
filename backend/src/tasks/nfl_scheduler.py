@@ -459,12 +459,29 @@ def _run_capture_only():
     # sample cannot see a number move through a key value and back.
     inst.every(4).hours.do(run_refresh_odds)
     inst.every(4).hours.do(run_shadow_capture)
+    # Schedule + team stats. NOT betting work: refresh_schedule and
+    # recompute_team_stats write no picks and read no gate, so they belong
+    # here by the same argument that split nfl_capture_enabled from
+    # nfl_scheduler_enabled.
+    #
+    # Omitting this made capture-only collect NOTHING for the whole preseason:
+    # build_live_feature_row returns None without team stats, nfl_team_stats
+    # had no 2026 rows, and recompute_team_stats' only caller was registered
+    # in the betting branch alone. Every shadow row came back
+    # status='missing_features' while the job logged "complete" with a healthy
+    # count -- and it would NOT have self-healed at Week 1. Found 2026-08-24.
+    inst.every().tuesday.do(run_weekly_refresh)
 
     log_task("NFL CAPTURE-ONLY configured:")
+    log_task("  - Weekly refresh (schedule + team stats): every Tuesday")
     log_task("  - Odds refresh + history: every 4 hours")
     log_task("  - Shadow candidate capture: every 4 hours")
     log_task("  - NO betting, NO alerts, NO snapshots, NO grading")
 
+    # Order matters: shadow scoring reads whatever nfl_team_stats holds when
+    # it runs, so stats must be refreshed BEFORE the first capture pass or
+    # every restart burns one pass writing missing_features rows.
+    run_weekly_refresh()
     run_refresh_odds()
     run_shadow_capture()
 
