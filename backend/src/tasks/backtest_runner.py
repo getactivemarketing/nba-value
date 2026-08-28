@@ -20,8 +20,7 @@ import structlog
 logger = structlog.get_logger()
 
 # Use environment variable or fallback
-import os
-DB_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway')
+from src.config import get_sync_database_url
 
 
 @dataclass
@@ -87,7 +86,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
     Returns:
         BacktestResult with comprehensive metrics
     """
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     # Query all graded predictions in the date range
@@ -319,7 +318,7 @@ def save_backtest_result(result: BacktestResult) -> int:
     Returns:
         ID of the created backtest_runs record
     """
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     # Ensure table exists
@@ -382,7 +381,7 @@ def save_backtest_result(result: BacktestResult) -> int:
 
 def get_backtest_results(limit: int = 10) -> list[dict]:
     """Get recent backtest results from database."""
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     cur.execute('''

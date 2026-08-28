@@ -8,8 +8,8 @@ Pre-2026-07-08 season data is contaminated by the dynamic-bravery duplicate
 service (old-formula snapshots on the shared DB), so attribution to the retune
 is only valid from the baseline forward. See truline-session-jul6-mlb-retune.
 
-Usage: run from backend/ (needs the hardcoded prod DB_URL in
-src/tasks/prediction_tracker.py). Prints a report to stdout.
+Usage: run from backend/ with DATABASE_URL set (export it, or put it in
+backend/.env). Prints a report to stdout.
 """
 import os
 import re

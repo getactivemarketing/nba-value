@@ -27,10 +27,10 @@ from src.services.injuries import (
     ABBREV_TO_TEAM_ID,
     TEAM_ID_TO_ABBREV,
 )
+from src.config import get_sync_database_url
 
 logger = structlog.get_logger()
 
-DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
 
 
 # Feature names (must match training order)
@@ -149,7 +149,7 @@ async def build_prediction_features(
     Returns:
         Feature vector (35 features) or None if insufficient data
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     cur = conn.cursor()
 
     # Fetch team stats for both teams (most recent before game date)

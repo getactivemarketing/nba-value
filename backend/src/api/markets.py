@@ -13,6 +13,7 @@ from src.database import async_session
 from src.models import Game, Market, ValueScore, ModelPrediction, Team, TeamStats, GameResult, OddsSnapshot, PlayerProp
 from src.services.injuries import get_all_team_injury_reports, TeamInjuryReport
 from src.config import settings
+from src.config import get_sync_database_url
 
 router = APIRouter()
 
@@ -1338,7 +1339,7 @@ async def get_daily_performance(
     import psycopg2
     from datetime import date, timedelta
 
-    conn = psycopg2.connect('postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway')
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     cutoff = date.today() - timedelta(days=days)
@@ -1452,12 +1453,11 @@ async def get_top_picks(
     # Import quality filter functions
     from src.tasks.prediction_tracker import (
         get_team_quality, assess_blowout_risk, adjust_value_score_for_quality,
-        DB_URL
     )
     import psycopg2
 
     # Get team quality data for filtering
-    quality_conn = psycopg2.connect(DB_URL)
+    quality_conn = psycopg2.connect(get_sync_database_url())
     quality_cur = quality_conn.cursor()
 
     now = datetime.now(timezone.utc)

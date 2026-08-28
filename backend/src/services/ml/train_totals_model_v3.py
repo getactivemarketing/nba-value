@@ -44,10 +44,10 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 from src.services.injuries import get_all_team_injury_reports, ABBREV_TO_TEAM_ID, TEAM_ID_TO_ABBREV
+from src.config import get_sync_database_url
 
 logger = structlog.get_logger()
 
-DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
 
 
 def calculate_pace_interaction(home_pace: float, away_pace: float) -> dict:
@@ -188,7 +188,7 @@ async def fetch_training_data_with_features(db_url: str = None,
         feature_names: List of feature names
         closing_totals: Actual betting lines
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     cur = conn.cursor()
 
     # Fetch all completed games ordered by date
@@ -635,7 +635,7 @@ async def backtest_model(days_back: int = 30, db_url: str = None):
     print(f"Avg MAE: {model_data['avg_mae']:.2f}")
 
     # Get recent games
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     cur = conn.cursor()
 
     cur.execute('''

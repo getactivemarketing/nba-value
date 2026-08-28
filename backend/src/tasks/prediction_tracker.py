@@ -16,10 +16,10 @@ import psycopg2
 import structlog
 
 from src.services.injuries import get_all_team_injury_reports
+from src.config import get_sync_database_url
 
 logger = structlog.get_logger()
 
-DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
 
 # Minimum value score to consider a bet worth tracking
 # Below this threshold, we don't record a "best bet" - it's a pass
@@ -301,7 +301,7 @@ def snapshot_predictions(hours_ahead: float = 0.75, db_url: str = None) -> dict:
     Returns:
         Summary of snapshots created
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     conn.autocommit = True
     cur = conn.cursor()
 
@@ -943,7 +943,7 @@ def grade_predictions(db_url: str = None) -> dict:
     Returns:
         Summary of grading results including per-algorithm performance
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     conn.autocommit = True
     cur = conn.cursor()
 
@@ -1154,7 +1154,7 @@ def get_performance_summary(days: int = 7, db_url: str = None) -> dict:
     Returns:
         Performance metrics including per-algorithm comparison
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     cur = conn.cursor()
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
@@ -1283,7 +1283,7 @@ def analyze_line_movement_performance(days: int = 30, db_url: str = None) -> dic
     Returns:
         Analysis of line movement correlation with results
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     cur = conn.cursor()
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)

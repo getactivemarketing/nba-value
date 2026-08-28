@@ -19,7 +19,7 @@ import psycopg2
 from sklearn.metrics import mean_absolute_error
 
 from src.services.mlb.model_training import MLBModelTrainer
-from src.tasks.prediction_tracker import DB_URL
+from src.config import get_sync_database_url
 
 SEASONS = [2024, 2025, 2026]
 HOLDOUT_START = "2026-06-01"
@@ -29,7 +29,7 @@ V2_PATH = Path("models/mlb_totals_v2.joblib")
 
 def hit_rate(pred_by_game_id: dict) -> str:
     """Over/under accuracy vs snapshot best_total_line where recorded."""
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
     cur.execute(
         """SELECT game_id, best_total_line, home_score + away_score

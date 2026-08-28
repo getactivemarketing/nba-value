@@ -18,10 +18,10 @@ from decimal import Decimal
 from dataclasses import dataclass
 
 import structlog
+from src.config import get_sync_database_url
 
 logger = structlog.get_logger()
 
-DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
 
 
 @dataclass
@@ -69,7 +69,7 @@ def run_backtest(
     Returns:
         Dict with backtest results and performance metrics
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     cur = conn.cursor()
 
     # Default date range
@@ -259,7 +259,7 @@ def analyze_model_vs_baseline(days: int = 14, db_url: str = None) -> dict:
     Returns:
         Comparison of model vs baselines
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     cur = conn.cursor()
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')

@@ -12,10 +12,10 @@ Run with: python -m src.tasks.regrade_predictions
 import psycopg2
 import structlog
 from datetime import datetime, timezone, timedelta
+from src.config import get_sync_database_url
 
 logger = structlog.get_logger()
 
-DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
 
 
 def grade_bet(bet_type: str, bet_team: str, home_team: str, actual_winner: str,
@@ -66,7 +66,7 @@ def regrade_predictions(days_back: int = 7, db_url: str = None) -> dict:
     Returns:
         Summary of re-grading results
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     conn.autocommit = True
     cur = conn.cursor()
 

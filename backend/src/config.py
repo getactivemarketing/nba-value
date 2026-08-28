@@ -175,6 +175,32 @@ class Settings(BaseSettings):
         return self.environment == "production"
 
     @property
+    def sync_database_url(self) -> str:
+        """psycopg2-style DSN for the sync tasks, scripts and training jobs.
+
+        Those modules used to each carry their own hardcoded fallback to the
+        production database — public proxy host, port and password — in a repo
+        that is public on GitHub. Removed 2026-08-28; the credential is being
+        rotated. They now share this accessor.
+
+        Raising when DATABASE_URL was never configured is the point. The old
+        fallbacks meant a forgotten env var did not fail: the job simply
+        connected to production over the public internet and, for the
+        backfills and re-graders among them, wrote to it. `model_fields_set`
+        is what separates a real value (env or .env) from the localhost
+        default above, which exists for the async app and is not a safe thing
+        to hand a backfill.
+        """
+        if "database_url" not in self.model_fields_set:
+            raise RuntimeError(
+                "DATABASE_URL is not set. Sync database jobs require it "
+                "explicitly — export it, or put it in backend/.env. "
+                "Railway supplies it in the deployed environment."
+            )
+        # These callers use psycopg2, which does not understand the async driver.
+        return self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+    @property
     def async_database_url(self) -> str:
         """Convert database URL to async driver format."""
         url = self.database_url
@@ -191,3 +217,8 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+
+def get_sync_database_url() -> str:
+    """Module-level shorthand so callers need one import, not two."""
+    return get_settings().sync_database_url

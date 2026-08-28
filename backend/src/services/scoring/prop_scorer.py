@@ -1,17 +1,16 @@
 """Player prop scoring service - identifies best value props."""
 
 import asyncio
-import os
 from dataclasses import dataclass
 from datetime import datetime, timezone, date
 import psycopg2
 import structlog
 
 from src.services.data.balldontlie import BallDontLieClient
+from src.config import get_sync_database_url
 
 logger = structlog.get_logger()
 
-DB_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway')
 
 # Map prop types to season average fields
 PROP_TO_STAT = {
@@ -244,7 +243,7 @@ async def get_top_props(limit: int = 10, min_score: int = 50) -> list[ScoredProp
     Returns:
         List of top ScoredProp
     """
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     # Get recent props (last 6 hours)
@@ -290,7 +289,7 @@ async def snapshot_top_props(min_score: int = 50) -> int:
     Returns:
         Number of props saved
     """
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     # Get recent props with game dates
@@ -399,7 +398,7 @@ async def grade_prop_snapshots(days_back: int = 2) -> dict:
         Dict with grading summary
     """
     client = BallDontLieClient()
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     # Get ungraded prop snapshots from recent days
@@ -582,7 +581,7 @@ def get_prop_performance(days: int = 7, min_score: int = 50) -> dict:
     Returns:
         Performance summary dict
     """
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     # Overall stats

@@ -11,6 +11,7 @@ from src.tasks.backtest_runner import (
     save_backtest_result,
     get_backtest_results,
 )
+from src.config import get_sync_database_url
 
 router = APIRouter(prefix="/backtest", tags=["Backtest"])
 
@@ -124,12 +125,9 @@ async def get_backtest_detail(backtest_id: int) -> dict:
     Get detailed results for a specific backtest run.
     """
     import psycopg2
-    import os
-
-    DB_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway')
 
     try:
-        conn = psycopg2.connect(DB_URL)
+        conn = psycopg2.connect(get_sync_database_url())
         cur = conn.cursor()
 
         cur.execute('''

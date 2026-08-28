@@ -4,10 +4,10 @@ from datetime import date, timedelta
 
 import psycopg2
 from fastapi import APIRouter, Query
+from src.config import get_sync_database_url
 
 router = APIRouter()
 
-DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
 
 
 @router.get("/evaluation/summary")
@@ -21,7 +21,7 @@ async def get_evaluation_summary(
     Returns metrics including win rate, ROI, and profit for bets above min_value threshold.
     Uses prediction_snapshots for accurate graded data.
     """
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     cutoff = date.today() - timedelta(days=days)
@@ -64,7 +64,7 @@ async def get_evaluation_summary(
 
 def _performance_by_bucket(days: int) -> list[dict]:
     """Calculate performance by value score bucket using prediction_snapshots."""
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     cutoff = date.today() - timedelta(days=days)
@@ -168,7 +168,7 @@ async def get_daily_results(
     Shows each day's bets, wins, losses, and P/L.
     Uses prediction_snapshots for accurate line data.
     """
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     cutoff = date.today() - timedelta(days=days)
@@ -301,7 +301,7 @@ async def get_prediction_performance(
     This uses the pre-game snapshots that are captured ~30 min before tip-off
     and graded after games complete.
     """
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     cur = conn.cursor()
 
     cutoff = date.today() - timedelta(days=days)

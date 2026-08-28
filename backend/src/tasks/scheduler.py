@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from src.services.data.odds_api import OddsAPIClient
 from src.tasks.prediction_tracker import snapshot_predictions, grade_predictions
+from src.config import get_sync_database_url
 
 logger = structlog.get_logger()
 
@@ -45,7 +46,6 @@ def log_task(message: str, **kwargs):
     print(f"[SCHEDULER] {timestamp} | {message} {extra}", flush=True)
 
 # Use environment variable or fallback to Railway URL
-DB_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway')
 
 TEAM_ABBREV_MAP = {
     "Los Angeles Lakers": "LAL", "Los Angeles Clippers": "LAC",
@@ -122,7 +122,7 @@ async def update_team_stats_async() -> dict:
             'won': game.away_team_score > game.home_team_score,
         })
 
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     conn.autocommit = True
     cur = conn.cursor()
 
@@ -324,7 +324,7 @@ async def ingest_odds_async():
         logger.error(f"Failed to fetch odds: {e}")
         return {"error": str(e)}
 
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     conn.autocommit = True
     cur = conn.cursor()
 
@@ -476,7 +476,7 @@ async def ingest_player_props_async(hours_ahead: int = 6, max_games: int = 3):
     now = datetime.now(timezone.utc)
     cutoff = now + timedelta(hours=hours_ahead)
 
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     conn.autocommit = True
     cur = conn.cursor()
 
@@ -614,7 +614,7 @@ def run_scoring_sync() -> dict:
     cutoff = now + timedelta(hours=24)
     today = now.date()
 
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     conn.autocommit = True
     cur = conn.cursor()
 
@@ -887,7 +887,7 @@ def sync_game_results() -> dict:
     """
     from datetime import date
 
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     conn.autocommit = True
     cur = conn.cursor()
 
@@ -1070,7 +1070,7 @@ def backfill_game_results_with_odds() -> dict:
     from datetime import date
     from src.config import settings
 
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     conn.autocommit = True
     cur = conn.cursor()
 

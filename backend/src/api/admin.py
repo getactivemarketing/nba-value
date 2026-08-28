@@ -14,6 +14,7 @@ from src.tasks.ingestion import (
 )
 from src.tasks.scoring import _run_pre_game_scoring_async
 from src.tasks.stats_calculation import _calculate_team_stats_async
+from src.config import get_sync_database_url
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -385,9 +386,8 @@ async def _backfill_missing_snapshots() -> dict:
     import psycopg2
     import json
 
-    DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway")
 
-    conn = psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(get_sync_database_url())
     conn.autocommit = True
     cur = conn.cursor()
 

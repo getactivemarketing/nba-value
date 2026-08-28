@@ -10,6 +10,7 @@ import structlog
 
 from src.services.data.odds_api import OddsAPIClient
 from src.services.data.balldontlie import BallDontLieClient
+from src.config import get_sync_database_url
 
 logger = structlog.get_logger()
 
@@ -87,7 +88,7 @@ async def backfill_game_results(days_back: int = 30, db_url: str = None) -> dict
     date_odds_cache = {}
 
     # Connect to database
-    conn = psycopg2.connect(db_url or 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway')
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     conn.autocommit = True
     cur = conn.cursor()
 

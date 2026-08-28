@@ -23,10 +23,10 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from scipy import stats
 import structlog
+from src.config import get_sync_database_url
 
 logger = structlog.get_logger()
 
-DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
 
 
 def fetch_games_with_team_stats(db_url: str = None, lookback: int = 10) -> tuple:
@@ -42,7 +42,7 @@ def fetch_games_with_team_stats(db_url: str = None, lookback: int = 10) -> tuple
         feature_names: List of feature names
         closing_spreads: List of closing spreads
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     cur = conn.cursor()
 
     # Fetch all completed games

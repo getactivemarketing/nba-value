@@ -25,10 +25,10 @@ from sklearn.linear_model import Ridge
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 import structlog
+from src.config import get_sync_database_url
 
 logger = structlog.get_logger()
 
-DB_URL = 'postgresql://postgres:wzYHkiAOkykxiPitXKBIqPJxvifFtDPI@maglev.proxy.rlwy.net:46068/railway'
 
 # Features for totals prediction (order matters for feature vector)
 TOTALS_FEATURES = [
@@ -66,7 +66,7 @@ def fetch_training_data(db_url: str = None) -> tuple[np.ndarray, np.ndarray, lis
         y: Target vector (actual totals)
         game_ids: List of game identifiers for debugging
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     cur = conn.cursor()
 
     # Get games with team stats available
@@ -342,7 +342,7 @@ def backtest_against_lines(db_url: str = None, days_back: int = 14) -> dict:
     This is the true test - comparing model predictions against
     actual market lines from the closing_total field.
     """
-    conn = psycopg2.connect(db_url or DB_URL)
+    conn = psycopg2.connect(db_url or get_sync_database_url())
     cur = conn.cursor()
 
     # Load trained model
