@@ -120,6 +120,48 @@ def test_games_returns_upcoming_with_snapshot_join(monkeypatch):
     assert g["best_total_direction"] == "under"
 
 
+def _tracked_snap(game_id, kickoff):
+    """What a snapshot looks like with every NFL market out of best_bet."""
+    return NFLPredictionSnapshot(
+        game_id=game_id, home_team="KC", away_team="CIN", kickoff_utc=kickoff,
+        snapshot_time=kickoff, game_date=kickoff.date(),
+        predicted_margin=2.5, predicted_total=44.1,
+        best_spread_team="CIN", best_spread_line=3.5, best_spread_value_score=22.0,
+        best_total_direction="under", best_total_line=47.5, best_total_value_score=31.0,
+        best_bet_type=None, best_bet_team=None, best_bet_line=None, best_bet_value_score=None,
+    )
+
+
+def test_games_exposes_tracked_leans_when_no_market_is_live(monkeypatch):
+    """2026 runs every market shadow-only (07-nfl-promotion-gates.md), so
+    best_bet is always null. The slate must still carry the model's lean -- and
+    say it is tracking-only, so no client can render it as a recommendation."""
+    for flag in ("nfl_totals_in_best_bet", "nfl_spread_in_best_bet", "nfl_ml_in_best_bet"):
+        monkeypatch.setattr(settings, flag, False)
+    kickoff = datetime(2026, 9, 20, 17, 0, tzinfo=timezone.utc)
+    game = NFLGame(
+        game_id="2026_02_CIN_KC", season=2026, week=2, home_team="KC", away_team="CIN",
+        kickoff_utc=kickoff, status="scheduled", is_divisional=False, is_primetime=False,
+    )
+    _patch_session(monkeypatch, [_scalars([game]), _scalars([_tracked_snap("2026_02_CIN_KC", kickoff)])])
+
+    body = TestClient(app).get(f"{settings.api_v1_prefix}/nfl/games").json()
+    assert body["tracking_only"] is True
+    g = body["games"][0]
+    assert g["best_bet_type"] is None
+    assert g["predicted_total"] == 44.1 and g["predicted_margin"] == 2.5
+    assert g["best_total_direction"] == "under" and g["best_total_line"] == 47.5
+    assert g["best_spread_team"] == "CIN" and g["best_spread_line"] == 3.5
+
+
+def test_games_not_tracking_only_once_a_market_is_promoted(monkeypatch):
+    monkeypatch.setattr(settings, "nfl_totals_in_best_bet", True)
+    _patch_session(monkeypatch, [_scalars([])])
+
+    body = TestClient(app).get(f"{settings.api_v1_prefix}/nfl/games").json()
+    assert body["tracking_only"] is False
+
+
 def test_debug_odds_masks_key_and_skips_network_when_live_false(monkeypatch):
     monkeypatch.setattr(settings, "odds_api_key", "abcd1234efgh5678", raising=False)
 

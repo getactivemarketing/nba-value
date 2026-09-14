@@ -1,8 +1,9 @@
 """NFL API endpoints: picks, upcoming games, and an odds debug probe.
 
 Reads the same `nfl_prediction_snapshots` / `nfl_games` tables the weekly
-scheduler writes. Picks are the frozen `best_bet` selections, which are
-totals-only live (spread + moneyline are shadow-recorded, never best_bet).
+scheduler writes. Picks are the frozen `best_bet` selections. For 2026 every
+market is shadow-only (docs/engineering/07-nfl-promotion-gates.md), so /picks
+is empty by design and /games carries the tracked leans with tracking_only.
 Mirrors `src/api/mlb.py`'s conventions (router prefix, `async_session()`
 usage, min_value_score default 40, key-prefix masking).
 """
@@ -12,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import asc, select
 
+from src.config import settings
 from src.database import async_session
 from src.models import NFLGame, NFLPredictionSnapshot
 
@@ -57,11 +59,20 @@ class NFLGameSummary(BaseModel):
     best_total_direction: str | None = None
     best_bet_line: float | None = None
     best_bet_value_score: float | None = None
+    # The model's lean in each market, whether or not that market is live.
+    # While tracking_only is true these are measurements, not recommendations.
+    predicted_margin: float | None = None
+    predicted_total: float | None = None
+    best_total_line: float | None = None
+    best_spread_team: str | None = None
+    best_spread_line: float | None = None
 
 
 class NFLGamesResponse(BaseModel):
     games: list[NFLGameSummary]
     total: int
+    # True while no NFL market is in best_bet (07-nfl-promotion-gates.md).
+    tracking_only: bool
 
 
 # --- Endpoints -------------------------------------------------------------
@@ -157,8 +168,15 @@ async def get_games(
             best_total_direction=(s.best_total_direction if s else None),
             best_bet_line=s.best_bet_line if s else None,
             best_bet_value_score=s.best_bet_value_score if s else None,
+            predicted_margin=s.predicted_margin if s else None,
+            predicted_total=s.predicted_total if s else None,
+            best_total_line=s.best_total_line if s else None,
+            best_spread_team=s.best_spread_team if s else None,
+            best_spread_line=s.best_spread_line if s else None,
         ))
-    return NFLGamesResponse(games=summaries, total=len(summaries))
+    tracking_only = not (settings.nfl_totals_in_best_bet or settings.nfl_spread_in_best_bet
+                         or settings.nfl_ml_in_best_bet)
+    return NFLGamesResponse(games=summaries, total=len(summaries), tracking_only=tracking_only)
 
 
 @router.get("/debug/odds")
