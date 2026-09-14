@@ -20,7 +20,10 @@ def load_schedules(seasons: list[int]) -> pd.DataFrame:
 
 def load_pbp(seasons: list[int]) -> pd.DataFrame:
     import nfl_data_py as nfl
-    pbp = nfl.import_pbp_data(seasons, downcast=True)
+    # include_participation=False: nflverse posts the participation file weeks
+    # into a season (404 for 2026 on Sept 14), and nfl_data_py 0.3.2 turns that
+    # 404 into NameError via a bare `except Error`. No feature reads those columns.
+    pbp = nfl.import_pbp_data(seasons, downcast=True, include_participation=False)
     return pbp[pbp["season_type"] == "REG"].copy()
 
 

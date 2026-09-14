@@ -85,3 +85,34 @@ def test_schedule_to_game_rows_normalizes_historical_team_codes():
     row = rows[0]
     assert row["home_team"] == "LV"
     assert row["is_divisional"] is True
+
+
+def test_load_pbp_does_not_request_participation(monkeypatch):
+    """REGRESSION (prod, 2026-09-14): the first live weekly refresh failed with
+    "name 'Error' is not defined".
+
+    import_pbp_data defaults include_participation=True, which also downloads
+    pbp_participation_<year>.parquet. nflverse publishes that file well after
+    the season starts (2026 returned 404 on Sept 14), and nfl_data_py 0.3.2 --
+    what Railway resolves on Python 3.11 -- wraps the read in a bare
+    `except Error`, so the 404 surfaced as a NameError and killed
+    recompute_team_stats. No NFL feature uses participation columns.
+    """
+    import sys
+    import types
+
+    from src.services.nfl import nfl_data
+
+    calls = {}
+
+    def fake_import_pbp_data(years, **kwargs):
+        calls.update(kwargs)
+        return pd.DataFrame({"season_type": ["REG", "POST"], "play_id": [1, 2]})
+
+    monkeypatch.setitem(sys.modules, "nfl_data_py",
+                        types.SimpleNamespace(import_pbp_data=fake_import_pbp_data))
+
+    out = nfl_data.load_pbp([2026])
+
+    assert calls.get("include_participation") is False
+    assert list(out["play_id"]) == [1]
