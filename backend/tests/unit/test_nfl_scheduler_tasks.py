@@ -513,3 +513,69 @@ def test_capture_only_refreshes_stats_before_first_shadow_capture(monkeypatch):
     assert "run_weekly_refresh" in call_log, "weekly refresh must run on boot"
     assert "run_shadow_capture" in call_log
     assert call_log.index("run_weekly_refresh") < call_log.index("run_shadow_capture")
+
+
+def _enabled_recorder(monkeypatch, call_log, capture_enabled=True):
+    """Run start_scheduler() with the scheduler ON against a recording Scheduler."""
+    monkeypatch.setattr(sched.settings, "nfl_scheduler_enabled", True)
+    monkeypatch.setattr(sched.settings, "nfl_capture_enabled", capture_enabled)
+    monkeypatch.setattr(sched.time, "sleep", MagicMock())
+    monkeypatch.setattr(sched, "_init_engine", MagicMock())
+    for name in ("run_refresh_odds", "run_shadow_capture", "run_weekly_refresh",
+                 "run_snapshot", "run_grade"):
+        stub = MagicMock(side_effect=lambda n=name: call_log.append(n))
+        stub.__name__ = name  # see _capture_only_recorder: keeps name assertions non-vacuous
+        monkeypatch.setattr(sched, name, stub)
+
+    registered = []
+
+    class _Rec:
+        def every(self, n=1):
+            class _E:
+                def __getattr__(self, unit):
+                    def do(fn, *a, **k):
+                        registered.append(fn)
+                        return fn
+                    return type("J", (), {"do": staticmethod(do)})()
+            return _E()
+
+        def run_pending(self):
+            raise SystemExit  # break the infinite loop
+
+    monkeypatch.setattr(sched.schedule, "Scheduler", _Rec)
+    with pytest.raises(SystemExit):
+        sched.start_scheduler()
+    return {getattr(f, "__name__", str(f)) for f in registered}
+
+
+def test_enabled_scheduler_keeps_capturing(monkeypatch):
+    """Turning the scheduler on must not turn collection off.
+
+    07-nfl-promotion-gates.md §6 defines the season as "scheduler on, all
+    markets OFF, store every candidate". The enabled branch originally
+    registered only snapshot/grade/daily odds, so flipping the switch for
+    Week 2 would have silently stopped nfl_shadow_predictions and the
+    4-hourly odds history the gate's CLV stages are computed from.
+    """
+    names = _enabled_recorder(monkeypatch, [])
+
+    assert {"run_shadow_capture", "run_refresh_odds", "run_weekly_refresh"} <= names
+    assert {"run_snapshot", "run_grade"} <= names
+
+
+def test_enabled_scheduler_refreshes_stats_before_first_capture(monkeypatch):
+    call_log = []
+    _enabled_recorder(monkeypatch, call_log)
+
+    assert call_log.index("run_weekly_refresh") < call_log.index("run_refresh_odds")
+    assert call_log.index("run_refresh_odds") < call_log.index("run_shadow_capture")
+
+
+def test_enabled_scheduler_respects_capture_switch(monkeypatch):
+    """nfl_capture_enabled stays the independent kill switch for shadow capture."""
+    call_log = []
+    names = _enabled_recorder(monkeypatch, call_log, capture_enabled=False)
+
+    assert "run_shadow_capture" not in names
+    assert "run_shadow_capture" not in call_log
+    assert {"run_snapshot", "run_grade", "run_refresh_odds"} <= names

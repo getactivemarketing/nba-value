@@ -541,18 +541,30 @@ def start_scheduler():
 
     # Results settle Monday night -> pull schedule/stats fresh Tuesday.
     nfl_scheduler_instance.every().tuesday.do(run_weekly_refresh)
-    # Keep the Odds API budget modest: once/day, Wed-Sun (not gameday-only,
-    # so lines are fresh heading into the week too).
-    for day in ("wednesday", "thursday", "friday", "saturday", "sunday"):
-        getattr(nfl_scheduler_instance.every(), day).do(run_refresh_odds)
-    nfl_scheduler_instance.every(1).hour.do(run_snapshot)
-    nfl_scheduler_instance.every(1).hour.do(run_grade)
+    # Every 4h, the capture cadence. This used to be once a day Wed-Sun, which
+    # would have thinned the odds history the moment the scheduler came on.
+    nfl_scheduler_instance.every(4).hours.do(run_refresh_odds)
+    # Turning the scheduler on must not turn collection off: the 2026 season
+    # is "scheduler on, all markets OFF, store every candidate"
+    # (07-nfl-promotion-gates.md §6). This branch originally had no shadow
+    # capture at all.
+    if settings.nfl_capture_enabled:
+        nfl_scheduler_instance.every(4).hours.do(run_shadow_capture)
+    nfl_scheduler_instance.every(1).hours.do(run_snapshot)
+    nfl_scheduler_instance.every(1).hours.do(run_grade)
 
     log_task("NFL Scheduler configured:")
     log_task("  - Weekly refresh (schedule + team stats): every Tuesday")
-    log_task("  - Odds refresh: daily Wed-Sun")
+    log_task("  - Odds refresh + history: every 4 hours")
+    log_task(f"  - Shadow candidate capture: {'every 4 hours' if settings.nfl_capture_enabled else 'DISABLED'}")
     log_task("  - Prediction snapshot: every 1 hour")
     log_task("  - Grading: every 1 hour")
+
+    # Same boot order as capture-only: stats before anything scores against them.
+    run_weekly_refresh()
+    run_refresh_odds()
+    if settings.nfl_capture_enabled:
+        run_shadow_capture()
 
     while True:
         nfl_scheduler_instance.run_pending()
