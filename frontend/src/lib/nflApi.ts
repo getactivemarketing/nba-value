@@ -33,8 +33,12 @@ export interface NFLGameSummary {
   kickoff_utc: string | null; is_divisional: boolean | null; is_primetime: boolean | null;
   best_bet_type: string | null; best_bet_team: string | null; best_total_direction: string | null;
   best_bet_line: number | null; best_bet_value_score: number | null;
+  // Model leans, present whether or not the market is live (tracked while tracking_only).
+  predicted_margin: number | null; predicted_total: number | null; best_total_line: number | null;
+  spread_lean_team: string | null; spread_lean_line: number | null;
 }
-export interface NFLGamesResponse { games: NFLGameSummary[]; total: number; }
+// tracking_only: no NFL market is in best_bet, so leans are measurements, not picks.
+export interface NFLGamesResponse { games: NFLGameSummary[]; total: number; tracking_only: boolean; }
 
 export interface NFLDailyPerformance {
   date: string; predictions: number; wins: number; losses: number; pushes: number;

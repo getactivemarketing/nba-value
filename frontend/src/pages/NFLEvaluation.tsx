@@ -53,11 +53,12 @@ function EmptyStatePanel() {
     <div className="rounded-xl bg-[#191c22] border border-[#1e293b] p-10 text-center">
       <p className="text-3xl mb-3">🏈</p>
       <h3 className="text-lg font-black font-mono text-[#f1f5f9] tracking-tight mb-2">
-        No graded NFL games yet
+        No NFL best bets in 2026
       </h3>
       <p className="text-sm text-[#64748b] font-mono max-w-md mx-auto leading-relaxed">
-        Results appear once the season starts. The model is totals-forward for launch — spread
-        &amp; moneyline picks stay shadow-tracked until they show an edge over the market.
+        This is a tracking season: every market is measured against the closing line, and nothing
+        is published as a bet until one proves it beats the book. A won-lost record only starts
+        once a market does.
       </p>
     </div>
   );
@@ -98,7 +99,7 @@ export function NFLEvaluation() {
           NFL <span className="text-[#a4e6ff]">PERFORMANCE</span>
         </h1>
         <p className="text-sm text-[#64748b] mt-1 font-mono">
-          Totals-forward best-bet record — spread &amp; moneyline shadow-tracked, not bet
+          Best-bet record. Every NFL market is tracking-only for 2026, not bet
         </p>
       </div>
 

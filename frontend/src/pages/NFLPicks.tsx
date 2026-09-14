@@ -44,7 +44,20 @@ function GameCardSkeleton() {
   );
 }
 
-function EmptyStatePanel() {
+function EmptyStatePanel({ trackingOnly }: { trackingOnly: boolean }) {
+  if (trackingOnly) {
+    return (
+      <div className="col-span-full rounded-xl bg-[#191c22] border border-[#1e293b] p-10 text-center">
+        <p className="text-3xl mb-3">🏈</p>
+        <h3 className="text-lg font-black font-mono text-txt-primary tracking-tight mb-2">
+          No upcoming games on the board
+        </h3>
+        <p className="text-sm text-slate-500 font-mono max-w-md mx-auto leading-relaxed">
+          The next slate shows up once the schedule refreshes.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="col-span-full rounded-xl bg-[#191c22] border border-[#1e293b] p-10 text-center">
       <p className="text-3xl mb-3">🏈</p>
@@ -109,6 +122,9 @@ export function NFLPicks() {
   });
 
   const games = gamesData?.games ?? [];
+  // Assume tracking until the API says otherwise, so "Best Bets" never flashes on load.
+  const trackingOnly = gamesData?.tracking_only ?? true;
+  const effectiveMode: ViewMode = trackingOnly ? 'full-slate' : viewMode;
 
   const bestBetGames = useMemo(
     () =>
@@ -121,9 +137,9 @@ export function NFLPicks() {
     [games, minValueScore]
   );
 
-  const isLoading = viewMode === 'best-bets' ? gamesLoading || picksLoading : gamesLoading;
-  const error = gamesError || (viewMode === 'best-bets' ? picksError : null);
-  const displayedGames = viewMode === 'best-bets' ? bestBetGames : games;
+  const isLoading = effectiveMode === 'best-bets' ? gamesLoading || picksLoading : gamesLoading;
+  const error = gamesError || (effectiveMode === 'best-bets' ? picksError : null);
+  const displayedGames = effectiveMode === 'best-bets' ? bestBetGames : games;
   const qualifyingCount = picksData?.total ?? bestBetGames.length;
 
   return (
@@ -132,21 +148,30 @@ export function NFLPicks() {
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-2xl font-black text-txt-primary font-mono tracking-tight">
-            NFL <span className="text-[#a4e6ff]">Best Bets</span>
+            NFL <span className="text-[#a4e6ff]">{trackingOnly ? 'Model Tracker' : 'Best Bets'}</span>
           </h1>
           <div className="flex items-center gap-1.5">
             <div className="w-1.5 h-1.5 rounded-full bg-[#66f796] animate-pulse" />
             <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest font-mono">
-              Live Feed
+              {trackingOnly ? 'Tracking' : 'Live Feed'}
             </span>
           </div>
         </div>
-        <p className="text-slate-500 text-sm font-mono">
-          Totals-forward model — spread &amp; moneyline are shadow-tracked until they beat the market.
-        </p>
+        {trackingOnly ? (
+          <p className="text-slate-500 text-sm font-mono max-w-3xl">
+            2026 is a tracking season. The model's lean on every game is locked ~90 minutes before kickoff
+            and measured against the closing line. None of it is a recommended bet until a market proves
+            it beats the book.
+          </p>
+        ) : (
+          <p className="text-slate-500 text-sm font-mono">
+            Totals-forward model — spread &amp; moneyline are shadow-tracked until they beat the market.
+          </p>
+        )}
       </div>
 
       {/* Controls: view toggle + min value score */}
+      {!trackingOnly && (
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <ViewToggle mode={viewMode} onChange={setViewMode} />
 
@@ -169,6 +194,7 @@ export function NFLPicks() {
           </span>
         </div>
       </div>
+      )}
 
       {error && (
         <div className="mb-6">
@@ -176,7 +202,7 @@ export function NFLPicks() {
         </div>
       )}
 
-      {viewMode === 'best-bets' && !isLoading && !error && (
+      {effectiveMode === 'best-bets' && !isLoading && !error && (
         <p className="text-xs text-slate-500 font-mono mb-4">
           {qualifyingCount} qualifying pick{qualifyingCount === 1 ? '' : 's'} at {minValueScore}+ value score
         </p>
@@ -191,9 +217,11 @@ export function NFLPicks() {
             <GameCardSkeleton />
           </>
         ) : displayedGames.length === 0 ? (
-          <EmptyStatePanel />
+          <EmptyStatePanel trackingOnly={trackingOnly} />
         ) : (
-          displayedGames.map((game) => <NFLGameCard key={game.game_id} game={game} />)
+          displayedGames.map((game) => (
+            <NFLGameCard key={game.game_id} game={game} trackingOnly={trackingOnly} />
+          ))
         )}
       </div>
     </div>

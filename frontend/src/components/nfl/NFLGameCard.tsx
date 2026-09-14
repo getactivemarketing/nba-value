@@ -5,6 +5,24 @@ import { getTeamLogo } from '@/lib/nflLogos';
 
 interface NFLGameCardProps {
   game: NFLGameSummary;
+  /** No NFL market is live: show the model's lean as a tracked measurement, never as a pick. */
+  trackingOnly?: boolean;
+}
+
+function formatSpread(line: number) {
+  return line > 0 ? `+${line}` : line === 0 ? 'PK' : `${line}`;
+}
+
+function LeanRow({ label, lean, detail }: { label: string; lean: string | null; detail?: string | null }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest w-14 flex-shrink-0">{label}</span>
+      <span className="flex-1 text-sm font-semibold font-mono text-slate-300">
+        {lean ?? <span className="text-slate-600 font-normal">No lean</span>}
+      </span>
+      {detail && <span className="text-[11px] text-slate-500 font-mono text-right">{detail}</span>}
+    </div>
+  );
 }
 
 function NFLLogoCircle({ abbr, size = 32 }: { abbr: string; size?: number }) {
@@ -64,7 +82,7 @@ function getValueTier(score: number) {
   };
 }
 
-export function NFLGameCard({ game }: NFLGameCardProps) {
+export function NFLGameCard({ game, trackingOnly = false }: NFLGameCardProps) {
   const kickoff = game.kickoff_utc ? new Date(game.kickoff_utc) : null;
   const timeDisplay = kickoff
     ? `${kickoff.toLocaleDateString('en-US', { weekday: 'short' })} ${kickoff.toLocaleTimeString('en-US', {
@@ -76,7 +94,8 @@ export function NFLGameCard({ game }: NFLGameCardProps) {
   const awayTeam = getTeamInfo(game.away_team);
   const homeTeam = getTeamInfo(game.home_team);
 
-  const valueScore = game.best_bet_value_score;
+  // While tracking, a value score would read as pick strength, so none is shown.
+  const valueScore = trackingOnly ? null : game.best_bet_value_score;
   const hasHighValue = valueScore != null && valueScore >= 65;
   const tier = valueScore != null ? getValueTier(valueScore) : null;
 
@@ -89,6 +108,20 @@ export function NFLGameCard({ game }: NFLGameCardProps) {
   const bestBetLabel = direction
     ? `${direction} ${game.best_bet_line ?? '-'}`
     : `O/U ${game.best_bet_line ?? '-'}`;
+
+  // Tracked leans. predicted_margin is home minus away.
+  const snapshotted = game.predicted_total != null;
+  const totalLean = direction && game.best_total_line != null ? `${direction} ${game.best_total_line}` : null;
+  const projTotal = game.predicted_total != null ? `proj ${game.predicted_total.toFixed(1)}` : null;
+  const spreadLean = game.spread_lean_team && game.spread_lean_line != null
+    ? `${game.spread_lean_team} ${formatSpread(game.spread_lean_line)}`
+    : null;
+  const margin = game.predicted_margin;
+  const projMargin = margin == null
+    ? null
+    : Math.abs(margin) < 0.5
+      ? 'proj even'
+      : `proj ${margin > 0 ? game.home_team : game.away_team} by ${Math.abs(margin).toFixed(1)}`;
 
   return (
     <div className="rounded-xl bg-[#191c22] border border-[#1e293b] hover:border-[#a4e6ff]/30 relative overflow-hidden transition-colors">
@@ -151,7 +184,21 @@ export function NFLGameCard({ game }: NFLGameCardProps) {
           )}
         </div>
 
-        {/* Best-bet row (highlighted, totals-forward) */}
+        {trackingOnly ? (
+          <div className="mt-4 pt-4 border-t border-slate-700/30">
+            <div className="flex items-center justify-between mb-2.5">
+              <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Model Lean</span>
+            </div>
+            {snapshotted ? (
+              <div className="flex flex-col gap-2">
+                <LeanRow label="Total" lean={totalLean} detail={projTotal} />
+                <LeanRow label="Spread" lean={spreadLean} detail={projMargin} />
+              </div>
+            ) : (
+              <span className="text-sm text-slate-500 font-mono">Lean posts ~90 min before kickoff</span>
+            )}
+          </div>
+        ) : (
         <div className="mt-4 pt-4 border-t border-slate-700/30">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Best Bet</span>
@@ -167,14 +214,17 @@ export function NFLGameCard({ game }: NFLGameCardProps) {
             <span className="text-sm text-slate-500 font-mono">No value pick</span>
           )}
         </div>
+        )}
       </div>
 
-      {/* SHADOW strip: spread + ML tracked, not bet */}
+      {/* SHADOW strip: what is tracked but not bet */}
       <div className="flex items-center justify-between bg-[#0b0e14] border-t border-[#1e293b] px-5 py-2.5">
         <span className="text-[9px] font-bold uppercase tracking-widest text-slate-600 bg-[#32353c]/50 px-2 py-0.5 rounded">
-          Shadow
+          {trackingOnly ? 'Tracking' : 'Shadow'}
         </span>
-        <span className="text-[10px] text-slate-600 font-mono">Spread &amp; ML tracked, not bet</span>
+        <span className="text-[10px] text-slate-600 font-mono">
+          {trackingOnly ? 'Measured vs the closing line · not a bet' : 'Spread & ML tracked, not bet'}
+        </span>
       </div>
     </div>
   );
