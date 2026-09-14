@@ -120,13 +120,13 @@ def test_games_returns_upcoming_with_snapshot_join(monkeypatch):
     assert g["best_total_direction"] == "under"
 
 
-def _tracked_snap(game_id, kickoff):
+def _tracked_snap(game_id, kickoff, spread_side="away"):
     """What a snapshot looks like with every NFL market out of best_bet."""
     return NFLPredictionSnapshot(
         game_id=game_id, home_team="KC", away_team="CIN", kickoff_utc=kickoff,
         snapshot_time=kickoff, game_date=kickoff.date(),
         predicted_margin=2.5, predicted_total=44.1,
-        best_spread_team="CIN", best_spread_line=3.5, best_spread_value_score=22.0,
+        best_spread_team=spread_side, best_spread_line=3.5, best_spread_value_score=22.0,
         best_total_direction="under", best_total_line=47.5, best_total_value_score=31.0,
         best_bet_type=None, best_bet_team=None, best_bet_line=None, best_bet_value_score=None,
     )
@@ -151,7 +151,21 @@ def test_games_exposes_tracked_leans_when_no_market_is_live(monkeypatch):
     assert g["best_bet_type"] is None
     assert g["predicted_total"] == 44.1 and g["predicted_margin"] == 2.5
     assert g["best_total_direction"] == "under" and g["best_total_line"] == 47.5
-    assert g["best_spread_team"] == "CIN" and g["best_spread_line"] == 3.5
+    # stored line +3.5 = KC (home) favoured by 3.5, so the away lean quotes CIN +3.5
+    assert g["spread_lean_team"] == "CIN" and g["spread_lean_line"] == 3.5
+
+
+def test_games_quotes_a_home_spread_lean_from_the_home_side(monkeypatch):
+    kickoff = datetime(2026, 9, 20, 17, 0, tzinfo=timezone.utc)
+    game = NFLGame(
+        game_id="2026_02_CIN_KC", season=2026, week=2, home_team="KC", away_team="CIN",
+        kickoff_utc=kickoff, status="scheduled", is_divisional=False, is_primetime=False,
+    )
+    snap = _tracked_snap("2026_02_CIN_KC", kickoff, spread_side="home")
+    _patch_session(monkeypatch, [_scalars([game]), _scalars([snap])])
+
+    g = TestClient(app).get(f"{settings.api_v1_prefix}/nfl/games").json()["games"][0]
+    assert g["spread_lean_team"] == "KC" and g["spread_lean_line"] == -3.5
 
 
 def test_games_not_tracking_only_once_a_market_is_promoted(monkeypatch):

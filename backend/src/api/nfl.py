@@ -64,8 +64,9 @@ class NFLGameSummary(BaseModel):
     predicted_margin: float | None = None
     predicted_total: float | None = None
     best_total_line: float | None = None
-    best_spread_team: str | None = None
-    best_spread_line: float | None = None
+    # Spread lean as it would be quoted: the team abbr and ITS line (CIN +3.5).
+    spread_lean_team: str | None = None
+    spread_lean_line: float | None = None
 
 
 class NFLGamesResponse(BaseModel):
@@ -73,6 +74,23 @@ class NFLGamesResponse(BaseModel):
     total: int
     # True while no NFL market is in best_bet (07-nfl-promotion-gates.md).
     tracking_only: bool
+
+
+def _spread_lean(game: NFLGame, snap: NFLPredictionSnapshot | None) -> dict:
+    """Quote the stored spread lean from the side's own perspective.
+
+    Snapshots store best_spread_team as "home"/"away" and best_spread_line as
+    the HOME expected margin (odds_client: `line = -home_point`, so KC -3.5 is
+    stored as +3.5). The home side's quoted spread is therefore -line and the
+    away side's is +line.
+    """
+    side = snap.best_spread_team if snap else None
+    line = snap.best_spread_line if snap else None
+    if side not in ("home", "away") or line is None:
+        return {"spread_lean_team": None, "spread_lean_line": None}
+    if side == "home":
+        return {"spread_lean_team": game.home_team, "spread_lean_line": -line}
+    return {"spread_lean_team": game.away_team, "spread_lean_line": line}
 
 
 # --- Endpoints -------------------------------------------------------------
@@ -171,8 +189,7 @@ async def get_games(
             predicted_margin=s.predicted_margin if s else None,
             predicted_total=s.predicted_total if s else None,
             best_total_line=s.best_total_line if s else None,
-            best_spread_team=s.best_spread_team if s else None,
-            best_spread_line=s.best_spread_line if s else None,
+            **_spread_lean(g, s),
         ))
     tracking_only = not (settings.nfl_totals_in_best_bet or settings.nfl_spread_in_best_bet
                          or settings.nfl_ml_in_best_bet)
