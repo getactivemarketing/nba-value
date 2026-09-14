@@ -413,14 +413,184 @@ should be re-derived before it is relied on.
 
 ---
 
+## 11. The CLV gate resolved: FAILED, permanently (2026-08-24)
+
+The pause shipped `9cc4f90` (2026-08-14) with a pre-registered re-entry gate:
+**>=100 CLV-measured picks, mean CLV > 0, lower 95% bound above zero.** It was
+written that way so it could not be moved once the data got interesting.
+
+It has resolved against re-entry, at n=90, by a margin the remaining 10 picks
+cannot touch:
+
+| metric | value |
+|---|---|
+| n | 90 |
+| mean CLV | **-0.00612** |
+| SD | 0.00874 |
+| SE | 0.00092 |
+| 95% CI | **[-0.00792, -0.00431]** — entirely below zero |
+| t | **-6.64** |
+| beat the close | **18 / 90 (20.0%)** |
+
+`P(<=18 beats | p=0.5) = 4.0e-09`. This is not "no edge" — that looks like CLV
+scattered around zero. The model is **systematically on the wrong side of the
+closing line**: it takes sides the market subsequently moves against.
+
+### It is not the longshot artifact
+
+The obvious confound is mechanical. The selection rule steers to underdogs
+(§10), dogs drift out as late money lands on favourites, so negative CLV could
+be a pricing artifact rather than a statement about the model. It is not.
+CLV by price bucket:
+
+| bucket | n | mean CLV | t | beat close |
+|---|---|---|---|---|
+| fav <2.00 | 14 | **-0.01321** | -5.32 | 1/14 (7%) |
+| 2.00-2.40 | 29 | -0.00888 | -5.12 | 5/29 (17%) |
+| 2.40-2.80 | 31 | -0.00277 | -2.91 | 6/31 (19%) |
+| dog 2.80+ | 16 | -0.00138 | -0.78 | 6/16 (38%) |
+
+Negative in every bucket, and **worst on favourites** — the opposite of what
+the drift artifact predicts. The effect is diffuse, which also disposes of
+fading the signal: there is no concentrated pocket to harvest, and a -0.006
+mean sits inside the vig.
+
+### The W/L record over the same period
+
+Moneyline, by window, to 2026-08-23 (these are PAPER — see below):
+
+| window | record | win% | units | avg odds | implied breakeven |
+|---|---|---|---|---|---|
+| last 4 days | **1-16** | 5.9% | -14.38u | 2.78 | 36.0% |
+| last 7 days | 5-23 | 17.9% | -16.27u | 2.66 | 37.6% |
+| last 14 days | 17-36 | 32.1% | -14.40u | 2.48 | 40.3% |
+| last 30 days | 43-72 | 37.4% | -15.59u | 2.41 | 41.5% |
+| last 54 days | 73-105 | 41.0% | -9.79u | 2.40 | 41.7% |
+
+The 1-16 window is 2026-08-20..08-23: 17 picks, market-implied 6.3 expected
+wins, 1 actual. Note that window was selected *because* it was bad, so treat it
+as the tail of the decline the CLV series already describes, not as an
+independent shock. The honest summary is the 54-day line: 41.0% against a
+41.7% breakeven, i.e. paying the vig with no edge, with avg price drifting
+2.40 -> 2.78 as the selection rule reached for longer numbers.
+
+### The pause held — none of this was published
+
+Verified 2026-08-24: `/api/v1/mlb/picks/top` returns
+`{"picks":[],"total":0,"paused":true}`, and `sms_alert_sent` is 0 for every day
+from 08-15 onward (it was still firing 08-10..08-14). Scoring, freezing,
+grading and CLV all continued as designed. The -14.38u is a paper record of
+what would have been published.
+
+### Decision
+
+**best_bet stays paused permanently. This closes open governance item 0b.** The
+gate was the mechanism for reversing that call and it has returned -6.6 sigma
+in the wrong direction. Do not re-open it on a W/L run, a retrain, or a good
+week; a new gate would have to be argued from a different instrument entirely.
+
+Consequence for §9 item 1: retraining cannot be justified as a route back to
+best_bet. Two retrains already returned NO-GO, and CLV now says the failure is
+in what the model knows relative to the market, which a retrain of the same
+features on the same target does not address.
+
+---
+
+## 12. The end-of-July regime change: revelation, not regression (2026-08-24)
+
+Raised by the founder, who noticed the algo "seems messed up since the end of
+July" and pointed at 2026-07-20..07-31. He was right that something changed.
+It was not a bug.
+
+### The W/L swing he saw is not significant
+
+Moneyline picks against what the market implied for those same picks:
+
+| period | n | W | expected | diff | z |
+|---|---|---|---|---|---|
+| Apr 03-Jun 30 | 263 | 119 | 110.6 | +8.4 | +1.06 |
+| Jul 01-Jul 19 | 45 | 18 | 19.5 | -1.5 | -0.44 |
+| **Jul 20-Jul 31** | 46 | 24 | 20.1 | **+3.9** | **+1.17** |
+| Aug 01-Aug 12 | 43 | 16 | 18.7 | -2.7 | -0.84 |
+| Aug 13-Aug 23 | 45 | 15 | 18.5 | -3.5 | -1.08 |
+
+Everything inside +/-1.2 SD. The good stretch and the collapse are both ~1
+sigma on ~45-pick samples. Consistent with §10: hit%-style metrics on this
+model cannot resolve anything at these sample sizes.
+
+### But the model's OUTPUT changed, and that is not noise
+
+`481463e` (07-31, populate the 24 constant features) and `2ccb803` (08-01,
+build feature vectors by name) materially changed what the model emits:
+
+| | PRE-FIX (Apr 3-Jul 31) | POST-FIX (Aug 1-Aug 23) |
+|---|---|---|
+| n games | 1,484 | 314 |
+| model output mean | +0.190 | **-0.006** |
+| model output SD | 0.569 | **0.932** (+64%, F=2.68) |
+| outcome mean | +0.041 | +0.268 |
+| corr(pred, actual) | +0.0649 [+0.014,+0.115] | +0.0521 [-0.059,+0.162] |
+| mean error (bias) | +0.149 (z=+1.25) | -0.273 (z=-1.06) |
+
+**Predictive correlation did NOT change: Fisher z = +0.21, not significant.**
+The fix did not destroy signal, because there was none either side. The
+apparent loss of the home-field tilt (model picks home fell 53.7% -> 48.2%
+while actual home win% ROSE to 56.9%) is a real change in output but its
+effect on accuracy is z = -1.06 — not significant, and not evidence of a
+wiring defect. A gross home/away swap would have driven correlation to zero or
+negative; it did not move at all.
+
+### The mechanism
+
+Pre-fix the model was, in effect, a **constant predictor** — output SD 0.569
+against outcome SD 4.6. A constant scores R^2 ~ 0: harmless. It also rarely
+disagreed with the market enough to cross `MIN_EDGE = 0.10` by much.
+
+Post-fix, real features widened output spread 64% while correlation stayed at
+~0.05. **All of the added variance is noise.** So `edge = model - market` is now
+drawn from a much wider noise distribution, crosses `MIN_EDGE` more often and
+more extremely, and each crossing selects the game where the model's own error
+is largest. Adverse selection got materially worse — which is what both the W/L
+decline and the -6.64 t on CLV (§11) record.
+
+**The blindfolded model was accidentally safer.** A model that cannot disagree
+with the market cannot bet badly. The Apr-Jun +18u was a near-constant
+predictor riding variance; the fix removed the accidental protection. This is
+§10's warning made literal: "retuning widens a spread that is already wider
+than the model's skill."
+
+### Consequences
+
+1. **Supersedes how §10 framed the +10pt reversal.** §10 reads it as "hit% is
+   too noisy to promote on" — true, but the sharper statement is that the fix
+   worked as engineering, widened a signal-less spread, and thereby made bet
+   selection worse.
+2. **`MIN_EDGE = 0.10` is now mis-specified.** It was implicitly set against a
+   0.569-SD predictor and is applied to a 0.932-SD one, so it admits a far
+   fatter tail than intended. Re-deriving it reduces volume and damage; it does
+   NOT create an edge. Do not mistake it for a fix.
+3. **This closes the "was the pre-August model better" question left open by
+   §11.** CLV cannot answer it (no odds history before 07-31), but predictive
+   correlation is statistically indistinguishable across the boundary. The
+   pre-August model was not better — it was quieter about not having an edge.
+4. Not fully excluded: a *subtle* misalignment. n=314 makes the bias test ~1
+   sigma. There is no positive evidence for one.
+
+**Nothing here is a route back to un-pausing.** The binding constraint is
+unchanged and unchanged by any threshold: the features do not predict the
+target.
+
+---
+
 ## 9. Open governance items
 
 0. **Promotion gate: CLV on shadow picks, never holdout hit%.** §10 — hit% noise
    between adjacent windows was 17.6 points, larger than any effect measured.
    No model change ships on a single-window hit% again.
-0b. **Decide whether best_bet should fire at all** while `logit(model)` sits at
-   β = −0.084 (t = −0.20) and `MIN_EDGE` is selecting the model's own noise.
-   This is a product decision, not a modelling one.
+0b. ~~**Decide whether best_bet should fire at all**~~ — **CLOSED 2026-08-24, §11.**
+   The pre-registered CLV gate resolved at n=90: mean CLV −0.00612, t = −6.64,
+   95% CI entirely below zero, 18/90 beat the close. best_bet stays paused
+   permanently.
 1. **Retrain the MLB run-diff model.** Six months stale — but note §10: two
    retrains already returned NO-GO, and retuning widens a spread that is
    already wider than the model's skill. Retraining alone will not fix this.

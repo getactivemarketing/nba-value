@@ -426,3 +426,90 @@ def test_capture_only_registers_no_betting_jobs(monkeypatch):
     names = {getattr(f, "__name__", str(f)) for f in registered}
     assert "run_snapshot" not in names
     assert "run_grade" not in names
+
+
+def _capture_only_recorder(monkeypatch, call_log):
+    """Shared harness: run _run_capture_only() against a recording Scheduler.
+
+    Returns the list of functions registered on the schedule. `call_log`
+    records the ORDER of the immediate kick-off calls.
+    """
+    monkeypatch.setattr(sched.time, "sleep", MagicMock())
+    monkeypatch.setattr(sched, "_init_engine", MagicMock())
+    for name in ("run_refresh_odds", "run_shadow_capture", "run_weekly_refresh"):
+        stub = MagicMock(side_effect=lambda n=name: call_log.append(n))
+        # The scheduler registers the FUNCTION OBJECT, so the assertions below
+        # read __name__ off whatever was registered. A bare MagicMock has none
+        # and would make every name-based assertion silently vacuous.
+        stub.__name__ = name
+        monkeypatch.setattr(sched, name, stub)
+
+    registered = []
+
+    class _Rec:
+        def every(self, n=1):
+            class _E:
+                def __getattr__(self, unit):
+                    def do(fn, *a, **k):
+                        registered.append(fn)
+                        return fn
+                    return type("J", (), {"do": staticmethod(do)})()
+
+                @property
+                def hours(self):
+                    return type("J", (), {"do": staticmethod(
+                        lambda fn, *a, **k: registered.append(fn) or fn)})()
+            return _E()
+
+        def run_pending(self):
+            raise SystemExit  # break the infinite loop
+
+    monkeypatch.setattr(sched.schedule, "Scheduler", _Rec)
+    with pytest.raises(SystemExit):
+        sched._run_capture_only()
+    return registered
+
+
+def test_capture_only_registers_weekly_refresh(monkeypatch):
+    """REGRESSION (found 2026-08-24, prod): capture-only collected NOTHING.
+
+    All 33,849 `nfl_shadow_predictions` rows carried status='missing_features'
+    with zero settled or CLV-bearing rows, because `build_live_feature_row`
+    returns None without team stats and `nfl_team_stats` had no 2026 rows at
+    all. 2026 stats are written by `season_update.recompute_team_stats`, whose
+    only caller is `run_weekly_refresh` -- and that was registered ONLY in the
+    betting-enabled branch. Capture-only never called it.
+
+    So the shadow CLV instrument, built specifically so NFL would not repeat
+    MLB's blind season, would have kept writing failure records straight
+    through Week 1 and beyond while the capture job logged "complete" with a
+    healthy row count. It would NOT have self-healed when the season started.
+
+    Refreshing schedule + team stats writes no picks and reads no gate, so it
+    belongs in capture mode by the same argument that split
+    `nfl_capture_enabled` from `nfl_scheduler_enabled`.
+    """
+    registered = _capture_only_recorder(monkeypatch, [])
+
+    names = {getattr(f, "__name__", str(f)) for f in registered}
+    assert "run_weekly_refresh" in names
+    # and it must still never schedule betting work
+    assert "run_snapshot" not in names
+    assert "run_grade" not in names
+
+
+def test_capture_only_refreshes_stats_before_first_shadow_capture(monkeypatch):
+    """Ordering matters on boot, not just registration.
+
+    Team stats are the PREREQUISITE for shadow scoring: the first
+    run_shadow_capture() after a deploy scores against whatever
+    nfl_team_stats holds at that moment. If the kick-off order were reversed,
+    every restart would burn its first capture pass on stale-or-absent stats
+    and write another batch of missing_features rows.
+    """
+    call_log = []
+    _capture_only_recorder(monkeypatch, call_log)
+
+    assert "run_weekly_refresh" in call_log, "weekly refresh must run on boot"
+    assert "run_shadow_capture" in call_log
+    assert call_log.index("run_weekly_refresh") < call_log.index("run_shadow_capture")
