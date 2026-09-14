@@ -150,6 +150,18 @@ Markets stay off regardless of what the numbers do mid-season.
 
 ---
 
+### Operational log (not amendments — no threshold changed)
+
+- **2026-09-14** — Scheduler enabled for Week 2 (`NFL_SCHEDULER_ENABLED=true`
+  on Railway; all three `*_in_best_bet` flags stay `False`). The public NFL tab
+  now presents the slate as a tracker ("Model Lean · not a bet") and shows no
+  value scores. Week 1 was not collected: shadow capture wrote only
+  `missing_features` rows (no 2026 team stats; fixed in 782b8a3), and the Odds
+  API key has been deactivated since at least 09-07. Snapshots now refuse
+  lines older than 6h, so Stage 1 coverage counts from the first week with a
+  live odds feed. Rollback: set `NFL_SCHEDULER_ENABLED=false`; capture-only
+  resumes.
+
 ## 7. Amendments
 
 *None. Any entry here must record date, reason, and which window it applies to
