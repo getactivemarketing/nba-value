@@ -7,7 +7,7 @@ All tests here run against a MOCKED async session (no real DB, no network).
 so the happy-path scoring logic can be unit-tested directly without needing
 to mock a full SQLAlchemy session chain.
 """
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 from src.models import NFLGame, NFLGameContext, NFLMarket, NFLPredictionSnapshot, NFLTeamStats
@@ -141,6 +141,10 @@ def _all_result(items):
     return res
 
 
+# Lines captured an hour ago: inside nfl_snapshot_max_line_age_hours.
+_FRESH = datetime.now(timezone.utc) - timedelta(hours=1)
+
+
 # ---------------------------------------------------------------------------
 # 3. snapshot_due_games
 # ---------------------------------------------------------------------------
@@ -160,7 +164,7 @@ async def test_snapshot_due_games_no_op_when_nothing_due(monkeypatch):
         session, minutes_before=90, mov_bundle=object(), totals_bundle=object(),
     )
 
-    assert result == {"snapshotted": 0}
+    assert result == {"snapshotted": 0, "stale_lines": 0}
     score_mock.assert_not_called()
     load_bundle_mock.assert_not_called()
     session.add.assert_not_called()
@@ -182,10 +186,10 @@ async def test_snapshot_due_games_one_due_game_inserts_snapshot():
                               wind_mph=6.0, temp_f=70.0, is_dome=False)
     spread_mkt = NFLMarket(game_id=game.game_id, market_type="spread", line=3.0,
                             home_odds=1.91, away_odds=1.91,
-                            captured_at=datetime(2026, 9, 12, tzinfo=timezone.utc))
+                            captured_at=_FRESH)
     total_mkt = NFLMarket(game_id=game.game_id, market_type="total", line=47.5,
                            over_odds=1.91, under_odds=1.91,
-                           captured_at=datetime(2026, 9, 12, tzinfo=timezone.utc))
+                           captured_at=_FRESH)
 
     session = MagicMock()
     session.execute = AsyncMock(side_effect=[
@@ -201,7 +205,7 @@ async def test_snapshot_due_games_one_due_game_inserts_snapshot():
         session, minutes_before=90, mov_bundle=_mov_bundle(), totals_bundle=_totals_bundle(),
     )
 
-    assert result == {"snapshotted": 1}
+    assert result == {"snapshotted": 1, "stale_lines": 0}
     session.add.assert_called_once()
     added = session.add.call_args[0][0]
     assert isinstance(added, NFLPredictionSnapshot)
@@ -233,10 +237,10 @@ async def test_snapshot_due_games_isolates_a_failing_game_from_the_batch():
                              wind_mph=5.0, temp_f=60.0, is_dome=False)
     bad_spread = NFLMarket(game_id=bad.game_id, market_type="spread", line=2.0,
                            home_odds=1.91, away_odds=1.91,
-                           captured_at=datetime(2026, 9, 12, tzinfo=timezone.utc))
+                           captured_at=_FRESH)
     bad_total = NFLMarket(game_id=bad.game_id, market_type="total", line=41.0,
                           over_odds=1.91, under_odds=1.91,
-                          captured_at=datetime(2026, 9, 12, tzinfo=timezone.utc))
+                          captured_at=_FRESH)
 
     g_home = NFLTeamStats(team="KC", season=2026, through_week=1, off_epa_play=0.15,
                           def_epa_play=-0.05, pass_epa=0.1, rush_epa=0.0,
@@ -248,10 +252,10 @@ async def test_snapshot_due_games_isolates_a_failing_game_from_the_batch():
                            wind_mph=6.0, temp_f=70.0, is_dome=False)
     g_spread = NFLMarket(game_id=good.game_id, market_type="spread", line=3.0,
                          home_odds=1.91, away_odds=1.91,
-                         captured_at=datetime(2026, 9, 12, tzinfo=timezone.utc))
+                         captured_at=_FRESH)
     g_total = NFLMarket(game_id=good.game_id, market_type="total", line=47.5,
                         over_odds=1.91, under_odds=1.91,
-                        captured_at=datetime(2026, 9, 12, tzinfo=timezone.utc))
+                        captured_at=_FRESH)
 
     session = MagicMock()
     session.execute = AsyncMock(side_effect=[
@@ -268,10 +272,71 @@ async def test_snapshot_due_games_isolates_a_failing_game_from_the_batch():
     )
 
     # bad game skipped, good game still snapshotted, batch still commits
-    assert result == {"snapshotted": 1}
+    assert result == {"snapshotted": 1, "stale_lines": 0}
     session.add.assert_called_once()
     assert session.add.call_args[0][0].game_id == "2026_02_CIN_KC"
     session.commit.assert_awaited_once()
+
+
+async def test_snapshot_due_games_skips_game_whose_lines_are_stale(monkeypatch):
+    """A dead odds feed must not freeze a snapshot on old numbers.
+
+    Found 2026-09-14: the Odds API key had been deactivated since at least
+    09-07, so nfl_markets held week-old lines. Snapshots are one per game and
+    never retaken, so scoring those lines would have permanently recorded the
+    game against a number nobody could bet -- and CLV against it is
+    meaningless. Skipping leaves the game unsnapshotted, so the hourly job
+    retries it if the feed recovers before kickoff.
+    """
+    monkeypatch.setattr(sched.settings, "nfl_snapshot_max_line_age_hours", 6.0)
+    stale = datetime.now(timezone.utc) - timedelta(days=7)
+    game = NFLGame(
+        game_id="2026_02_CIN_KC", season=2026, week=2, home_team="KC", away_team="CIN",
+        kickoff_utc=datetime.now(timezone.utc) + timedelta(minutes=60), status="scheduled",
+        is_divisional=False, is_primetime=False,
+    )
+    stats = NFLTeamStats(team="KC", season=2026, through_week=1, off_epa_play=0.1,
+                         def_epa_play=0.0, pass_epa=0.1, rush_epa=0.0,
+                         success_rate=0.47, pace=62.0, power_rating=0.1)
+    ctx = NFLGameContext(game_id=game.game_id, home_rest_days=7, away_rest_days=7,
+                         wind_mph=6.0, temp_f=70.0, is_dome=False)
+    mkts = [
+        NFLMarket(game_id=game.game_id, market_type="spread", line=3.0,
+                  home_odds=1.91, away_odds=1.91, captured_at=stale),
+        NFLMarket(game_id=game.game_id, market_type="total", line=47.5,
+                  over_odds=1.91, under_odds=1.91, captured_at=stale),
+    ]
+    session = MagicMock()
+    session.execute = AsyncMock(side_effect=[
+        _scalars_result([game]), _scalar_result(stats), _scalar_result(stats),
+        _scalar_result(ctx), _scalars_result(mkts),
+    ])
+    session.commit = AsyncMock()
+    monkeypatch.setattr(sched, "score_game", MagicMock(side_effect=AssertionError("must not score stale lines")))
+
+    result = await sched.snapshot_due_games(
+        session, minutes_before=90, mov_bundle=_mov_bundle(), totals_bundle=_totals_bundle(),
+    )
+
+    assert result["snapshotted"] == 0
+    assert result["stale_lines"] == 1
+    session.add.assert_not_called()
+
+
+async def test_grade_finals_selects_on_actual_total_not_best_bet_result():
+    """With every market out of best_bet, best_bet_result is None even after
+    grading, so "ungraded = best_bet_result IS NULL" re-graded every tracked
+    snapshot every hour, forever. actual_total is written by every grade."""
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_all_result([]))
+    session.commit = AsyncMock()
+
+    await sched.grade_finals(session)
+
+    sql = str(session.execute.call_args[0][0].compile(compile_kwargs={"literal_binds": True}))
+    where = sql.split("WHERE", 1)[1]
+    assert "nfl_prediction_snapshots.actual_total IS NULL" in where
+    assert "best_bet_result" not in where
 
 
 # ---------------------------------------------------------------------------

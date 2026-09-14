@@ -169,6 +169,11 @@ class Settings(BaseSettings):
     # nfl_odds_snapshots and nfl_shadow_predictions.
     nfl_capture_enabled: bool = True
     nfl_snapshot_minutes_before: int = 90
+    # A snapshot is taken once per game and never retaken, so it must not be
+    # scored against lines a dead odds feed left behind (the key was
+    # deactivated for 7+ days going into Week 1). Odds refresh every 4h;
+    # 6h allows one missed pull.
+    nfl_snapshot_max_line_age_hours: float = 6.0
 
     @property
     def is_production(self) -> bool:

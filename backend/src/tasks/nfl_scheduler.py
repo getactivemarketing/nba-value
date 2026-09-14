@@ -218,7 +218,7 @@ async def snapshot_due_games(session: AsyncSession, minutes_before: int,
     games = (await session.execute(stmt)).scalars().all()
 
     if not games:
-        return {"snapshotted": 0}
+        return {"snapshotted": 0, "stale_lines": 0}
 
     if mov_bundle is None:
         mov_bundle = model_training.load_bundle(settings.nfl_mov_model_path)
@@ -226,6 +226,8 @@ async def snapshot_due_games(session: AsyncSession, minutes_before: int,
         totals_bundle = model_training.load_bundle(settings.nfl_totals_model_path)
 
     snapshotted = 0
+    stale_lines = 0
+    line_floor = now_utc - timedelta(hours=settings.nfl_snapshot_max_line_age_hours)
     for game in games:
         # Per-game isolation (mirrors mlb_scheduler.snapshot_predictions_async):
         # a single bad game (e.g. a null team-stat -> TypeError in scoring)
@@ -265,6 +267,16 @@ async def snapshot_due_games(session: AsyncSession, minutes_before: int,
             context = _context_dict(context_row)
             markets = _latest_markets(market_rows)
 
+            newest = max((r.captured_at for r in market_rows if r.captured_at is not None), default=None)
+            if newest is not None and newest.tzinfo is None:
+                newest = newest.replace(tzinfo=timezone.utc)  # captured_at defaults to naive utcnow
+            if market_rows and (newest is None or newest < line_floor):
+                # Left unsnapshotted on purpose: the hourly run retries it if the feed recovers.
+                log_task("Skipping game (stale lines)", game_id=game.game_id,
+                         newest_line=str(newest))
+                stale_lines += 1
+                continue
+
             snap = _score_one(game_dict, home_stats, away_stats, context, markets,
                               mov_bundle, totals_bundle)
             if snap is None:
@@ -279,14 +291,14 @@ async def snapshot_due_games(session: AsyncSession, minutes_before: int,
             continue
 
     await session.commit()
-    return {"snapshotted": snapshotted}
+    return {"snapshotted": snapshotted, "stale_lines": stale_lines}
 
 
 async def grade_finals(session: AsyncSession) -> dict:
     """Grade ungraded snapshots for completed games.
 
     "Completed" = nfl_games.home_score is not null; "ungraded" = the
-    snapshot's best_bet_result is null. `snapshot.grade_snapshot` grades off
+    snapshot's actual_total is null. `snapshot.grade_snapshot` grades off
     the snapshot's own stored best_*_line/team/direction; its
     spread_line/total_line params are currently unused (reserved for future
     CLV), so we pass the snapshot's own stored best_spread_line/
@@ -297,7 +309,9 @@ async def grade_finals(session: AsyncSession) -> dict:
         .join(NFLGame, NFLGame.game_id == NFLPredictionSnapshot.game_id)
         .where(
             NFLGame.home_score.is_not(None),
-            NFLPredictionSnapshot.best_bet_result.is_(None),
+            # Not best_bet_result: it stays None after grading whenever no market
+            # is in best_bet, which is every NFL snapshot in 2026.
+            NFLPredictionSnapshot.actual_total.is_(None),
         )
     )
     rows = (await session.execute(stmt)).all()
