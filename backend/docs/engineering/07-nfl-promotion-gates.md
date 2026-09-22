@@ -162,6 +162,22 @@ Markets stay off regardless of what the numbers do mid-season.
   live odds feed. Rollback: set `NFL_SCHEDULER_ENABLED=false`; capture-only
   resumes.
 
+- **2026-09-22** — Weeks 1-2 collected ZERO snapshots. The Odds API key was
+  deactivated on/before 09-07 and every refresh returned 401, so the newest
+  line in `nfl_markets` was 09-05 and all 32 games were skipped by the 6h
+  stale-line guard. nflverse schedules added as a fallback line source
+  (`services/nfl/nflverse_lines.py`), used only when the Odds API raises or
+  returns nothing. Those rows carry `book="nflverse"`.
+
+  **What the fallback can and cannot support.** nflverse posts no juice on the
+  spread or total, so those rows are written at an assumed -110. That price is
+  an assumption, not an observation: Stage 3's **price CLV is not computable**
+  from `book="nflverse"` rows and any analysis must exclude them by that label.
+  Line CLV (the spread/total number itself) and Stage 2 calibration remain
+  valid, as does the moneyline price, which nflverse actually publishes. It is
+  also ONE consensus line, so the Stage 3 "not driven by one book" check cannot
+  be satisfied on fallback data alone.
+
 ## 7. Amendments
 
 *None. Any entry here must record date, reason, and which window it applies to

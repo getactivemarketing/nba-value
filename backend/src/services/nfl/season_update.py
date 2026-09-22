@@ -27,6 +27,7 @@ from src.tasks.nfl_backfill import _clean_nan, _compute_candidate_features, _loa
 from src.services.nfl.odds_history import (
     NFLOddsQuote, minutes_to_kickoff, nfl_prices_changed, quote_from_bookmaker,
 )
+from src.services.nfl import nflverse_lines
 
 logger = structlog.get_logger()
 
@@ -211,6 +212,81 @@ async def odds_to_markets(session: AsyncSession, season: int) -> int:
 
     session.add_all([NFLMarket(**r) for r in matched_rows])
     return len(matched_rows)
+
+
+async def nflverse_to_markets(
+    session: AsyncSession, season: int, now: datetime | None = None,
+) -> int:
+    """Write `nfl_markets` (and line-movement history) from nflverse schedules.
+
+    The fallback for when The Odds API is unavailable. It went unnoticed for
+    two weeks in 2026 that the key was deactivated, and Weeks 1-2 collected
+    nothing at all; a free always-on source means a lapsed key costs price
+    detail rather than the season. See `nflverse_lines` for the sign
+    conventions and for why these rows carry an assumed -110.
+
+    Only games that have not kicked off are written: after kickoff the
+    schedule file holds the closing line, and writing that as a live capture
+    would invent pre-game history.
+
+    No commit inside; the caller owns the transaction.
+    """
+    now = now or datetime.now(timezone.utc)
+    lines = nflverse_lines.lines_from_schedule(load_schedules([season]))
+
+    result = await session.execute(
+        select(NFLGame.game_id, NFLGame.kickoff_utc).where(NFLGame.season == season)
+    )
+    kickoffs = {r.game_id: r.kickoff_utc for r in result.all()}
+    lines = nflverse_lines.upcoming_only(lines, kickoffs, now=now)
+    if not lines:
+        logger.info("nfl_nflverse_lines_none_upcoming", season=season)
+        return 0
+
+    game_ids = [line["game_id"] for line in lines]
+    prior_rows = (await session.execute(
+        select(NFLOddsSnapshot)
+        .where(
+            NFLOddsSnapshot.game_id.in_(game_ids),
+            NFLOddsSnapshot.book == nflverse_lines.BOOK,
+        )
+        .order_by(NFLOddsSnapshot.snapshot_time)
+    )).scalars().all()
+    prior: dict[str, NFLOddsQuote] = {
+        r.game_id: NFLOddsQuote(
+            ml_home=r.ml_home, ml_away=r.ml_away,
+            spread_line=r.spread_line,
+            spread_home_odds=r.spread_home_odds, spread_away_odds=r.spread_away_odds,
+            total_line=r.total_line, over_odds=r.over_odds, under_odds=r.under_odds,
+        )
+        for r in prior_rows   # ordered ascending, so the last write per game wins
+    }
+
+    written = 0
+    for line in lines:
+        for row in nflverse_lines.market_rows(line):
+            session.add(NFLMarket(**row, captured_at=now))
+            written += 1
+
+        quote = nflverse_lines.quote_from_line(line)
+        if not nfl_prices_changed(prior.get(line["game_id"]), quote):
+            continue
+        kickoff = kickoffs.get(line["game_id"])
+        session.add(NFLOddsSnapshot(
+            game_id=line["game_id"], book=nflverse_lines.BOOK, snapshot_time=now,
+            minutes_to_kickoff=minutes_to_kickoff(now, kickoff) if kickoff else None,
+            ml_home=quote.ml_home, ml_away=quote.ml_away,
+            spread_line=quote.spread_line,
+            spread_home_odds=quote.spread_home_odds,
+            spread_away_odds=quote.spread_away_odds,
+            total_line=quote.total_line,
+            over_odds=quote.over_odds, under_odds=quote.under_odds,
+            created_at=now,
+        ))
+
+    logger.info("nfl_nflverse_markets_written", season=season,
+                games=len(lines), markets=written)
+    return written
 
 
 async def _capture_odds_history(

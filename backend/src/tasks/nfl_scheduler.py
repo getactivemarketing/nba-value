@@ -358,9 +358,21 @@ async def refresh_odds(session: AsyncSession) -> dict:
     (kept modest to respect the Odds API budget -- see start_scheduler cadence).
     """
     season = _current_season(_today_et())
-    n = await season_update.odds_to_markets(session, season)
+    source = "odds_api"
+    try:
+        n = await season_update.odds_to_markets(session, season)
+    except Exception as exc:  # noqa: BLE001 - a dead key must not stop collection
+        # The Odds API key sat deactivated from 2026-09-07 and every refresh
+        # raised 401. Two weeks of games were skipped on stale lines before
+        # anyone noticed. The failed call may have left the transaction dirty.
+        log_task(f"Odds API unavailable, falling back to nflverse: {exc}")
+        await session.rollback()
+        n = 0
+    if n == 0:
+        n = await season_update.nflverse_to_markets(session, season)
+        source = "nflverse"
     await session.commit()
-    return {"markets": n}
+    return {"markets": n, "source": source}
 
 
 # ---------------------------------------------------------------------------

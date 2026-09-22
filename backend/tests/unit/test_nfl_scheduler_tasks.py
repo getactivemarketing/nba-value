@@ -406,10 +406,13 @@ async def test_refresh_odds_no_op_out_of_season(monkeypatch):
 
     odds_to_markets_mock = AsyncMock(return_value=0)
     monkeypatch.setattr(sched.season_update, "odds_to_markets", odds_to_markets_mock)
+    # UPDATED 2026-09-22: an empty board now also asks the nflverse fallback,
+    # which is itself empty out of season (no upcoming games).
+    monkeypatch.setattr(sched.season_update, "nflverse_to_markets", AsyncMock(return_value=0))
 
     result = await sched.refresh_odds(session)
 
-    assert result == {"markets": 0}
+    assert result["markets"] == 0
     session.commit.assert_awaited_once()
 
 
