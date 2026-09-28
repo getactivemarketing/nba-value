@@ -50,8 +50,20 @@ export interface NFLMarketRecord {
 export interface NFLEvaluationSummary {
   total_predictions: number; graded: number; wins: number; losses: number; pushes: number;
   win_rate: number | null; total_profit: number;
-  by_market: Record<'best_bet' | 'spread' | 'ml', NFLMarketRecord>;
+  by_market: Record<'best_bet' | 'total' | 'spread' | 'ml', NFLMarketRecord>;
+  // While true, by_market holds TRACKED leans and the top-level best_bet fields are zero.
+  tracking_only: boolean;
 }
+
+export interface NFLTrackedGame {
+  game_id: string; game_date: string | null; home_team: string; away_team: string;
+  home_score: number | null; away_score: number | null;
+  actual_total: number | null; actual_margin: number | null;
+  total_direction: string | null; total_line: number | null; total_result: string | null;
+  spread_team: string | null; spread_line: number | null; spread_result: string | null;
+  ml_team: string | null; ml_result: string | null;
+}
+export interface NFLTrackedResponse { games: NFLTrackedGame[]; total: number; }
 
 export const nflApi = {
   async getPicks(minValueScore = 40, limit = 20): Promise<NFLPicksResponse> {
@@ -68,6 +80,10 @@ export const nflApi = {
   },
   async getDailyEvaluation(days = 30): Promise<NFLDailyPerformance[]> {
     const r = await client.get<NFLDailyPerformance[]>(`/nfl/evaluation/daily?days=${days}`);
+    return r.data;
+  },
+  async getTracked(limit = 50): Promise<NFLTrackedResponse> {
+    const r = await client.get<NFLTrackedResponse>(`/nfl/evaluation/tracked?limit=${limit}`);
     return r.data;
   },
   async getEvaluationSummary(): Promise<NFLEvaluationSummary> {

@@ -265,6 +265,33 @@ class NFLEvaluationSummary(BaseModel):
     win_rate: float | None
     total_profit: float
     by_market: dict
+    # True while no market is in best_bet: by_market holds TRACKED leans, and
+    # the top-level best_bet fields are all zero by definition.
+    tracking_only: bool = False
+
+
+class NFLTrackedGame(BaseModel):
+    game_id: str
+    game_date: str | None
+    home_team: str
+    away_team: str
+    home_score: int | None
+    away_score: int | None
+    actual_total: int | None
+    actual_margin: int | None
+    total_direction: str | None = None
+    total_line: float | None = None
+    total_result: str | None = None
+    spread_team: str | None = None
+    spread_line: float | None = None
+    spread_result: str | None = None
+    ml_team: str | None = None
+    ml_result: str | None = None
+
+
+class NFLTrackedResponse(BaseModel):
+    games: list[NFLTrackedGame]
+    total: int
 
 
 def _tally(result: str | None, profit, acc: dict) -> None:
@@ -285,18 +312,29 @@ def _finish(acc: dict) -> dict:
     return acc
 
 
+def _tracking_only() -> bool:
+    return not (settings.nfl_totals_in_best_bet or settings.nfl_spread_in_best_bet
+                or settings.nfl_ml_in_best_bet)
+
+
 @router.get("/evaluation/summary", response_model=NFLEvaluationSummary)
 async def get_evaluation_summary() -> NFLEvaluationSummary:
-    """Graded best_bet (totals, LIVE) record + spread/ML as SHADOW."""
+    """Per-market record over every GRADED snapshot.
+
+    Selects on actual_total (written by every grade), not best_bet_result:
+    that column stays null for the whole 2026 season because no market is in
+    best_bet, so the old clause reported 0-0 over 15 graded Week 3 games.
+    """
     async with async_session() as session:
         rows = (await session.execute(
-            select(NFLPredictionSnapshot).where(NFLPredictionSnapshot.best_bet_result.isnot(None))
+            select(NFLPredictionSnapshot).where(NFLPredictionSnapshot.actual_total.isnot(None))
         )).scalars().all()
 
     markets = {m: {"wins": 0, "losses": 0, "pushes": 0, "profit": 0.0}
-               for m in ("best_bet", "spread", "ml")}
+               for m in ("best_bet", "total", "spread", "ml")}
     for s in rows:
         _tally(s.best_bet_result, s.best_bet_profit, markets["best_bet"])
+        _tally(s.best_total_result, s.best_total_profit, markets["total"])
         _tally(s.best_spread_result, s.best_spread_profit, markets["spread"])
         _tally(s.best_ml_result, s.best_ml_profit, markets["ml"])
     bb = markets["best_bet"]
@@ -307,7 +345,54 @@ async def get_evaluation_summary() -> NFLEvaluationSummary:
         win_rate=round(bb["wins"] / decided, 3) if decided else None,
         total_profit=round(bb["profit"], 2),
         by_market={m: _finish(a) for m, a in markets.items()},
+        tracking_only=_tracking_only(),
     )
+
+
+def _side_team(side: str | None, home: str, away: str) -> str | None:
+    """Snapshots store a side as "home"/"away"; quote the abbreviation."""
+    if side == "home":
+        return home
+    if side == "away":
+        return away
+    return side or None
+
+
+@router.get("/evaluation/tracked", response_model=NFLTrackedResponse)
+async def get_tracked_results(
+    limit: int = Query(50, ge=1, le=200, description="Most recent graded games"),
+) -> NFLTrackedResponse:
+    """Graded games with the model's lean in each market and how it landed.
+
+    The per-game view behind the summary: in a tracking season the record is
+    too small to mean anything, so showing WHICH leans landed is the honest
+    unit of reporting.
+    """
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(NFLPredictionSnapshot)
+            .where(NFLPredictionSnapshot.actual_total.isnot(None))
+            .order_by(NFLPredictionSnapshot.game_date.desc())
+            .limit(limit)
+        )).scalars().all()
+
+    games = [
+        NFLTrackedGame(
+            game_id=s.game_id,
+            game_date=s.game_date.isoformat() if s.game_date else None,
+            home_team=s.home_team, away_team=s.away_team,
+            home_score=s.home_score, away_score=s.away_score,
+            actual_total=s.actual_total, actual_margin=s.actual_margin,
+            total_direction=s.best_total_direction, total_line=s.best_total_line,
+            total_result=s.best_total_result,
+            spread_team=_side_team(s.best_spread_team, s.home_team, s.away_team),
+            spread_line=s.best_spread_line, spread_result=s.best_spread_result,
+            ml_team=_side_team(s.best_ml_team, s.home_team, s.away_team),
+            ml_result=s.best_ml_result,
+        )
+        for s in rows
+    ]
+    return NFLTrackedResponse(games=games, total=len(games))
 
 
 @router.get("/evaluation/daily", response_model=list[NFLDailyPerformance])

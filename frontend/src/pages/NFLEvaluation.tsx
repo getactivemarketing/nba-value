@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { nflApi, type NFLMarketRecord } from '@/lib/nflApi';
+import { nflApi, type NFLMarketRecord, type NFLTrackedGame } from '@/lib/nflApi';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
 function StatCard({ label, value, color, small }: {
@@ -64,6 +64,86 @@ function EmptyStatePanel() {
   );
 }
 
+function recordOf(r?: NFLMarketRecord) {
+  const decided = (r?.wins ?? 0) + (r?.losses ?? 0);
+  return {
+    record: r ? `${r.wins}-${r.losses}${r.pushes > 0 ? `-${r.pushes}` : ''}` : '0-0',
+    winRate: decided > 0 ? `${(((r?.wins ?? 0) / decided) * 100).toFixed(0)}%` : '—',
+    decided,
+  };
+}
+
+function TrackedMarketTile({ label, record }: { label: string; record?: NFLMarketRecord }) {
+  const { record: rec, winRate, decided } = recordOf(record);
+  return (
+    <div className="bg-[#0b0e14] rounded-lg p-4 border border-[#1e293b]">
+      <div className="text-[10px] text-[#64748b] uppercase font-bold tracking-widest mb-2">{label}</div>
+      <div className="text-2xl font-black font-mono text-[#f1f5f9]">{rec}</div>
+      <div className="text-xs font-mono text-[#64748b] mt-1">
+        {winRate} · {decided} graded
+      </div>
+    </div>
+  );
+}
+
+function ResultCell({ result }: { result: string | null }) {
+  if (!result) return <span className="text-[#475569] font-mono text-xs">no lean</span>;
+  const color = result === 'win' ? 'text-[#66f796]' : result === 'loss' ? 'text-[#ef4444]' : 'text-[#94a3b8]';
+  return <span className={`font-mono text-xs font-bold uppercase ${color}`}>{result}</span>;
+}
+
+function TrackedResults({ games }: { games: NFLTrackedGame[] }) {
+  if (games.length === 0) {
+    return (
+      <div className="text-center py-8 text-[#64748b] font-mono text-sm">
+        No graded games yet — leans are graded once final scores land.
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-[10px] text-[#64748b] uppercase font-bold tracking-widest border-b border-[#1e293b]">
+            <th className="pb-2">Date</th>
+            <th className="pb-2">Game</th>
+            <th className="pb-2 text-center">Score</th>
+            <th className="pb-2">Total lean</th>
+            <th className="pb-2 text-center">Result</th>
+            <th className="pb-2">Spread lean</th>
+            <th className="pb-2 text-center">Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          {games.map((g) => (
+            <tr key={g.game_id} className="border-b border-[#1e293b]">
+              <td className="py-2 text-[#94a3b8] font-mono text-xs whitespace-nowrap">{g.game_date ?? '—'}</td>
+              <td className="py-2 text-[#f1f5f9] font-mono text-xs whitespace-nowrap">
+                {g.away_team} @ {g.home_team}
+              </td>
+              <td className="py-2 text-center text-[#94a3b8] font-mono text-xs whitespace-nowrap">
+                {g.away_score != null && g.home_score != null ? `${g.away_score}-${g.home_score}` : '—'}
+              </td>
+              <td className="py-2 text-[#94a3b8] font-mono text-xs whitespace-nowrap">
+                {g.total_direction && g.total_line != null
+                  ? `${g.total_direction.toUpperCase()} ${g.total_line}`
+                  : <span className="text-[#475569]">—</span>}
+              </td>
+              <td className="py-2 text-center"><ResultCell result={g.total_result} /></td>
+              <td className="py-2 text-[#94a3b8] font-mono text-xs whitespace-nowrap">
+                {g.spread_team && g.spread_line != null
+                  ? `${g.spread_team} ${g.spread_line > 0 ? '+' : ''}${g.spread_line}`
+                  : <span className="text-[#475569]">—</span>}
+              </td>
+              <td className="py-2 text-center"><ResultCell result={g.spread_result} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function NFLEvaluation() {
   const [dailyDays, setDailyDays] = useState(14);
 
@@ -75,6 +155,14 @@ export function NFLEvaluation() {
   const { data: daily, isLoading: dailyLoading } = useQuery({
     queryKey: ['nfl-eval-daily', dailyDays],
     queryFn: () => nflApi.getDailyEvaluation(dailyDays),
+  });
+
+  const trackingOnly = summary?.tracking_only ?? true;
+
+  const { data: tracked, isLoading: trackedLoading } = useQuery({
+    queryKey: ['nfl-eval-tracked'],
+    queryFn: () => nflApi.getTracked(),
+    enabled: trackingOnly,
   });
 
   const selectClass =
@@ -89,7 +177,7 @@ export function NFLEvaluation() {
     : '-';
   const roi = decided > 0 && bestBet ? ((bestBet.profit / (decided * 100)) * 100).toFixed(1) : null;
 
-  const isEmpty = !summaryLoading && (!summary || summary.graded === 0);
+  const isEmpty = !summaryLoading && !trackingOnly && (!summary || summary.graded === 0);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
@@ -99,7 +187,9 @@ export function NFLEvaluation() {
           NFL <span className="text-[#a4e6ff]">PERFORMANCE</span>
         </h1>
         <p className="text-sm text-[#64748b] mt-1 font-mono">
-          Best-bet record. Every NFL market is tracking-only for 2026, not bet
+          {trackingOnly
+            ? 'How the tracked leans landed. Nothing here was bet.'
+            : 'Best-bet record. Every NFL market is tracking-only for 2026, not bet'}
         </p>
       </div>
 
@@ -109,7 +199,40 @@ export function NFLEvaluation() {
 
       {isEmpty && <EmptyStatePanel />}
 
-      {!summaryLoading && summary && summary.graded > 0 && (
+      {!summaryLoading && trackingOnly && summary && (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <TrackedMarketTile label="Totals" record={summary.by_market?.total} />
+            <TrackedMarketTile label="Spreads" record={summary.by_market?.spread} />
+            <TrackedMarketTile label="Moneyline" record={summary.by_market?.ml} />
+          </div>
+
+          <div className="bg-[#191c22] rounded-xl border border-[#1e293b] p-5">
+            <h2 className="text-[10px] text-[#64748b] uppercase font-bold tracking-widest mb-2">
+              What this is and is not
+            </h2>
+            <p className="text-xs text-[#64748b] font-mono leading-relaxed">
+              These are tracked model leans, graded against the closing number. None of them was a
+              bet, and no units are reported because none were risked. A won-lost record over a
+              handful of games is noise either way: across a full NFL season the error bar on a win
+              rate is about ±3 points, which is wider than any edge worth having. What decides
+              whether a market ever goes live is closing-line value over 150+ predictions, not
+              this record.
+            </p>
+          </div>
+
+          <div className="bg-[#191c22] rounded-xl border border-[#1e293b] p-5">
+            <h2 className="text-[10px] text-[#64748b] uppercase font-bold tracking-widest mb-4">
+              Graded leans
+            </h2>
+            {trackedLoading
+              ? <div className="flex justify-center py-8"><LoadingSpinner /></div>
+              : <TrackedResults games={tracked?.games ?? []} />}
+          </div>
+        </>
+      )}
+
+      {!summaryLoading && !trackingOnly && summary && summary.graded > 0 && (
         <>
           {/* Headline: best_bet (totals) record */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
