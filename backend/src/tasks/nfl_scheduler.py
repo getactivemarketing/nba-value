@@ -353,6 +353,14 @@ async def weekly_refresh(session: AsyncSession) -> dict:
     return {"games": n1, "stats": n2}
 
 
+async def refresh_results(session: AsyncSession) -> dict:
+    """Pull final scores into nfl_games so grading has something to grade."""
+    season = _current_season(_today_et())
+    n = await season_update.refresh_results(session, season)
+    await session.commit()
+    return {"games": n}
+
+
 async def refresh_odds(session: AsyncSession) -> dict:
     """Pull current NFL odds -> nfl_markets. Runs more often than weekly_refresh
     (kept modest to respect the Odds API budget -- see start_scheduler cadence).
@@ -409,6 +417,11 @@ async def _refresh_odds_task_async() -> dict:
         return await refresh_odds(session)
 
 
+async def _refresh_results_task_async() -> dict:
+    async with nfl_session() as session:
+        return await refresh_results(session)
+
+
 def run_snapshot():
     """Sync wrapper for snapshot_due_games."""
     log_task("Running NFL snapshot...")
@@ -420,6 +433,20 @@ def run_snapshot():
     except Exception as e:
         log_task(f"Snapshot FAILED: {e}")
         _last_run_times["snapshot"] = datetime.now(timezone.utc)
+        return {"status": "failed", "error": str(e)}
+
+
+def run_refresh_results():
+    """Sync wrapper for refresh_results."""
+    log_task("Running NFL results refresh...")
+    try:
+        result = _run_async(_refresh_results_task_async())
+        log_task("Results refresh complete", **result)
+        _last_run_times["refresh_results"] = datetime.now(timezone.utc)
+        return result
+    except Exception as e:
+        log_task(f"Results refresh FAILED: {e}")
+        _last_run_times["refresh_results"] = datetime.now(timezone.utc)
         return {"status": "failed", "error": str(e)}
 
 
@@ -577,6 +604,9 @@ def start_scheduler():
     if settings.nfl_capture_enabled:
         nfl_scheduler_instance.every(4).hours.do(run_shadow_capture)
     nfl_scheduler_instance.every(1).hours.do(run_snapshot)
+    # Results BEFORE grading, on the same cadence: grading an hour before the
+    # score lands just burns an hour, which is how Week 3 stayed ungraded.
+    nfl_scheduler_instance.every(1).hours.do(run_refresh_results)
     nfl_scheduler_instance.every(1).hours.do(run_grade)
 
     log_task("NFL Scheduler configured:")
@@ -584,11 +614,13 @@ def start_scheduler():
     log_task("  - Odds refresh + history: every 4 hours")
     log_task(f"  - Shadow candidate capture: {'every 4 hours' if settings.nfl_capture_enabled else 'DISABLED'}")
     log_task("  - Prediction snapshot: every 1 hour")
+    log_task("  - Results refresh (final scores): every 1 hour")
     log_task("  - Grading: every 1 hour")
 
     # Same boot order as capture-only: stats before anything scores against them.
     run_weekly_refresh()
     run_refresh_odds()
+    run_refresh_results()
     if settings.nfl_capture_enabled:
         run_shadow_capture()
 

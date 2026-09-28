@@ -214,6 +214,31 @@ async def odds_to_markets(session: AsyncSession, season: int) -> int:
     return len(matched_rows)
 
 
+async def refresh_results(session: AsyncSession, season: int) -> int:
+    """Upsert `nfl_games` from the schedule file only -- scores, cheaply.
+
+    Week 3 snapshotted 15 games and graded none of them: grade_finals selects
+    on `nfl_games.home_score IS NOT NULL`, and the only writer was
+    refresh_schedule inside the Tuesday weekly_refresh. Sunday's results
+    therefore landed on Tuesday, ~40 hours late, with the hourly grader
+    logging graded=0 the whole time.
+
+    This is the light half of refresh_schedule: no play-by-play, no injuries,
+    no depth charts (~500k rows), no game-context recompute -- just the
+    schedule CSV, which already carries final scores. Cheap enough to run
+    hourly next to grading.
+
+    No commit inside; the caller owns the transaction.
+    """
+    sched = load_schedules([season])
+    sched = sched[sched["game_type"] == "REG"] if "game_type" in sched else sched
+    rows = [_clean_nan(r) for r in schedule_to_game_rows(sched)]
+    n = await upsert_games(session, rows)
+    finals = sum(1 for r in rows if r.get("home_score") is not None)
+    logger.info("nfl_refresh_results_done", season=season, games=len(rows), finals=finals)
+    return n if n is not None else len(rows)
+
+
 async def nflverse_to_markets(
     session: AsyncSession, season: int, now: datetime | None = None,
 ) -> int:
