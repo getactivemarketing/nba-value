@@ -621,6 +621,9 @@ def start_scheduler():
     run_weekly_refresh()
     run_refresh_odds()
     run_refresh_results()
+    # Grade on boot too: the hourly timer restarts with the process, so without
+    # this a deploy pushes grading up to an hour out, every deploy.
+    run_grade()
     if settings.nfl_capture_enabled:
         run_shadow_capture()
 

@@ -93,3 +93,11 @@ def _enabled_names(monkeypatch, call_log):
     with pytest.raises(SystemExit):
         sched.start_scheduler()
     return {getattr(f, "__name__", str(f)) for f in registered}
+
+
+async def test_boot_grades_after_pulling_results(monkeypatch):
+    """A restart must not park graded-ready games for another hour."""
+    call_log = []
+    _enabled_names(monkeypatch, call_log)
+
+    assert call_log.index("run_refresh_results") < call_log.index("run_grade")
