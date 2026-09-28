@@ -96,3 +96,18 @@ def test_tracked_endpoint_lists_graded_leans_per_game(monkeypatch):
     # spread side stored as home/away is quoted from the team's own perspective
     assert g["spread_team"] == "ATL" and g["spread_line"] == 5.5 and g["spread_result"] == "loss"
     assert g["ml_team"] == "ATL" and g["ml_result"] == "win"
+
+
+def test_tracked_quotes_a_home_spread_lean_from_the_home_side(monkeypatch):
+    """The stored line is the HOME margin threshold (snapshot._grade_spread:
+    home covers iff actual_margin > line), so a home lean reads -line. Serving
+    it raw made /evaluation/tracked disagree with /games on the same lean --
+    IND -1.5 against IND +1.5 -- for every home-side lean."""
+    snap = _tracked_snap("2026_03_HOU_IND", None, "win")
+    snap.home_team, snap.away_team = "IND", "HOU"
+    snap.best_spread_team, snap.best_spread_line = "home", -1.5
+    _patch(monkeypatch, [snap])
+
+    g = TestClient(app).get(f"{settings.api_v1_prefix}/nfl/evaluation/tracked").json()["games"][0]
+
+    assert g["spread_team"] == "IND" and g["spread_line"] == 1.5

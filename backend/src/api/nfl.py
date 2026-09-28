@@ -76,21 +76,29 @@ class NFLGamesResponse(BaseModel):
     tracking_only: bool
 
 
-def _spread_lean(game: NFLGame, snap: NFLPredictionSnapshot | None) -> dict:
-    """Quote the stored spread lean from the side's own perspective.
+def _quote_spread(side: str | None, line: float | None, home: str, away: str):
+    """Quote a stored spread lean from the picked side's own perspective.
 
-    Snapshots store best_spread_team as "home"/"away" and best_spread_line as
-    the HOME expected margin (odds_client: `line = -home_point`, so KC -3.5 is
-    stored as +3.5). The home side's quoted spread is therefore -line and the
-    away side's is +line.
+    Snapshots store the side as "home"/"away" and the line as the HOME
+    expected margin (odds_client: `line = -home_point`, so KC -3.5 is stored
+    as +3.5; snapshot._grade_spread reads it the same way, home covering iff
+    actual_margin > line). The home side's quoted spread is therefore -line
+    and the away side's is +line.
     """
-    side = snap.best_spread_team if snap else None
-    line = snap.best_spread_line if snap else None
     if side not in ("home", "away") or line is None:
-        return {"spread_lean_team": None, "spread_lean_line": None}
+        return None, None
     if side == "home":
-        return {"spread_lean_team": game.home_team, "spread_lean_line": -line}
-    return {"spread_lean_team": game.away_team, "spread_lean_line": line}
+        return home, -line
+    return away, line
+
+
+def _spread_lean(game: NFLGame, snap: NFLPredictionSnapshot | None) -> dict:
+    team, line = _quote_spread(
+        snap.best_spread_team if snap else None,
+        snap.best_spread_line if snap else None,
+        game.home_team, game.away_team,
+    )
+    return {"spread_lean_team": team, "spread_lean_line": line}
 
 
 # --- Endpoints -------------------------------------------------------------
@@ -358,6 +366,10 @@ def _side_team(side: str | None, home: str, away: str) -> str | None:
     return side or None
 
 
+def _tracked_spread(s: NFLPredictionSnapshot):
+    return _quote_spread(s.best_spread_team, s.best_spread_line, s.home_team, s.away_team)
+
+
 @router.get("/evaluation/tracked", response_model=NFLTrackedResponse)
 async def get_tracked_results(
     limit: int = Query(50, ge=1, le=200, description="Most recent graded games"),
@@ -385,8 +397,8 @@ async def get_tracked_results(
             actual_total=s.actual_total, actual_margin=s.actual_margin,
             total_direction=s.best_total_direction, total_line=s.best_total_line,
             total_result=s.best_total_result,
-            spread_team=_side_team(s.best_spread_team, s.home_team, s.away_team),
-            spread_line=s.best_spread_line, spread_result=s.best_spread_result,
+            spread_team=_tracked_spread(s)[0], spread_line=_tracked_spread(s)[1],
+            spread_result=s.best_spread_result,
             ml_team=_side_team(s.best_ml_team, s.home_team, s.away_team),
             ml_result=s.best_ml_result,
         )
