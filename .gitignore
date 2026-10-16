@@ -78,3 +78,4 @@ celerybeat.pid
 # Claude Code local settings. Machine-local allow-list, never shared —
 # it had eight entries with the production DB credential inlined (public repo).
 .claude/settings.local.json
+.cron_api_key
