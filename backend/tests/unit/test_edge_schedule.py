@@ -1,0 +1,64 @@
+# backend/tests/unit/test_edge_schedule.py
+from datetime import datetime, timedelta, timezone
+
+from src.edge import schedule as s
+from src.edge.quotes import Quote
+
+NOW = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+
+
+def ev(eid, hours_to_tip, last_lines=None, last_props=None):
+    return {"event_id": eid, "commence_time": NOW + timedelta(hours=hours_to_tip),
+            "last_lines_poll": last_lines, "last_props_poll": last_props}
+
+
+def test_base_intervals_follow_the_spec_table():
+    assert s.base_intervals(30 * 60) == (10, 15)
+    assert s.base_intervals(6 * 60) == (3, 5)
+    assert s.base_intervals(61) == (3, 5)
+    assert s.base_intervals(59) == (2, 2)
+    assert s.base_intervals(0) is None          # tipped
+    assert s.base_intervals(37 * 60) is None    # too far out
+
+
+def test_guard_factor_scales_intervals():
+    assert s.interval_for("player_points", 120, 1) == timedelta(minutes=5)
+    assert s.interval_for("player_points", 120, 4) == timedelta(minutes=20)
+    assert s.interval_for("h2h", 120, 1) == timedelta(minutes=3)
+
+
+def test_is_due():
+    assert s.is_due(None, timedelta(minutes=5), NOW)
+    assert not s.is_due(NOW - timedelta(minutes=4), timedelta(minutes=5), NOW)
+    assert s.is_due(NOW - timedelta(minutes=5), timedelta(minutes=5), NOW)
+
+
+def test_stale_after_two_intervals_and_after_tip():
+    assert not s.is_stale(NOW - timedelta(minutes=9), timedelta(minutes=5), NOW)
+    assert s.is_stale(NOW - timedelta(minutes=11), timedelta(minutes=5), NOW)
+    assert s.is_stale(NOW, None, NOW)
+
+
+def test_fresh_filters_by_each_event_and_market():
+    commence = {"e1": NOW + timedelta(hours=2)}  # props 5 min, lines 3 min
+    old_prop = Quote("e1", "player_points", "A", "over", 20.5, "fanduel", -110, None, NOW - timedelta(minutes=8))
+    old_line = Quote("e1", "h2h", "", "home", 0.0, "fanduel", -110, None, NOW - timedelta(minutes=8))
+    assert s.fresh([old_prop, old_line], commence, NOW, 1) == [old_prop]
+
+
+def test_guard_factor():
+    cap = 3_500_000
+    assert s.guard_factor(30_000, 1, cap, 4_000_000) == 1     # 0.9M/month
+    assert s.guard_factor(150_000, 1, cap, 4_000_000) == 2    # 4.5M -> 2.25M
+    assert s.guard_factor(150_000, 2, cap, 4_000_000) == 4    # base 300k/day -> 9M -> /4
+    assert s.guard_factor(10_000_000, 1, cap, 4_000_000) == 8  # capped at 8
+    assert s.guard_factor(1_000, 1, cap, 40_000) == 8          # nearly out of credits
+
+
+def test_plan_polls():
+    events = [ev("near", 2, last_lines=NOW - timedelta(minutes=4), last_props=NOW - timedelta(minutes=1)),
+              ev("far", 20, last_lines=NOW, last_props=None),
+              ev("done", -1)]
+    plan = s.plan_polls(events, NOW, 1)
+    assert plan.lines is True                  # "near" lines interval (3m) elapsed
+    assert plan.prop_events == ["far"]         # never polled; "near" polled 1m ago
