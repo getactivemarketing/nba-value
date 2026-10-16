@@ -14,6 +14,7 @@ from src.config import settings
 from src.database import init_db
 from src.api import health, markets, bets, evaluation, admin, trends, backtest, mlb, nfl
 from src.api.deps import require_nba_picks_public
+from src.edge import api as edge_api
 
 # Configure structured logging
 structlog.configure(
@@ -236,6 +237,7 @@ app.include_router(mlb.router, prefix=settings.api_v1_prefix, tags=["MLB"])
 # DISABLED and is intentionally NOT started here; enabling it is a deliberate
 # go-live switch for the season (~Sept), separate from exposing these endpoints.
 app.include_router(nfl.router, prefix=settings.api_v1_prefix, tags=["NFL"])
+app.include_router(edge_api.router, prefix=settings.api_v1_prefix, tags=["Edge"])
 
 
 @app.get("/")

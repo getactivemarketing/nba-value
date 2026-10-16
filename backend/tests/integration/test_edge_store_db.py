@@ -128,3 +128,49 @@ def test_run_grading_closes_and_grades(conn):
     assert tatum[2] == "win" and float(tatum[3]) == pytest.approx(1.2) and tatum[4] is not None
     assert ghost[2] == "void" and ghost[4] is None and ghost[5].startswith("thin close")
     assert ml[2] == "loss" and float(ml[3]) == -1.0 and ml[4] is not None
+
+
+def test_views_on_real_sql(conn):
+    from src.edge import views
+
+    now = NOW
+    store.upsert_events(conn, [_event()])  # tips at NOW+2h
+    at = now - timedelta(minutes=1)
+    quotes = []
+    for b, o, u in (("pinnacle", -110, -110), ("fanduel", -110, -110), ("draftkings", -110, -110),
+                    ("betmgm", 120, -145), ("prizepicks", -137, -137)):
+        quotes += [Quote("e1", "player_points", "Jayson Tatum", "over", 27.5, b, o, f"https://{b}", at),
+                   Quote("e1", "player_points", "Jayson Tatum", "under", 27.5, b, u, None, at)]
+    store.write_quotes(conn, quotes)
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_players (odds_name, bdl_player_id, team, match_method, confidence, updated_at)
+                       VALUES ('Jayson Tatum', 434, 'BOS', 'exact', 1, now())""")
+        for i, pts in enumerate([30, 25, 20]):
+            cur.execute("""INSERT INTO edge_player_games (bdl_player_id, bdl_game_id, season, game_date, team,
+                           opponent, is_home, minutes, pts, reb, ast, fg3m, stl, blk, tov)
+                           VALUES (434, %s, 2025, %s, 'BOS', 'DET', false, 34, %s, 5, 5, 2, 1, 0, 2)""",
+                        (i, datetime(2026, 4, 10 - i).date(), pts))
+    conn.commit()
+
+    games = views.games(conn, now)
+    assert games[0]["event_id"] == "e1" and games[0]["prop_markets"] == 1
+
+    rows = views.ev_rows(conn, now)
+    assert [(r["book"], r["side"]) for r in rows] == [("betmgm", "over")]
+    assert rows[0]["bet"] == "Jayson Tatum Over 27.5 Points" and rows[0]["bdl_player_id"] == 434
+    assert rows[0]["link"] == "https://betmgm"
+
+    grid = views.odds(conn, now, "e1", "player_points")
+    over = [r for r in grid["rows"] if r["side"] == "over"][0]
+    assert over["best_book"] == "betmgm" and set(over["prices"]) >= {"pinnacle", "prizepicks"}
+    assert over["fair_prob"] is not None and not over["prices"]["fanduel"]["stale"]
+
+    page = views.player(conn, now, 434, "player_points", None, 0)
+    assert page["line"] == 27.5 and page["opponent"] == "DET" and page["is_home"] is False
+    assert page["hit_rates"]["l5"]["games"] == 3 and len(page["prices"]) == 10
+
+    store.set_state(conn, "heartbeat_at", now.isoformat(), now)
+    st = views.status(conn, now)
+    assert st["heartbeat_age_s"] == 0 and st["unmatched_players"] == []
+    assert views.public_status(conn, now) == {"delayed": False}
+    assert views.results(conn, now, 30, None, None)["n"] == 0
