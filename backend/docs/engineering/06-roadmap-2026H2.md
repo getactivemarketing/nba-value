@@ -42,6 +42,7 @@ This is the single most common way roadmaps like this go wrong: an ensemble of f
 | **~2026-09-27** | MLB regular season ends | **Market-history capture must ship in August or the next MLB in-season window is April 2027** |
 | **~2026-09-10** | NFL season opens | NFL go-live (scheduler flip + first-week validation) is calendar-locked |
 | **~2026-10-21** | NBA season opens | NBA becomes the live testbed over winter |
+| **2026-10-15** | NBA pivots to TruLine Edge | Market-consensus +EV finder replaces public model picks (legacy picks tracking-only). Spec: `docs/superpowers/specs/2026-10-15-edge-ev-finder-design.md` |
 | Oct 2026 – Mar 2027 | MLB offseason | Model rebuilds, backfills, distributional work — no live MLB feedback |
 
 **The binding constraint is Phase 1.** Market-dynamics features (dispersion, velocity, steam, hold movement) require *months of stored history* before they can be computed at all. Every week without capture is a week that can never be recovered. Nothing else on this roadmap has that property.
