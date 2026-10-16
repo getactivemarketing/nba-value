@@ -1,10 +1,11 @@
-import { Routes, Route } from 'react-router-dom';
+import { Navigate, Routes, Route } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
-import { MarketBoard } from '@/pages/MarketBoard';
-import { BetDetail } from '@/pages/BetDetail';
+import { EdgeHome } from '@/pages/EdgeHome';
+import { EdgeFinder } from '@/pages/EdgeFinder';
+import { EdgeOdds } from '@/pages/EdgeOdds';
+import { EdgePlayer } from '@/pages/EdgePlayer';
+import { EdgeResults } from '@/pages/EdgeResults';
 import { Trends } from '@/pages/Trends';
-import { Evaluation } from '@/pages/Evaluation';
-import { PlayerPropsPage } from '@/pages/PlayerPropsPage';
 import { MLBPicks } from '@/pages/MLBPicks';
 import { NRFI } from '@/pages/NRFI';
 import { MLBEvaluation } from '@/pages/MLBEvaluation';
@@ -15,16 +16,19 @@ function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<MarketBoard />} />
+        <Route path="/" element={<EdgeHome />} />
+        <Route path="/edge" element={<EdgeFinder />} />
+        <Route path="/edge/odds/:eventId" element={<EdgeOdds />} />
+        <Route path="/edge/player/:id" element={<EdgePlayer />} />
+        <Route path="/edge/results" element={<EdgeResults />} />
         <Route path="/mlb" element={<MLBPicks />} />
         <Route path="/mlb/performance" element={<MLBEvaluation />} />
         <Route path="/nrfi" element={<NRFI />} />
         <Route path="/nfl" element={<NFLPicks />} />
         <Route path="/nfl/performance" element={<NFLEvaluation />} />
-        <Route path="/bet/:marketId" element={<BetDetail />} />
         <Route path="/trends" element={<Trends />} />
-        <Route path="/evaluation" element={<Evaluation />} />
-        <Route path="/props" element={<PlayerPropsPage />} />
+        <Route path="/evaluation" element={<Navigate to="/edge/results" replace />} />
+        <Route path="/props" element={<Navigate to="/edge" replace />} />
       </Routes>
     </Layout>
   );

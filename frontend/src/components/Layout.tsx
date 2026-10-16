@@ -15,10 +15,10 @@ const SPORTS = [
     icon: '🏀',
     path: '/',
     pages: [
-      { path: '/', label: 'Picks' },
-      { path: '/props', label: 'Props' },
+      { path: '/', label: 'Slate' },
+      { path: '/edge', label: '+EV' },
+      { path: '/edge/results', label: 'Track record' },
       { path: '/trends', label: 'Trends' },
-      { path: '/evaluation', label: 'Results' },
     ],
   },
   {
@@ -45,7 +45,7 @@ const SPORTS = [
 ];
 
 /** Which sport owns the current route. Total — everything else is NBA,
- *  including '/', '/props', '/trends', '/evaluation' and '/bet/:marketId'. */
+ *  including '/', '/edge…' and '/trends'. */
 function activeSport(pathname: string) {
   if (pathname.startsWith('/nfl')) return SPORTS[2];
   if (pathname.startsWith('/mlb') || pathname === '/nrfi') return SPORTS[1];
