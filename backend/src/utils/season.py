@@ -13,3 +13,9 @@ def current_nba_season(today: date | None = None) -> int:
 
 def nba_season_start(season: int) -> date:
     return date(season, 10, 1)
+
+
+def current_nfl_season(today: date | None = None) -> int:
+    """NFL season label = the year it kicks off; Jan-Feb playoffs belong to the previous one."""
+    d = today or date.today()
+    return d.year if d.month >= 3 else d.year - 1

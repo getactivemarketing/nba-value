@@ -134,3 +134,66 @@ class EdgeWorkerState(Base):
     key: Mapped[str] = mapped_column(String(40), primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EdgeNflPlayer(Base):
+    """Odds API NFL player name -> BallDontLie NFL id. Keyed with team: NFL names repeat across teams."""
+    __tablename__ = "edge_nfl_players"
+    odds_name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    team: Mapped[str] = mapped_column(String(4), primary_key=True)
+    bdl_player_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    position: Mapped[str | None] = mapped_column(String(8))
+    match_method: Mapped[str] = mapped_column(String(12), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EdgeNflGame(Base):
+    __tablename__ = "edge_nfl_games"
+    bdl_game_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    week: Mapped[int] = mapped_column(Integer, nullable=False)
+    game_date: Mapped[date] = mapped_column(Date, nullable=False)
+    home: Mapped[str] = mapped_column(String(4), nullable=False)
+    away: Mapped[str] = mapped_column(String(4), nullable=False)
+    postseason: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status_state: Mapped[str | None] = mapped_column(String(16))
+    final_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stats_loaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    snaps_loaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EdgeNflPlayerGame(Base):
+    __tablename__ = "edge_nfl_player_games"
+    __table_args__ = (UniqueConstraint("bdl_player_id", "bdl_game_id", name="uq_edge_nfl_player_games"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    bdl_game_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    week: Mapped[int] = mapped_column(Integer, nullable=False)
+    game_date: Mapped[date] = mapped_column(Date, nullable=False)
+    team: Mapped[str] = mapped_column(String(4), nullable=False)
+    opponent: Mapped[str] = mapped_column(String(4), nullable=False)
+    is_home: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    pass_att: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pass_cmp: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pass_yds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pass_tds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pass_int: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rush_att: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rush_yds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    receptions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rec_yds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class EdgeNflSnap(Base):
+    """nflverse snap counts: the participation record that tells 'played, no stats' from 'inactive'."""
+    __tablename__ = "edge_nfl_snaps"
+    __table_args__ = (UniqueConstraint("season", "week", "team", "player_norm", name="uq_edge_nfl_snaps"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    week: Mapped[int] = mapped_column(Integer, nullable=False)
+    team: Mapped[str] = mapped_column(String(4), nullable=False)
+    player_norm: Mapped[str] = mapped_column(String(80), nullable=False)
+    snaps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
