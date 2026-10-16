@@ -188,25 +188,35 @@ def test_pulled_quotes_are_retired_on_the_next_poll(conn):
 
 
 class _FakeOdds:
-    def __init__(self, events):
-        self.events, self.calls = events, []
+    def __init__(self, events, nfl_events=(), fail_nfl=None):
+        self.events, self.nfl_events, self.fail_nfl = events, list(nfl_events), fail_nfl
+        self.calls = []
 
-    async def get_events(self):
-        from src.edge.client import Usage
+    async def get_events(self, sport=None):
+        from src.edge.client import OddsApiError, Usage
+        if sport is not None and sport.slug == "nfl":
+            if self.fail_nfl:
+                raise OddsApiError(self.fail_nfl, "nfl upstream error")
+            return self.nfl_events, Usage(None, None, 0)
         return self.events, Usage(None, None, 0)
 
-    async def get_game_odds(self):
+    async def get_game_odds(self, sport=None):
         from src.edge.client import Usage
         return [], Usage(4_000_000, 1, 6)
 
-    async def get_event_odds(self, eid):
+    async def get_event_odds(self, eid, sport=None):
         from src.edge.client import OddsApiError, Usage
         self.calls.append(eid)
         if eid == "gone":
             raise OddsApiError(404, "EVENT_NOT_FOUND")
-        ev = {"id": eid, "sport_key": "basketball_nba", "home_team": "Detroit Pistons",
+        key = sport.key if sport is not None else "basketball_nba"
+        ev = {"id": eid, "sport_key": key, "home_team": "Detroit Pistons",
               "away_team": "Boston Celtics", "commence_time": "x", "bookmakers": []}
         return ev, Usage(4_000_000, 1, 16)
+
+    async def get_scores(self, days_from=1, sport=None):
+        from src.edge.client import Usage
+        return [], Usage(4_000_000, 1, 2)
 
 
 class _FakeBdl:
@@ -489,3 +499,48 @@ def test_nfl_props_are_never_graded_even_when_the_name_matches_an_nba_player(con
     with conn.cursor() as cur:
         cur.execute("SELECT result FROM edge_opportunities WHERE event_id = 'n1'")
         assert cur.fetchone()[0] is None
+
+
+def _nfl_feed_event(i, tip):
+    return {"id": i, "sport_key": "americanfootball_nfl", "home_team": "Atlanta Falcons",
+            "away_team": "Chicago Bears", "commence_time": tip}
+
+
+@pytest.mark.asyncio
+async def test_tick_polls_both_sports_and_keeps_nba_state_names(conn):
+    from src.edge import worker
+    from src.edge.config import NBA, NFL
+    now = NOW.replace(hour=5)
+    tip = (now + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    nba = [{"id": "b1", "sport_key": "basketball_nba", "home_team": "Detroit Pistons",
+            "away_team": "Boston Celtics", "commence_time": tip}]
+    client = _FakeOdds(nba, nfl_events=[_nfl_feed_event("f1", tip)])
+    out = await worker.tick(conn, client, _FakeBdl(), now, sports=[NBA, NFL])
+    assert sorted(client.calls) == ["b1", "f1"] and "nba" in out and "nfl" in out
+    state = store.get_state(conn)
+    assert "last_events_refresh" in state and "nfl:last_events_refresh" in state
+    # NBA's refresh did not drop the NFL game, and vice versa
+    assert {e["event_id"] for e in store.upcoming_events(conn, now, hours=168)} == {"b1", "f1"}
+
+
+@pytest.mark.asyncio
+async def test_an_nfl_failure_does_not_stop_nba(conn):
+    from src.edge import worker
+    from src.edge.config import NBA, NFL
+    now = NOW.replace(hour=5)
+    tip = (now + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    nba = [{"id": "b1", "sport_key": "basketball_nba", "home_team": "Detroit Pistons",
+            "away_team": "Boston Celtics", "commence_time": tip}]
+    client = _FakeOdds(nba, fail_nfl=500)
+    await worker.tick(conn, client, _FakeBdl(), now, sports=[NBA, NFL])
+    assert client.calls == ["b1"]
+    assert "500" in store.get_state(conn)["sport_error:nfl"]
+
+
+@pytest.mark.asyncio
+async def test_account_wide_errors_still_raise_for_global_backoff(conn):
+    from src.edge import worker
+    from src.edge.client import OddsApiError
+    from src.edge.config import NBA, NFL
+    with pytest.raises(OddsApiError):
+        await worker.tick(conn, _FakeOdds([], fail_nfl=401), _FakeBdl(), NOW, sports=[NBA, NFL])

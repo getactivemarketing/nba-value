@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from src.config import settings
 from src.edge import grading, opportunities, players, schedule, store
 from src.edge.client import EdgeOddsClient, OddsApiError, Usage
-from src.edge.config import LINE_MARKETS, PROP_MARKETS
+from src.edge.config import LINE_MARKETS, SportConfig, enabled_sports, state_key
 from src.edge.engine import price_quotes
 from src.edge.ingest import event_row, parse_event
 from src.utils.redact import install_redaction, redact
@@ -58,26 +58,21 @@ def _record_usage(conn, endpoint: str, usage: Usage, now: datetime) -> None:
         store.set_state(conn, "credits_used", str(usage.used), now)
 
 
-def _reprice(conn, event_ids: list[str], events: list[dict], now: datetime, factor: int) -> int:
+def _reprice(conn, event_ids: list[str], events: list[dict], now: datetime, factor: int,
+             lines_window_hours: int = 36) -> int:
     if not event_ids:
         return 0
     commence = {e["event_id"]: e["commence_time"] for e in events}
-    quotes = schedule.fresh(store.load_quotes(conn, event_ids), commence, now, factor)
+    quotes = schedule.fresh(store.load_quotes(conn, event_ids), commence, now, factor, lines_window_hours)
     priced = price_quotes(quotes, settings.edge_min_ev, settings.edge_verify_ev)
     return opportunities.record(conn, priced, now)
 
 
-async def tick(conn, client: EdgeOddsClient, bdl, now: datetime) -> dict:
+async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
+               sports: list[SportConfig] | None = None) -> dict:
+    sports = enabled_sports(settings.edge_sports) if sports is None else sports
     state = store.get_state(conn)
     out: dict = {}
-
-    # Events: free call, hourly.
-    last_ev = _parse(state.get("last_events_refresh"))
-    if last_ev is None or now - last_ev >= timedelta(minutes=60):
-        events_json, _ = await client.get_events()
-        store.upsert_events(conn, [event_row(e) for e in events_json])
-        store.drop_missing_events(conn, [e["id"] for e in events_json], now)
-        store.set_state(conn, "last_events_refresh", _iso(now), now)
 
     current = int(state.get("guard_factor", "1"))
     factor = schedule.guard_factor(
@@ -89,51 +84,19 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime) -> dict:
         store.set_state(conn, "guard_factor", str(factor), now)
         store.set_state(conn, "guard_changed_at", _iso(now), now)
 
-    events = store.upcoming_events(conn, now)
-    plan = schedule.plan_polls(events, now, factor)
-    touched: list[str] = []
-
-    if plan.lines:
-        data, usage = await client.get_game_odds()
-        _record_usage(conn, "odds", usage, now)
-        upcoming = {e["event_id"] for e in events}
-        quotes = [q for ev in data if ev["id"] in upcoming for q in parse_event(ev, now)]
-        out["line_history"] = store.write_quotes(conn, quotes)
-        store.retire_missing(conn, sorted(upcoming), list(LINE_MARKETS), now)
-        store.mark_polled(conn, sorted(upcoming), "last_lines_poll", now)
-        touched += sorted(upcoming)
-
-    by_id = {e["event_id"]: e for e in events}
-    for eid in plan.prop_events:
+    for sport in sports:
         try:
-            data, usage = await client.get_event_odds(eid)
+            out[sport.slug] = await _tick_sport(conn, client, bdl, sport, state, factor, now)
+            store.set_state(conn, f"sport_error:{sport.slug}", "", now)
         except OddsApiError as e:
             if e.status in (401, 429):
-                raise  # account-wide: global backoff
-            if e.status in (404, 422):
-                log.warning("edge event %s gone upstream (%s); dropping", eid, e.status)
-                store.mark_unavailable(conn, [eid])
-            else:
-                log.error("edge props poll failed for %s: %s", eid, e)
-                store.set_state(conn, "last_event_error", f"{eid}: {e}"[:300], now)
-            continue  # other events still poll; reprice and grading still run
-        _record_usage(conn, "event_odds", usage, now)
-        quotes = parse_event(data, now)
-        store.write_quotes(conn, quotes)
-        store.retire_missing(conn, [eid], list(PROP_MARKETS), now)
-        store.mark_polled(conn, [eid], "last_props_poll", now)
-        await players.resolve_new_players(conn, bdl, quotes, by_id[eid], now)
-        touched.append(eid)
-
-    out["opportunities"] = _reprice(conn, sorted(set(touched)), events, now, factor)
-
-    # Scores while games are live; grading every 10 minutes.
-    last_scores = _parse(state.get("last_scores_poll"))
-    if grading.games_in_progress(conn, now) and (last_scores is None or now - last_scores >= timedelta(minutes=30)):
-        data, usage = await client.get_scores(days_from=1)
-        _record_usage(conn, "scores", usage, now)
-        grading.update_scores(conn, data)
-        store.set_state(conn, "last_scores_poll", _iso(now), now)
+                raise  # account-wide: the key is shared, back off globally
+            conn.rollback()
+            store.set_state(conn, f"sport_error:{sport.slug}", f"odds_api {e.status}: {e}"[:300], now)
+        except Exception as e:  # noqa: BLE001 - one sport never blocks the other
+            log.exception("edge %s tick failed", sport.slug)
+            conn.rollback()
+            store.set_state(conn, f"sport_error:{sport.slug}", redact(f"{type(e).__name__}: {e}")[:300], now)
 
     last_grade = _parse(state.get("last_grading"))
     if last_grade is None or now - last_grade >= timedelta(minutes=10):
@@ -148,6 +111,69 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime) -> dict:
             await step(conn, bdl, now)
         except Exception as e:  # noqa: BLE001
             store.set_state(conn, "bdl_error", redact(f"{step.__name__}: {type(e).__name__}: {e}")[:300], now)
+
+    return out
+
+
+async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor: int, now: datetime) -> dict:
+    out: dict = {}
+    window = sport.lines_window_hours
+
+    # Events: free call, hourly.
+    last_ev = _parse(state.get(state_key(sport, "last_events_refresh")))
+    if last_ev is None or now - last_ev >= timedelta(minutes=60):
+        events_json, _ = await client.get_events(sport)
+        store.upsert_events(conn, [event_row(e) for e in events_json])
+        store.drop_missing_events(conn, [e["id"] for e in events_json], now, sport=sport.key)
+        store.set_state(conn, state_key(sport, "last_events_refresh"), _iso(now), now)
+
+    events = store.upcoming_events(conn, now, hours=window, sport=sport.key)
+    plan = schedule.plan_polls(events, now, factor, window)
+    touched: list[str] = []
+
+    if plan.lines:
+        data, usage = await client.get_game_odds(sport)
+        _record_usage(conn, "odds", usage, now)
+        upcoming = {e["event_id"] for e in events}
+        quotes = [q for ev in data if ev["id"] in upcoming for q in parse_event(ev, now)]
+        out["line_history"] = store.write_quotes(conn, quotes)
+        store.retire_missing(conn, sorted(upcoming), list(LINE_MARKETS), now)
+        store.mark_polled(conn, sorted(upcoming), "last_lines_poll", now)
+        touched += sorted(upcoming)
+
+    by_id = {e["event_id"]: e for e in events}
+    for eid in plan.prop_events:
+        try:
+            data, usage = await client.get_event_odds(eid, sport)
+        except OddsApiError as e:
+            if e.status in (401, 429):
+                raise  # account-wide: global backoff
+            if e.status in (404, 422):
+                log.warning("edge event %s gone upstream (%s); dropping", eid, e.status)
+                store.mark_unavailable(conn, [eid])
+            else:
+                log.error("edge props poll failed for %s: %s", eid, e)
+                store.set_state(conn, "last_event_error", f"{eid}: {e}"[:300], now)
+            continue  # other events still poll; reprice and grading still run
+        _record_usage(conn, "event_odds", usage, now)
+        quotes = parse_event(data, now)
+        store.write_quotes(conn, quotes)
+        store.retire_missing(conn, [eid], list(sport.prop_markets), now)
+        store.mark_polled(conn, [eid], "last_props_poll", now)
+        if sport.has_players:
+            await players.resolve_new_players(conn, bdl, quotes, by_id[eid], now)
+        touched.append(eid)
+
+    out["opportunities"] = _reprice(conn, sorted(set(touched)), events, now, factor, window)
+
+    # Scores while this sport's games are live.
+    last_scores = _parse(state.get(state_key(sport, "last_scores_poll")))
+    if grading.games_in_progress(conn, now, sport.key) and (
+            last_scores is None or now - last_scores >= timedelta(minutes=30)):
+        data, usage = await client.get_scores(days_from=1, sport=sport)
+        _record_usage(conn, "scores", usage, now)
+        grading.update_scores(conn, data)
+        store.set_state(conn, state_key(sport, "last_scores_poll"), _iso(now), now)
 
     return out
 
