@@ -227,3 +227,12 @@ def test_unknown_sport_is_422_and_sport_is_part_of_the_cache_key(monkeypatch):
     c.get(f"{P}/games")
     c.get(f"{P}/games", params={"sport": "nfl"})
     assert seen == ["nba", "nfl"]  # separate cache entries per sport
+
+
+def test_player_route_dispatches_on_sport(monkeypatch):
+    monkeypatch.setattr(edge_api, "_conn", _fake_conn)
+    monkeypatch.setattr(views, "nfl_player", lambda conn, now, pid, market, line: {"sport": "nfl", "id": pid})
+    edge_api._cache.clear()
+    edge_api._reset_limits()
+    r = TestClient(app).get(f"{P}/players/20", params={"sport": "nfl", "market": "player_receptions"})
+    assert r.json() == {"sport": "nfl", "id": 20}

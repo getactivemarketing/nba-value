@@ -184,8 +184,11 @@ def get_odds(event_id: str, market: str = "h2h", sp: SportConfig = Depends(_spor
 
 @router.get("/players/{bdl_id}")
 def get_player(bdl_id: int, market: str = "player_points", line: float | None = None,
-               min_minutes: float = Query(0, ge=0, le=48)) -> dict:
-    return _cached(("player", bdl_id, market, line, min_minutes),
+               min_minutes: float = Query(0, ge=0, le=48), sp: SportConfig = Depends(_sport)) -> dict:
+    if sp.slug == "nfl":
+        return _cached(("player", "nfl", bdl_id, market, line),
+                       lambda c, now: views.nfl_player(c, now, bdl_id, market, line))
+    return _cached(("player", "nba", bdl_id, market, line, min_minutes),
                    lambda c, now: views.player(c, now, bdl_id, market, line, min_minutes))
 
 

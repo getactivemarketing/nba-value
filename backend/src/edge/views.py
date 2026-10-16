@@ -8,13 +8,13 @@ from datetime import datetime, timedelta, timezone
 from psycopg2.extras import RealDictCursor
 
 from src.config import settings
-from src.edge.config import NBA, SportConfig
+from src.edge.config import NBA, NFL, SportConfig
 from src.edge import nfl_players, players, schedule, store
 from src.edge.engine import fair_prob, group, prob_to_american, price_quotes
 from src.edge.quotes import Quote, sides_for
 from src.edge.teams import ABBR_BY_NAME, NFL_ABBR_BY_NAME
 from src.services.mlb.clv import summarize_clv
-from src.utils.season import current_nba_season
+from src.utils.season import current_nba_season, current_nfl_season
 
 BET_KEY = ("event_id", "market", "player", "line", "side")
 
@@ -213,6 +213,41 @@ def player(conn, now: datetime, bdl_id: int, market: str, line: float | None, mi
     }
 
 
+def nfl_player(conn, now: datetime, bdl_id: int, market: str, line: float | None) -> dict:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""SELECT odds_name, team, position FROM edge_nfl_players WHERE bdl_player_id = %s
+                       ORDER BY updated_at DESC""", (bdl_id,))
+        names = [dict(r) for r in cur.fetchall()]
+    if not names:
+        return {"bdl_player_id": bdl_id, "name": None, "team": None, "position": None, "market": market,
+                "line": line, "opponent": None, "is_home": None, "hit_rates": None, "games": [], "prices": []}
+    team, odds_names = names[0]["team"], {n["odds_name"] for n in names}
+    games_ = nfl_players.load_games(conn, bdl_id, team, names[0]["odds_name"])
+    events = store.upcoming_events(conn, now, hours=NFL.lines_window_hours, sport=NFL.key)
+    event = next((e for e in events if team in (NFL_ABBR_BY_NAME.get(e["home_team"]),
+                                                NFL_ABBR_BY_NAME.get(e["away_team"]))), None)
+    prices = []
+    if event:
+        prices = [q for q in store.load_quotes(conn, [event["event_id"]], market) if q.player in odds_names]
+        if line is None and prices:
+            line = statistics.median(q.line for q in prices)
+    opponent = is_home = None
+    if event:
+        is_home = NFL_ABBR_BY_NAME.get(event["home_team"]) == team
+        opponent = NFL_ABBR_BY_NAME.get(event["away_team"] if is_home else event["home_team"])
+    return {
+        "bdl_player_id": bdl_id, "name": names[0]["odds_name"], "team": team, "position": names[0]["position"],
+        "market": market, "line": line, "opponent": opponent, "is_home": is_home,
+        "hit_rates": nfl_players.hit_rates(games_, market, line, opponent, is_home,
+                                           current_nfl_season(now.date())) if line is not None else None,
+        "games": [{"game_date": g["game_date"].isoformat(), "week": g["week"], "opponent": g["opponent"],
+                   "is_home": g["is_home"], "minutes": 0, "value": nfl_players.stat_for(market, g)}
+                  for g in games_[:20]],
+        "prices": [{"book": q.book, "side": q.side, "line": q.line, "price": q.price, "link": q.link}
+                   for q in prices],
+    }
+
+
 def results(conn, now: datetime, days: int, market: str | None, book: str | None,
             sport: SportConfig = NBA) -> dict:
     sql = """SELECT o.event_id, o.market, o.player, o.line, o.side, o.book, o.price, o.clv, o.result,
@@ -245,6 +280,13 @@ def status(conn, now: datetime) -> dict:
     with conn.cursor() as cur:
         cur.execute("SELECT odds_name FROM edge_players WHERE match_method = 'unmatched' ORDER BY odds_name")
         unmatched = [r[0] for r in cur.fetchall()]
+        cur.execute("""SELECT odds_name || ' (' || team || ')' FROM edge_nfl_players
+                       WHERE match_method = 'unmatched' ORDER BY 1""")
+        nfl_unmatched = [r[0] for r in cur.fetchall()]
+        cur.execute("""SELECT COUNT(*) FROM edge_opportunities o JOIN edge_events e USING (event_id)
+                       WHERE o.result IS NULL AND o.player <> '' AND e.sport = 'americanfootball_nfl'
+                         AND e.commence_time < %s""", (now - timedelta(days=7),))
+        nfl_stale = cur.fetchone()[0]
     cost = store.cost_last_24h(conn, now)
     return {
         "heartbeat_age_s": (now - datetime.fromisoformat(hb)).total_seconds() if hb else None,
@@ -253,6 +295,8 @@ def status(conn, now: datetime) -> dict:
         "last_error": state.get("last_error") or None, "bdl_error": state.get("bdl_error") or None,
         "unmatched_players": unmatched, "last_box_scores_date": state.get("last_box_scores_date"),
         "backfills": {k: v for k, v in state.items() if k.startswith("backfill_")},
+        "nfl_unmatched_players": nfl_unmatched, "nfl_stale_ungraded": nfl_stale,
+        "snaps_error": state.get("snaps_error") or None,
     }
 
 

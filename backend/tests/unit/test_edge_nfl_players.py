@@ -66,3 +66,12 @@ def test_nfl_prop_result_rules():
     assert nfl.nfl_prop_result({**opp, "side": "under"}, None, True, True) == "win"
     assert nfl.nfl_prop_result(opp, None, snaps_loaded=True, played=False) == "void"    # rule 5
     assert nfl.nfl_prop_result(opp, None, snaps_loaded=False, played=False) is None     # rule 6: wait
+
+
+def test_nfl_hit_rates_count_zero_games():
+    rows = [{"season": 2026, "week": w, "game_date": date(2026, 9, 7 * w), "opponent": "TB" if w == 3 else "NO",
+             "is_home": w % 2 == 0, **{c: 0 for c in nfl.STAT_COLS}, "rec_yds": y}
+            for w, y in ((1, 80), (2, 0), (3, 45), (4, 60))]
+    hr = nfl.hit_rates(rows, "player_reception_yds", 50.5, "TB", True, 2026)
+    assert hr["l5"] == {"hits": 2, "misses": 2, "pushes": 0, "games": 4, "rate": 0.5}  # the 0 counts
+    assert hr["vs_opponent"]["games"] == 1 and hr["home_away"]["games"] == 2

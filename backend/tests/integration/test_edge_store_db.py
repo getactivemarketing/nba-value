@@ -820,3 +820,11 @@ def test_nfl_props_wait_for_stats_and_snaps(conn):
     grading.run_grading(conn, kickoff + timedelta(days=1))
     r = _results(conn)
     assert r["Bijan Robinson"] == "win" and r["Late Scratch"] is None and r["DJ Moore"] is None  # rule 6
+
+
+def test_nfl_player_page_includes_snap_only_games_as_zero(conn):
+    from src.edge import views
+    _seed_graded_nfl_game(conn)
+    page = views.nfl_player(conn, NOW, 20, "player_receptions", 3.5)   # DJ Moore: snaps, no stat row
+    assert page["name"] == "DJ Moore" and page["team"] == "CHI"
+    assert [g["value"] for g in page["games"]] == [0.0] and page["hit_rates"]["l5"]["games"] == 1

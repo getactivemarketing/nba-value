@@ -301,3 +301,42 @@ def grade_props(conn, now: datetime) -> int:
                 graded += 1
     conn.commit()
     return graded
+
+
+def _rate(rows: list[dict], market: str, line: float) -> dict:
+    hits = sum(1 for r in rows if stat_for(market, r) > line)
+    misses = sum(1 for r in rows if stat_for(market, r) < line)
+    decided = hits + misses
+    return {"hits": hits, "misses": misses, "pushes": len(rows) - decided, "games": len(rows),
+            "rate": round(hits / decided, 3) if decided else None}
+
+
+def hit_rates(games: list[dict], market: str, line: float, opponent: str | None, is_home: bool | None,
+              season: int) -> dict:
+    played = sorted(games, key=lambda x: x["game_date"], reverse=True)
+    return {
+        "l5": _rate(played[:5], market, line), "l10": _rate(played[:10], market, line),
+        "l20": _rate(played[:20], market, line),
+        "season": _rate([x for x in played if x["season"] == season], market, line),
+        "vs_opponent": _rate([x for x in played if opponent and x["opponent"] == opponent], market, line),
+        "home_away": _rate([x for x in played if is_home is not None and x["is_home"] == is_home], market, line),
+    }
+
+
+def load_games(conn, bdl_player_id: int, team: str, odds_name: str, limit: int = 40) -> list[dict]:
+    """Box-score rows plus zero rows for games he played (snap counts) without recording a stat."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM edge_nfl_player_games WHERE bdl_player_id = %s", (bdl_player_id,))
+        rows = [dict(r) for r in cur.fetchall()]
+        have = {r["bdl_game_id"] for r in rows}
+        cur.execute("""SELECT g.* FROM edge_nfl_snaps s JOIN edge_nfl_games g
+                         ON g.season = s.season AND g.week = s.week AND s.team IN (g.home, g.away)
+                       WHERE s.team = %s AND s.player_norm = %s AND s.snaps > 0""",
+                    (team, normalize_name(odds_name)))
+        for g in cur.fetchall():
+            if g["bdl_game_id"] not in have:
+                rows.append({"bdl_game_id": g["bdl_game_id"], "season": g["season"], "week": g["week"],
+                             "game_date": g["game_date"], "team": team, "is_home": g["home"] == team,
+                             "opponent": g["away"] if g["home"] == team else g["home"],
+                             **{c: 0 for c in STAT_COLS}})
+    return sorted(rows, key=lambda r: r["game_date"], reverse=True)[:limit]
