@@ -119,6 +119,17 @@ class Settings(BaseSettings):
     # re-grade confirm a real edge.
     runline_in_best_bet: bool = False
 
+    # Legacy NBA model picks are TRACKING-ONLY from 2026-10-15: spread v2 was
+    # fed the wrong feature names and predicted a constant -9.86 MOV all of
+    # 2025-26. Snapshots and grading keep running; nothing reaches the public
+    # until a pre-registered CLV gate passes. See the Edge spec.
+    nba_picks_public: bool = False
+
+    # TruLine Edge (docs/superpowers/specs/2026-10-15-edge-ev-finder-design.md)
+    edge_min_ev: float = 0.02
+    edge_verify_ev: float = 0.15
+    edge_credit_cap: int = 3_500_000
+
     # Path to the MLB totals model. v2 (trained through 2026-07-06 via
     # retrain_mlb_totals) passed the holdout gate vs v1: MAE 3.538 vs 3.564,
     # hit-rate 55.6% (Jun 1 - Jul 5 holdout, 468 games). Serving in SHADOW

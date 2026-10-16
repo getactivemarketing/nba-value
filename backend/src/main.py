@@ -7,12 +7,13 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
 import structlog
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
 from src.database import init_db
 from src.api import health, markets, bets, evaluation, admin, trends, backtest, mlb, nfl
+from src.api.deps import require_nba_picks_public
 
 # Configure structured logging
 structlog.configure(
@@ -221,13 +222,15 @@ app.add_middleware(
 )
 
 # Include routers
+# Legacy NBA model routers are tracking-only (settings.nba_picks_public).
+_nba_gate = [Depends(require_nba_picks_public)]
 app.include_router(health.router, tags=["Health"])
-app.include_router(markets.router, prefix=settings.api_v1_prefix, tags=["Markets"])
-app.include_router(bets.router, prefix=settings.api_v1_prefix, tags=["Bets"])
-app.include_router(evaluation.router, prefix=settings.api_v1_prefix, tags=["Evaluation"])
+app.include_router(markets.router, prefix=settings.api_v1_prefix, tags=["Markets"], dependencies=_nba_gate)
+app.include_router(bets.router, prefix=settings.api_v1_prefix, tags=["Bets"], dependencies=_nba_gate)
+app.include_router(evaluation.router, prefix=settings.api_v1_prefix, tags=["Evaluation"], dependencies=_nba_gate)
 app.include_router(admin.router, prefix=settings.api_v1_prefix, tags=["Admin"])
 app.include_router(trends.router, prefix=settings.api_v1_prefix, tags=["Trends"])
-app.include_router(backtest.router, prefix=settings.api_v1_prefix, tags=["Backtest"])
+app.include_router(backtest.router, prefix=settings.api_v1_prefix, tags=["Backtest"], dependencies=_nba_gate)
 app.include_router(mlb.router, prefix=settings.api_v1_prefix, tags=["MLB"])
 # NFL router only — the NFL weekly scheduler (tasks/nfl_scheduler.py) ships
 # DISABLED and is intentionally NOT started here; enabling it is a deliberate

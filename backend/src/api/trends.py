@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.deps import require_nba_picks_public
 from src.database import get_db
 
 router = APIRouter()
@@ -328,7 +329,7 @@ async def get_situational_trends(
     }
 
 
-@router.get("/trends/model")
+@router.get("/trends/model", dependencies=[Depends(require_nba_picks_public)])
 async def get_model_performance(
     days: int = Query(default=30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),

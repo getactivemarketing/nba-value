@@ -33,6 +33,11 @@ def log_task(message: str, **kwargs):
     print(f"[SOCIAL-SCHEDULER] {timestamp} | {message} {extra}", flush=True)
 
 
+def nba_posting_allowed() -> bool:
+    """NBA model picks are tracking-only; never tweet them while hidden."""
+    return settings.nba_picks_public
+
+
 def _today_et() -> date:
     """Get today's date in US Eastern time."""
     eastern = timedelta(hours=-5)
@@ -777,6 +782,9 @@ def run_pick_alerts():
 
 
 def run_post_nba_picks():
+    if not nba_posting_allowed():
+        log_task("NBA picks are tracking-only; skipping post")
+        return {"posted": False, "skipped": "tracking_only"}
     log_task("Posting NBA picks...")
     try:
         result = _run_async(_post_nba_daily_picks_async())
@@ -788,6 +796,9 @@ def run_post_nba_picks():
 
 
 def run_post_nba_results():
+    if not nba_posting_allowed():
+        log_task("NBA results are tracking-only; skipping post")
+        return {"posted": False, "skipped": "tracking_only"}
     log_task("Posting NBA results...")
     try:
         result = _run_async(_post_nba_results_async())
