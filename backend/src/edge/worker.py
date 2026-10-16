@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from src.config import settings
 from src.edge import grading, opportunities, players, schedule, store
 from src.edge.client import EdgeOddsClient, OddsApiError, Usage
+from src.edge.config import LINE_MARKETS, PROP_MARKETS
 from src.edge.engine import price_quotes
 from src.edge.ingest import event_row, parse_event
 from src.utils.redact import redact
@@ -74,6 +75,7 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime) -> dict:
     if last_ev is None or now - last_ev >= timedelta(minutes=60):
         events_json, _ = await client.get_events()
         store.upsert_events(conn, [event_row(e) for e in events_json])
+        store.drop_missing_events(conn, [e["id"] for e in events_json], now)
         store.set_state(conn, "last_events_refresh", _iso(now), now)
 
     factor = schedule.guard_factor(store.cost_last_24h(conn, now), int(state.get("guard_factor", "1")),
@@ -93,15 +95,28 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime) -> dict:
         upcoming = {e["event_id"] for e in events}
         quotes = [q for ev in data if ev["id"] in upcoming for q in parse_event(ev, now)]
         out["line_history"] = store.write_quotes(conn, quotes)
+        store.retire_missing(conn, sorted(upcoming), list(LINE_MARKETS), now)
         store.mark_polled(conn, sorted(upcoming), "last_lines_poll", now)
         touched += sorted(upcoming)
 
     by_id = {e["event_id"]: e for e in events}
     for eid in plan.prop_events:
-        data, usage = await client.get_event_odds(eid)
+        try:
+            data, usage = await client.get_event_odds(eid)
+        except OddsApiError as e:
+            if e.status in (401, 429):
+                raise  # account-wide: global backoff
+            if e.status in (404, 422):
+                log.warning("edge event %s gone upstream (%s); dropping", eid, e.status)
+                store.mark_unavailable(conn, [eid])
+            else:
+                log.error("edge props poll failed for %s: %s", eid, e)
+                store.set_state(conn, "last_event_error", f"{eid}: {e}"[:300], now)
+            continue  # other events still poll; reprice and grading still run
         _record_usage(conn, "event_odds", usage, now)
         quotes = parse_event(data, now)
         store.write_quotes(conn, quotes)
+        store.retire_missing(conn, [eid], list(PROP_MARKETS), now)
         store.mark_polled(conn, [eid], "last_props_poll", now)
         await players.resolve_new_players(conn, bdl, quotes, by_id[eid], now)
         touched.append(eid)

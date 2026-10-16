@@ -174,3 +174,74 @@ def test_views_on_real_sql(conn):
     assert st["heartbeat_age_s"] == 0 and st["unmatched_players"] == []
     assert views.public_status(conn, now) == {"delayed": False}
     assert views.results(conn, now, 30, None, None)["n"] == 0
+
+
+def test_pulled_quotes_are_retired_on_the_next_poll(conn):
+    store.upsert_events(conn, [_event()])
+    t0, t1 = NOW, NOW + timedelta(minutes=5)
+    store.write_quotes(conn, [q(book="draftkings", at=t0), q(book="draftkings", side="under", at=t0)])
+    moved = [Quote("e1", "player_points", "Jayson Tatum", s, 28.5, "draftkings", -110, None, t1)
+             for s in ("over", "under")]
+    store.write_quotes(conn, moved)
+    assert store.retire_missing(conn, ["e1"], ["player_points"], t1) == 2
+    assert {x.line for x in store.load_quotes(conn, ["e1"])} == {28.5}
+
+
+class _FakeOdds:
+    def __init__(self, events):
+        self.events, self.calls = events, []
+
+    async def get_events(self):
+        from src.edge.client import Usage
+        return self.events, Usage(None, None, 0)
+
+    async def get_game_odds(self):
+        from src.edge.client import Usage
+        return [], Usage(4_000_000, 1, 6)
+
+    async def get_event_odds(self, eid):
+        from src.edge.client import OddsApiError, Usage
+        self.calls.append(eid)
+        if eid == "gone":
+            raise OddsApiError(404, "EVENT_NOT_FOUND")
+        ev = {"id": eid, "sport_key": "basketball_nba", "home_team": "Detroit Pistons",
+              "away_team": "Boston Celtics", "commence_time": "x", "bookmakers": []}
+        return ev, Usage(4_000_000, 1, 16)
+
+
+class _FakeBdl:
+    async def roster(self, team):
+        return []
+
+
+@pytest.mark.asyncio
+async def test_one_bad_event_does_not_stop_the_tick(conn):
+    from src.edge import worker
+
+    now = NOW.replace(hour=5)
+    tip = (now + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    evs = [{"id": i, "sport_key": "basketball_nba", "home_team": "Detroit Pistons",
+            "away_team": "Boston Celtics", "commence_time": tip} for i in ("gone", "ok")]
+    client = _FakeOdds(evs)
+    out = await worker.tick(conn, client, _FakeBdl(), now)
+    assert sorted(client.calls) == ["gone", "ok"] and "graded" in out
+    status = {e["event_id"]: e for e in store.upcoming_events(conn, now)}
+    assert "gone" not in status and status["ok"]["last_props_poll"] == now
+    # the next tick does not retry the dead event
+    client.calls.clear()
+    await worker.tick(conn, client, _FakeBdl(), now + timedelta(minutes=6))
+    assert client.calls == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_events_missing_from_the_feed_drop_out(conn):
+    from src.edge import worker
+
+    now = NOW.replace(hour=5)
+    tip = (now + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ev = lambda i: {"id": i, "sport_key": "basketball_nba", "home_team": "Detroit Pistons",
+                    "away_team": "Boston Celtics", "commence_time": tip}
+    await worker.tick(conn, _FakeOdds([ev("a"), ev("b")]), _FakeBdl(), now)
+    later = now + timedelta(minutes=61)
+    await worker.tick(conn, _FakeOdds([ev("a")]), _FakeBdl(), later)  # b postponed
+    assert [e["event_id"] for e in store.upcoming_events(conn, later)] == ["a"]

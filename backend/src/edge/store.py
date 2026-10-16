@@ -37,7 +37,9 @@ def upsert_events(conn, rows: list[dict]) -> int:
             INSERT INTO edge_events (event_id, sport, home_team, away_team, commence_time, status, completed)
             VALUES %s
             ON CONFLICT (event_id) DO UPDATE SET commence_time = EXCLUDED.commence_time,
-                home_team = EXCLUDED.home_team, away_team = EXCLUDED.away_team
+                home_team = EXCLUDED.home_team, away_team = EXCLUDED.away_team,
+                status = CASE WHEN edge_events.status = 'unavailable' THEN 'scheduled'
+                              ELSE edge_events.status END
         """, [(r["event_id"], r["sport"], r["home_team"], r["away_team"], r["commence_time"],
                "scheduled", False) for r in rows])
     conn.commit()
@@ -47,7 +49,7 @@ def upsert_events(conn, rows: list[dict]) -> int:
 def upcoming_events(conn, now: datetime, hours: int = 36) -> list[dict]:
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""SELECT * FROM edge_events WHERE commence_time > %s AND commence_time <= %s
-                       ORDER BY commence_time""", (now, now + timedelta(hours=hours)))
+                       AND status <> 'unavailable' ORDER BY commence_time""", (now, now + timedelta(hours=hours)))
         return [dict(r) for r in cur.fetchall()]
 
 
@@ -70,6 +72,42 @@ def write_quotes(conn, quotes: list[Quote]) -> int:
                            [_qtuple(q) for q in changed])
     conn.commit()
     return len(changed)
+
+
+def mark_unavailable(conn, event_ids: list[str]) -> None:
+    """Postponed, re-IDed or removed upstream: stop polling it (upsert revives it)."""
+    if not event_ids:
+        return
+    with conn.cursor() as cur:
+        cur.execute("UPDATE edge_events SET status = 'unavailable' WHERE event_id = ANY(%s)", (event_ids,))
+    conn.commit()
+
+
+def drop_missing_events(conn, live_ids: list[str], now: datetime) -> int:
+    """Future events no longer in the feed are marked unavailable."""
+    with conn.cursor() as cur:
+        cur.execute("""UPDATE edge_events SET status = 'unavailable'
+                       WHERE commence_time > %s AND status = 'scheduled' AND NOT (event_id = ANY(%s))""",
+                    (now, live_ids))
+        n = cur.rowcount
+    conn.commit()
+    return n
+
+
+def retire_missing(conn, event_ids: list[str], markets: list[str], polled_at: datetime) -> int:
+    """Delete quotes a poll covered but did not return: the book pulled or moved them.
+
+    write_quotes stamps every returned key with observed_at = polled_at, so in
+    the polled (event, market) scope anything older is gone. History keeps it.
+    """
+    if not event_ids or not markets:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute("""DELETE FROM edge_quotes WHERE event_id = ANY(%s) AND market = ANY(%s)
+                       AND observed_at < %s""", (event_ids, markets, polled_at))
+        n = cur.rowcount
+    conn.commit()
+    return n
 
 
 def mark_polled(conn, event_ids: list[str], field: str, now: datetime) -> None:
