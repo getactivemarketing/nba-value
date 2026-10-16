@@ -37,7 +37,7 @@ class SportConfig:
 
 
 NBA = SportConfig("basketball_nba", "nba", NBA_PROP_MARKETS, 36, True)
-NFL = SportConfig("americanfootball_nfl", "nfl", NFL_PROP_MARKETS, 7 * 24, False)
+NFL = SportConfig("americanfootball_nfl", "nfl", NFL_PROP_MARKETS, 7 * 24, True)
 SPORTS = {"nba": NBA, "nfl": NFL}
 
 # Legacy aliases (NBA), kept so existing imports keep working.

@@ -9,10 +9,10 @@ from psycopg2.extras import RealDictCursor
 
 from src.config import settings
 from src.edge.config import NBA, SportConfig
-from src.edge import players, schedule, store
+from src.edge import nfl_players, players, schedule, store
 from src.edge.engine import fair_prob, group, prob_to_american, price_quotes
 from src.edge.quotes import Quote, sides_for
-from src.edge.teams import ABBR_BY_NAME
+from src.edge.teams import ABBR_BY_NAME, NFL_ABBR_BY_NAME
 from src.services.mlb.clv import summarize_clv
 from src.utils.season import current_nba_season
 
@@ -127,7 +127,13 @@ def ev_rows(conn, now: datetime, market: str | None = None, book: str | None = N
     quotes = schedule.fresh(store.load_quotes(conn, ids, market), commence, now, _factor(conn),
                             sport.lines_window_hours)
     threshold = settings.edge_min_ev if min_ev is None else min_ev
-    player_ids = _player_ids(conn) if sport.has_players else {}
+    if not sport.has_players:
+        player_ids = {}
+    elif sport.slug == "nfl":
+        teams = {NFL_ABBR_BY_NAME.get(e[k]) for e in events.values() for k in ("home_team", "away_team")} - {None}
+        player_ids = nfl_players.player_ids(conn, teams)
+    else:
+        player_ids = _player_ids(conn)
     out = []
     for p in price_quotes(quotes, threshold, settings.edge_verify_ev):
         q = p.quote

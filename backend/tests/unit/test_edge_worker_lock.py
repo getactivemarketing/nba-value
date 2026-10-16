@@ -33,7 +33,7 @@ def _run_ticks(monkeypatch, lock_results, takeover=False):
     monkeypatch.setattr(store, "take_over_stale_lock", lambda conn, now, stale: takeover)
     monkeypatch.setattr(store, "set_state", lambda *a, **k: None)
 
-    async def tick(conn, client, bdl, now):
+    async def tick(conn, client, bdl, now, **kw):
         ticks.append(now)
         return {}
 
@@ -81,7 +81,7 @@ def test_reconnect_closes_the_old_session_so_its_lock_is_released(monkeypatch):
     monkeypatch.setattr(store, "take_over_stale_lock", lambda *a: False)
     monkeypatch.setattr(store, "set_state", lambda *a, **k: None)
 
-    async def tick(*a):
+    async def tick(*a, **kw):
         raise ValueError("tick blew up")
 
     async def sleep(_):

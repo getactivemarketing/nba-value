@@ -622,3 +622,62 @@ async def test_a_long_game_still_gets_its_final_score(conn):
     client = _FakeOdds([])
     await worker.tick(conn, client, _FakeBdl(), NOW, sports=[NFL])
     assert "scores:nfl" in client.calls
+
+
+class _FakeNflBdl:
+    def __init__(self, rosters, fail=None):
+        self.rosters, self.fail, self.calls = rosters, fail, []
+
+    async def roster(self, team):
+        from src.edge.players import BdlError
+        self.calls.append(team)
+        if self.fail:
+            raise BdlError(self.fail, f"BallDontLie NFL {self.fail} rate limited")
+        return self.rosters.get(team, [])
+
+
+def _q(player, eid="n1", market="player_rush_yds"):
+    return Quote(eid, market, player, "over", 60.5, "fanduel", -110, None, NOW)
+
+
+@pytest.mark.asyncio
+async def test_nfl_names_resolve_per_team_and_never_touch_nba_players(conn):
+    from src.edge import nfl_players
+    ev = {"home_team": "Atlanta Falcons", "away_team": "Chicago Bears"}
+    rosters = {"ATL": [{"id": 10, "first_name": "Bijan", "last_name": "Robinson", "team_abbr": "ATL", "position": "RB"}],
+               "CHI": [{"id": 20, "first_name": "D.J.", "last_name": "Moore", "team_abbr": "CHI", "position": "WR"}]}
+    n = await nfl_players.resolve_new_players(conn, _FakeNflBdl(rosters), [_q("Bijan Robinson"), _q("DJ Moore"),
+                                                                          _q("Nobody Here")], ev, NOW)
+    assert n == 3
+    with conn.cursor() as cur:
+        cur.execute("SELECT odds_name, team, bdl_player_id, match_method FROM edge_nfl_players ORDER BY odds_name")
+        rows = cur.fetchall()
+        cur.execute("SELECT COUNT(*) FROM edge_players")
+        assert cur.fetchone()[0] == 0  # NBA table untouched
+    assert ("Bijan Robinson", "ATL", 10, "exact") in rows
+    assert ("DJ Moore", "CHI", 20, "normalized") in rows
+    assert any(r[0] == "Nobody Here" and r[3] == "unmatched" for r in rows)
+    assert nfl_players.player_ids(conn, {"ATL", "CHI"}) == {"Bijan Robinson": 10, "DJ Moore": 20}
+
+
+@pytest.mark.asyncio
+async def test_a_traded_player_resolves_again_on_his_new_team(conn):
+    from src.edge import nfl_players
+    old = {"KC": [{"id": 30, "first_name": "Amari", "last_name": "Cooper", "team_abbr": "KC", "position": "WR"}]}
+    await nfl_players.resolve_new_players(conn, _FakeNflBdl(old), [_q("Amari Cooper")],
+                                          {"home_team": "Kansas City Chiefs", "away_team": "Denver Broncos"}, NOW)
+    new = {"BUF": [{"id": 30, "first_name": "Amari", "last_name": "Cooper", "team_abbr": "BUF", "position": "WR"}]}
+    n = await nfl_players.resolve_new_players(conn, _FakeNflBdl(new), [_q("Amari Cooper")],
+                                              {"home_team": "Buffalo Bills", "away_team": "Miami Dolphins"}, NOW)
+    assert n == 1 and nfl_players.player_ids(conn, {"BUF"}) == {"Amari Cooper": 30}
+
+
+@pytest.mark.asyncio
+async def test_a_roster_error_leaves_names_unseen_not_unmatched(conn):
+    from src.edge import nfl_players
+    n = await nfl_players.resolve_new_players(conn, _FakeNflBdl({}, fail=429), [_q("Bijan Robinson")],
+                                              {"home_team": "Atlanta Falcons", "away_team": "Chicago Bears"}, NOW)
+    assert n == 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM edge_nfl_players")
+        assert cur.fetchone()[0] == 0

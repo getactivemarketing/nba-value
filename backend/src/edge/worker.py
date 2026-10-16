@@ -15,7 +15,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 from src.config import settings
-from src.edge import grading, opportunities, players, schedule, store
+from src.edge import grading, nfl_players, opportunities, players, schedule, store
 from src.edge.client import EdgeOddsClient, OddsApiError, Usage
 from src.edge.config import LINE_MARKETS, SportConfig, enabled_sports, state_key
 from src.edge.engine import price_quotes
@@ -72,7 +72,7 @@ def _reprice(conn, event_ids: list[str], events: list[dict], now: datetime, fact
 
 
 async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
-               sports: list[SportConfig] | None = None) -> dict:
+               sports: list[SportConfig] | None = None, nfl_bdl=None) -> dict:
     sports = enabled_sports(settings.edge_sports) if sports is None else sports
     state = store.get_state(conn)
     out: dict = {}
@@ -89,7 +89,7 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
 
     for sport in sports:
         try:
-            out[sport.slug] = await _tick_sport(conn, client, bdl, sport, state, factor, now)
+            out[sport.slug] = await _tick_sport(conn, client, bdl, sport, state, factor, now, nfl_bdl)
             store.set_state(conn, f"sport_error:{sport.slug}", "", now)
         except OddsApiError as e:
             if e.status in (401, 429):
@@ -118,7 +118,8 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
     return out
 
 
-async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor: int, now: datetime) -> dict:
+async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor: int, now: datetime,
+                      nfl_bdl=None) -> dict:
     out: dict = {}
     window = sport.lines_window_hours
 
@@ -164,7 +165,10 @@ async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor
         store.retire_missing(conn, [eid], list(sport.prop_markets), now)
         store.mark_polled(conn, [eid], "last_props_poll", now)
         if sport.has_players:
-            await players.resolve_new_players(conn, bdl, quotes, by_id[eid], now)
+            if sport.slug == "nba":
+                await players.resolve_new_players(conn, bdl, quotes, by_id[eid], now)
+            elif nfl_bdl is not None and settings.edge_nfl_players:
+                await nfl_players.resolve_new_players(conn, nfl_bdl, quotes, by_id[eid], now)
         touched.append(eid)
 
     out["opportunities"] = _reprice(conn, sorted(set(touched)), events, now, factor, window)
@@ -268,6 +272,7 @@ def _reconnect(old):
 async def _run() -> None:
     client = EdgeOddsClient()
     bdl = players.BdlClient()
+    nfl_bdl = nfl_players.BdlNflClient()
     backoff = Backoff()
     blocked_until: datetime | None = None
     conn = store.connect()
@@ -293,7 +298,7 @@ async def _run() -> None:
                         continue
                 store.set_state(conn, "heartbeat_at", _iso(now), now)
                 if blocked_until is None or now >= blocked_until:
-                    result = await tick(conn, client, bdl, now)
+                    result = await tick(conn, client, bdl, now, nfl_bdl=nfl_bdl)
                     backoff.success()
                     blocked_until = None
                     store.set_state(conn, "last_error", "", now)

@@ -10,12 +10,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import date
+from datetime import date, datetime
 
 import httpx
+from psycopg2.extras import execute_values
 
 from src.config import settings
-from src.edge.players import BdlError
+from src.edge.players import BdlError, match_player
+from src.edge.quotes import Quote
+from src.edge.teams import NFL_ABBR_BY_NAME
 
 log = logging.getLogger("edge.nfl_players")
 ROSTER_TTL = 6 * 3600
@@ -122,3 +125,51 @@ class BdlNflClient:
 
     async def stats(self, game_ids: list[int]) -> list[dict]:
         return await self._paged("stats", [("game_ids[]", g) for g in game_ids])
+
+
+async def resolve_new_players(conn, bdl: BdlNflClient, quotes: list[Quote], event: dict, now: datetime) -> int:
+    """Match unseen (name, team) pairs from one props poll against both teams' rosters.
+
+    A name is 'seen' per team: a traded player gets a fresh match on his new team.
+    Roster errors leave names unseen (retried next poll), never 'unmatched'.
+    """
+    names = sorted({q.player for q in quotes if q.player})
+    teams = {NFL_ABBR_BY_NAME.get(event["home_team"]), NFL_ABBR_BY_NAME.get(event["away_team"])} - {None}
+    if not names or not teams:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT odds_name FROM edge_nfl_players WHERE odds_name = ANY(%s) AND team = ANY(%s)",
+                    (names, sorted(teams)))
+        known = {r[0] for r in cur.fetchall()}
+    new = [n for n in names if n not in known]
+    if not new:
+        return 0
+    try:
+        candidates = [c for t in sorted(teams) for c in await bdl.roster(t)]
+    except BdlError as e:
+        log.warning("edge NFL player resolve skipped: %s", e)
+        return 0
+    by_id = {c["id"]: c for c in candidates}
+    rows = []
+    for name in new:
+        m = match_player(name, candidates, teams)
+        if m:
+            rows.append((name, m.team, m.bdl_player_id, by_id[m.bdl_player_id].get("position"),
+                         m.method, m.confidence, now))
+        else:
+            # No roster match: stored once under the first of the two teams (alphabetical), so the
+            # `known` check above stops it being retried every poll; listed on /edge/status.
+            rows.append((name, sorted(teams)[0], None, None, "unmatched", 0.0, now))
+    with conn.cursor() as cur:
+        execute_values(cur, """INSERT INTO edge_nfl_players (odds_name, team, bdl_player_id, position,
+                               match_method, confidence, updated_at) VALUES %s
+                               ON CONFLICT (odds_name, team) DO NOTHING""", rows)
+    conn.commit()
+    return len(rows)
+
+
+def player_ids(conn, teams: set[str]) -> dict[str, int]:
+    with conn.cursor() as cur:
+        cur.execute("""SELECT odds_name, bdl_player_id FROM edge_nfl_players
+                       WHERE bdl_player_id IS NOT NULL AND team = ANY(%s)""", (sorted(teams),))
+        return {n: pid for n, pid in cur.fetchall()}
