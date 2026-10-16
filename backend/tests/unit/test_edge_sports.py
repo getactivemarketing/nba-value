@@ -22,7 +22,6 @@ def test_sports_table():
 def test_enabled_sports_ignores_unknown_and_blank():
     assert enabled_sports("nba,nfl") == [NBA, NFL]
     assert enabled_sports(" nfl , bogus,,") == [NFL]
-    assert enabled_sports("") == []
 
 
 def test_state_keys_keep_nba_names():
@@ -40,3 +39,11 @@ def test_every_nfl_market_has_a_label_and_parses_from_the_real_fixture():
     q = next(q for q in quotes if q.market == "player_rush_yds" and q.side == "over")
     assert views.describe(q.market, q.player, q.side, q.line, "Atlanta Falcons", "Chicago Bears") == \
         f"{q.player} Over {q.line:g} Rush Yds"
+
+
+def test_enabled_sports_is_case_insensitive_and_never_empty(caplog):
+    assert enabled_sports("NBA, Nfl") == [NBA, NFL]
+    # A config typo must not silently stop all polling: fall back to NBA.
+    assert enabled_sports("nbaa") == [NBA]
+    assert enabled_sports("") == [NBA]
+    assert "falling back" in caplog.text

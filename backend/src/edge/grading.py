@@ -69,10 +69,11 @@ def box_scores_missing(conn, d) -> bool:
         return len({r[0] for r in cur.fetchall()}) < len(teams)
 
 
-def games_in_progress(conn, now: datetime, sport: str | None = None) -> bool:
+def games_in_progress(conn, now: datetime, sport: str | None = None, hours: int = 4) -> bool:
+    """A game started within `hours` and not yet final."""
     sql = """SELECT 1 FROM edge_events WHERE NOT completed
              AND commence_time <= %s AND commence_time > %s"""
-    params: list = [now, now - timedelta(hours=4)]
+    params: list = [now, now - timedelta(hours=hours)]
     if sport:
         sql += " AND sport = %s"
         params.append(sport)

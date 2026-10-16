@@ -25,6 +25,9 @@ from src.utils.season import current_nba_season
 
 log = logging.getLogger("edge.worker")
 TICK_SECONDS = 30
+# Keep polling scores until a started game is final: overtime can run past
+# kickoff + 4 h, and the next game of the sport may be days away (MNF, TNF).
+SCORES_WINDOW_HOURS = 24
 STALE_LOCK = timedelta(minutes=10)  # heartbeat age at which a standby evicts the holder
 
 
@@ -168,7 +171,7 @@ async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor
 
     # Scores while this sport's games are live.
     last_scores = _parse(state.get(state_key(sport, "last_scores_poll")))
-    if grading.games_in_progress(conn, now, sport.key) and (
+    if grading.games_in_progress(conn, now, sport.key, hours=SCORES_WINDOW_HOURS) and (
             last_scores is None or now - last_scores >= timedelta(minutes=30)):
         data, usage = await client.get_scores(days_from=1, sport=sport)
         _record_usage(conn, "scores", usage, now)

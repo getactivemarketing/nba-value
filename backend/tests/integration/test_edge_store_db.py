@@ -216,6 +216,7 @@ class _FakeOdds:
 
     async def get_scores(self, days_from=1, sport=None):
         from src.edge.client import Usage
+        self.calls.append(f"scores:{sport.slug if sport else 'nba'}")
         return [], Usage(4_000_000, 1, 2)
 
 
@@ -430,6 +431,10 @@ def test_a_stale_lock_holder_is_evicted(conn):
         assert store.try_worker_lock(conn) is False
         store.set_state(holder, "heartbeat_at", (NOW - timedelta(minutes=20)).isoformat(), NOW)
         assert store.take_over_stale_lock(conn, NOW, timedelta(minutes=10)) is True
+        import time  # pg_terminate_backend releases the lock asynchronously
+        deadline = time.monotonic() + 3
+        while not store.try_worker_lock(conn) and time.monotonic() < deadline:
+            time.sleep(0.05)
         assert store.try_worker_lock(conn) is True
     finally:
         holder.close()
@@ -602,3 +607,18 @@ def test_results_are_per_sport(conn):
     conn.commit()
     assert views.results(conn, NOW, 30, None, None, sport=NBA)["n"] == 1
     assert views.results(conn, NOW, 30, None, None, sport=NFL)["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_long_game_still_gets_its_final_score(conn):
+    """MNF overtime ends ~3h40m after kickoff; the next NFL game is days away.
+    Scores must keep polling until the game is final, not stop at kickoff + 4 h."""
+    from src.edge import worker
+    from src.edge.config import NFL
+    kickoff = NOW - timedelta(hours=4, minutes=10)
+    store.upsert_events(conn, [dict(_nfl_event(), commence_time=kickoff)])
+    store.set_state(conn, "nfl:last_scores_poll", (NOW - timedelta(minutes=40)).isoformat(), NOW)
+    store.set_state(conn, "nfl:last_events_refresh", NOW.isoformat(), NOW)
+    client = _FakeOdds([])
+    await worker.tick(conn, client, _FakeBdl(), NOW, sports=[NFL])
+    assert "scores:nfl" in client.calls

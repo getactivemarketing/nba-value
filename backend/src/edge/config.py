@@ -46,15 +46,21 @@ PROP_MARKETS = NBA_PROP_MARKETS
 
 
 def enabled_sports(csv: str) -> list[SportConfig]:
+    """Sports the worker polls. Never empty: a typo in EDGE_SPORTS must not
+    silently stop all polling while the heartbeat stays green."""
     import logging
+    log = logging.getLogger("edge.config")
     out = []
-    for slug in (s.strip() for s in csv.split(",")):
+    for slug in (s.strip().lower() for s in csv.split(",")):
         if not slug:
             continue
         if slug in SPORTS:
             out.append(SPORTS[slug])
         else:
-            logging.getLogger("edge.config").warning("EDGE_SPORTS: unknown sport %r ignored", slug)
+            log.warning("EDGE_SPORTS: unknown sport %r ignored", slug)
+    if not out:
+        log.error("EDGE_SPORTS=%r enables no known sport; falling back to nba", csv)
+        out = [NBA]
     return out
 
 
