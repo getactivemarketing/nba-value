@@ -139,6 +139,8 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime) -> dict:
         out["graded"] = grading.run_grading(conn, now)
         store.set_state(conn, "last_grading", _iso(now), now)
 
+    out["pruned"] = prune_step(conn, now)
+
     # BallDontLie work never blocks odds: failures land in bdl_error.
     for step in (box_scores_step, backfill_step):
         try:
@@ -166,6 +168,25 @@ async def box_scores_step(conn, bdl, now: datetime) -> int:
             loaded += await players.ingest_box_scores(conn, bdl, d)
     store.set_state(conn, "bdl_error", "", now)
     return loaded
+
+
+PRUNE_AFTER = timedelta(days=3)    # games older than this are graded and closed
+PRUNE_OVERLAP = timedelta(days=2)  # re-scan behind the last cutoff for late-graded games
+
+
+def prune_step(conn, now: datetime) -> int:
+    """Daily: thin price history for games that tipped more than 3 days ago."""
+    state = store.get_state(conn)
+    last = _parse(state.get("last_prune"))
+    if last is not None and now - last < timedelta(hours=24):
+        return 0
+    prev_cutoff = _parse(state.get("history_pruned_before"))
+    before = now - PRUNE_AFTER
+    deleted = store.prune_history(conn, before=before,
+                                  after=prev_cutoff - PRUNE_OVERLAP if prev_cutoff else None)
+    store.set_state(conn, "history_pruned_before", _iso(before), now)
+    store.set_state(conn, "last_prune", _iso(now), now)
+    return deleted
 
 
 async def backfill_step(conn, bdl, now: datetime, days: int = 3) -> int:

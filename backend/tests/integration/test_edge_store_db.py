@@ -352,3 +352,56 @@ def test_api_serves_from_the_real_pool(conn, monkeypatch):
     pool = edge_api._pool
     assert pool is not None and len(pool._used) == 0  # every connection went back
     pool.closeall()
+
+
+def _hist(conn, event_id, rows):
+    with conn.cursor() as cur:
+        for book, price, at in rows:
+            cur.execute("""INSERT INTO edge_quote_history (event_id, market, player, side, line, book, price,
+                           link, observed_at) VALUES (%s,'player_points','Jayson Tatum','over',27.5,%s,%s,NULL,%s)""",
+                        (event_id, book, price, at))
+    conn.commit()
+
+
+def test_prune_history_keeps_open_close_and_hourly(conn):
+    old_tip = NOW - timedelta(days=5)
+    store.upsert_events(conn, [dict(_event(), event_id="old", commence_time=old_tip),
+                               dict(_event(), event_id="new", commence_time=NOW + timedelta(hours=2))])
+    t0 = old_tip - timedelta(hours=3)
+    m = lambda mins: t0 + timedelta(minutes=mins)  # noqa: E731
+    _hist(conn, "old", [("fanduel", -110, m(0)), ("fanduel", -112, m(10)), ("fanduel", -115, m(20)),
+                        ("fanduel", -118, m(65)), ("fanduel", -120, m(90)), ("fanduel", -125, m(170)),
+                        ("betmgm", -105, m(5))])
+    _hist(conn, "new", [("fanduel", -110, NOW - timedelta(minutes=m_)) for m_ in (30, 20, 10)])
+
+    deleted = store.prune_history(conn, before=NOW - timedelta(days=3))
+    with conn.cursor() as cur:
+        cur.execute("SELECT book, price FROM edge_quote_history WHERE event_id='old' ORDER BY observed_at")
+        kept = cur.fetchall()
+        cur.execute("SELECT COUNT(*) FROM edge_quote_history WHERE event_id='new'")
+        new_count = cur.fetchone()[0]
+    # fanduel: open (-110), first of the next hour (-118), close (-125); betmgm's only row stays.
+    assert kept == [("fanduel", -110), ("betmgm", -105), ("fanduel", -118), ("fanduel", -125)]
+    assert deleted == 3 and new_count == 3  # games inside the window are untouched
+    assert store.prune_history(conn, before=NOW - timedelta(days=3)) == 0  # idempotent
+
+
+def test_prune_history_respects_the_lower_bound(conn):
+    tip = NOW - timedelta(days=10)
+    store.upsert_events(conn, [dict(_event(), event_id="ancient", commence_time=tip)])
+    _hist(conn, "ancient", [("fanduel", p, tip - timedelta(minutes=30 - i)) for i, p in enumerate((-110, -112, -114))])
+    assert store.prune_history(conn, before=NOW, after=NOW - timedelta(days=5)) == 0
+    assert store.prune_history(conn, before=NOW) == 1
+
+
+def test_worker_prunes_once_a_day_from_its_cursor(conn):
+    from src.edge import worker
+
+    tip = NOW - timedelta(days=4)
+    store.upsert_events(conn, [dict(_event(), event_id="old", commence_time=tip)])
+    _hist(conn, "old", [("fanduel", p, tip - timedelta(minutes=30 - i)) for i, p in enumerate((-110, -112, -114))])
+    assert worker.prune_step(conn, NOW) == 1
+    _hist(conn, "old", [("betmgm", p, tip - timedelta(minutes=30 - i)) for i, p in enumerate((-110, -112, -114))])
+    assert worker.prune_step(conn, NOW + timedelta(hours=1)) == 0  # ran today already
+    assert worker.prune_step(conn, NOW + timedelta(days=1)) == 1   # next day; overlap catches stragglers
+    assert store.get_state(conn)["history_pruned_before"]

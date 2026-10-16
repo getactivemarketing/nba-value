@@ -168,3 +168,36 @@ def get_state(conn) -> dict[str, str]:
     with conn.cursor() as cur:
         cur.execute("SELECT key, value FROM edge_worker_state")
         return {k: v for k, v in cur.fetchall()}
+
+
+def prune_history(conn, before: datetime, after: datetime | None = None) -> int:
+    """Thin out price history for games that tipped before `before`.
+
+    Keeps, per quote key: the opening price, the closing price and the first
+    change in each hour, which is enough for line-movement charts. Nothing
+    reads the rest, and it is most of the table's growth. Idempotent. `after`
+    bounds the scan to recent games so daily runs stay cheap as history grows.
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            DELETE FROM edge_quote_history h USING (
+                SELECT id FROM (
+                    SELECT hh.id,
+                           row_number() OVER (PARTITION BY hh.event_id, hh.market, hh.player, hh.side, hh.line, hh.book
+                                              ORDER BY hh.observed_at) AS rn_open,
+                           row_number() OVER (PARTITION BY hh.event_id, hh.market, hh.player, hh.side, hh.line, hh.book
+                                              ORDER BY hh.observed_at DESC) AS rn_close,
+                           row_number() OVER (PARTITION BY hh.event_id, hh.market, hh.player, hh.side, hh.line, hh.book,
+                                                           date_trunc('hour', hh.observed_at)
+                                              ORDER BY hh.observed_at) AS rn_hour
+                    FROM edge_quote_history hh
+                    JOIN edge_events e ON e.event_id = hh.event_id
+                    WHERE e.commence_time < %s AND (%s::timestamptz IS NULL OR e.commence_time >= %s)
+                ) ranked
+                WHERE rn_open > 1 AND rn_close > 1 AND rn_hour > 1
+            ) doomed
+            WHERE h.id = doomed.id
+        """, (before, after, after))
+        deleted = cur.rowcount
+    conn.commit()
+    return deleted
