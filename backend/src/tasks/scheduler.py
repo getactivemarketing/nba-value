@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from src.services.data.odds_api import OddsAPIClient
 from src.tasks.prediction_tracker import snapshot_predictions, grade_predictions
 from src.config import get_sync_database_url
+from src.utils.season import current_nba_season, nba_season_start
 
 logger = structlog.get_logger()
 
@@ -83,7 +84,7 @@ async def update_team_stats_async() -> dict:
     today = now_est.date()
     now = datetime.now(timezone.utc)
 
-    season_start = date(2025, 10, 22)  # 2025-26 NBA season
+    season_start = nba_season_start(current_nba_season())
 
     client = BallDontLieClient()
     logger.info("Fetching games from BallDontLie for team stats...")
@@ -92,7 +93,7 @@ async def update_team_stats_async() -> dict:
         all_games = await client.get_games(
             start_date=season_start,
             end_date=today,
-            seasons=[2025],
+            seasons=[current_nba_season()],
         )
     except Exception as e:
         logger.error(f"Failed to fetch games for team stats: {e}")
@@ -355,7 +356,7 @@ async def ingest_odds_async():
                 tip_time_utc = EXCLUDED.tip_time_utc,
                 status = EXCLUDED.status,
                 updated_at = EXCLUDED.updated_at
-        ''', (game_id, 'NBA', 2025, game_date_et, commence_time, home_team, away_team, 'scheduled', now, now))
+        ''', (game_id, 'NBA', current_nba_season(game_date_et), game_date_et, commence_time, home_team, away_team, 'scheduled', now, now))
         games_created += 1
 
         # Process markets and collect data for snapshots
@@ -934,7 +935,7 @@ def sync_game_results() -> dict:
         all_games = asyncio.run(client.get_games(
             start_date=fetch_start,
             end_date=today,
-            seasons=[2025]
+            seasons=[current_nba_season()]
         ))
 
         completed = [g for g in all_games if g.status == 'Final' and g.home_team_score]
@@ -1076,7 +1077,7 @@ def backfill_game_results_with_odds() -> dict:
 
     now = datetime.now(timezone.utc)
     today = date.today()
-    season_start = date(2025, 10, 22)  # 2025-26 NBA season
+    season_start = nba_season_start(current_nba_season())
 
     results_created = 0
     api_calls = 0
@@ -1090,7 +1091,7 @@ def backfill_game_results_with_odds() -> dict:
         all_games = asyncio.run(bdl_client.get_games(
             start_date=season_start,
             end_date=today,
-            seasons=[2025]
+            seasons=[current_nba_season()]
         ))
 
         completed = [g for g in all_games if g.status == 'Final' and g.home_team_score]

@@ -15,6 +15,7 @@ from src.tasks.ingestion import (
 from src.tasks.scoring import _run_pre_game_scoring_async
 from src.tasks.stats_calculation import _calculate_team_stats_async
 from src.config import get_sync_database_url
+from src.utils.season import current_nba_season
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -178,7 +179,7 @@ async def backfill_historical_games(days: int = 30) -> TaskResult:
                 game_stmt = pg_insert(GameModel).values(
                     game_id=game_id,
                     league="NBA",
-                    season=2025,
+                    season=current_nba_season(),
                     game_date=game.date,
                     tip_time_utc=tip_time,
                     home_team_id=game.home_team.abbreviation,

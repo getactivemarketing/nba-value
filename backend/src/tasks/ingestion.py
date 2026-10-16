@@ -13,6 +13,7 @@ from src.database import async_session_maker
 from src.services.data.odds_api import OddsAPIClient
 from src.services.data.balldontlie import BallDontLieClient
 from src.models import Game as GameModel, Team as TeamModel, TeamStats, OddsSnapshot, Market
+from src.utils.season import current_nba_season
 
 logger = structlog.get_logger()
 
@@ -131,7 +132,7 @@ async def _ingest_odds_async() -> dict:
                 game_stmt = insert(GameModel).values(
                     game_id=game_id,
                     league="NBA",
-                    season=2025,  # Current season
+                    season=current_nba_season(),
                     game_date=commence_time.date(),
                     tip_time_utc=commence_time,
                     home_team_id=home_abbrev,

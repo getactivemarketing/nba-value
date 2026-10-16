@@ -8,6 +8,7 @@ import structlog
 
 from src.services.data.balldontlie import BallDontLieClient
 from src.config import get_sync_database_url
+from src.utils.season import current_nba_season
 
 logger = structlog.get_logger()
 
@@ -189,7 +190,7 @@ async def score_props(props: list[dict], min_score: int = 50) -> list[ScoredProp
         # Get season averages (with caching)
         if player_id not in avg_cache:
             try:
-                avg_cache[player_id] = await client.get_season_averages(player_id, season=2025)
+                avg_cache[player_id] = await client.get_season_averages(player_id, season=current_nba_season())
             except Exception as e:
                 logger.warning(f"Failed to get averages for {player_name}: {e}")
                 avg_cache[player_id] = None

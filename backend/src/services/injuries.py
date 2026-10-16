@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta
 import structlog
 
 from src.services.data.balldontlie import BallDontLieClient, Injury
+from src.utils.season import current_nba_season
 
 logger = structlog.get_logger()
 
@@ -264,9 +265,8 @@ async def get_player_stats(player_ids: list[int], client: BallDontLieClient) -> 
     if not player_ids:
         return {}
 
-    # Only use current season (2025-26 = 2025)
     # If no data, player has been out all season = team fully adjusted = 0 impact
-    return await client.get_player_season_averages_batch(player_ids, season=2025)
+    return await client.get_player_season_averages_batch(player_ids, season=current_nba_season())
 
 
 def calculate_team_injury_report(
