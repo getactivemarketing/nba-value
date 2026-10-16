@@ -4,7 +4,7 @@ import { useEdgeEv, useEdgeGames } from '@/hooks/useEdge';
 import { EvTable } from '@/components/edge/EvTable';
 import { EdgeStatusBanner } from '@/components/edge/EdgeStatusBanner';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
-import { BOOK_KEYS, DFS_BOOKS, MARKET_KEYS, bookLabel, marketLabel } from '@/lib/edgeFormat';
+import { BOOK_KEYS, DFS_BOOKS, bookLabel, marketKeysFor, marketLabel, type Sport } from '@/lib/edgeFormat';
 
 const MY_BOOKS_KEY = 'edge.myBooks';
 function loadMyBooks(): string[] {
@@ -14,14 +14,14 @@ function saveMyBooks(v: string[]) {
   try { localStorage.setItem(MY_BOOKS_KEY, JSON.stringify(v)); } catch { /* private mode */ }
 }
 
-export function EdgeFinder({ limit }: { limit?: number }) {
+export function EdgeFinder({ limit, sport = 'nba' }: { limit?: number; sport?: Sport }) {
   const [market, setMarket] = useState('');
   const [minEv, setMinEv] = useState(0.02);
   const [eventId, setEventId] = useState('');
   const [myBooks, setMyBooks] = useState<string[]>(loadMyBooks);
-  const { data: games = [] } = useEdgeGames();
+  const { data: games = [] } = useEdgeGames(sport);
   const { data: rows = [], isLoading } = useEdgeEv({
-    market: market || undefined, min_ev: minEv, event_id: eventId || undefined });
+    market: market || undefined, min_ev: minEv, event_id: eventId || undefined }, sport);
 
   const shown = useMemo(() => {
     const r = myBooks.length ? rows.filter((x) => myBooks.includes(x.book)) : rows;
@@ -37,18 +37,21 @@ export function EdgeFinder({ limit }: { limit?: number }) {
 
   return (
     <div>
-      <EdgeStatusBanner />
+      <EdgeStatusBanner sport={sport} />
       {!limit && (
         <>
-          <h1 className="text-3xl font-bold text-[#f1f5f9] font-display tracking-tight">+EV Finder</h1>
+          <h1 className="text-3xl font-bold text-[#f1f5f9] font-display tracking-tight">{sport === 'nfl' ? 'NFL +EV Finder' : '+EV Finder'}</h1>
           <p className="text-sm text-[#64748b] mt-1 font-mono">
             Prices that beat the devigged sharp consensus. Updated every 30 seconds.
           </p>
+          {sport === 'nfl' && (
+            <p className="text-xs text-[#64748b] mt-1 font-mono">NFL player pages and prop results are coming next week.</p>
+          )}
           <div className="mt-4 flex flex-wrap gap-2 text-xs font-mono">
             <select value={market} onChange={(e) => setMarket(e.target.value)}
                     className="bg-[#191c22] border border-[#1e293b] rounded px-2 py-1 text-[#f1f5f9]">
               <option value="">All markets</option>
-              {MARKET_KEYS.map((m) => <option key={m} value={m}>{marketLabel(m)}</option>)}
+              {marketKeysFor(sport).map((m) => <option key={m} value={m}>{marketLabel(m)}</option>)}
             </select>
             <select value={eventId} onChange={(e) => setEventId(e.target.value)}
                     className="bg-[#191c22] border border-[#1e293b] rounded px-2 py-1 text-[#f1f5f9]">
@@ -73,7 +76,7 @@ export function EdgeFinder({ limit }: { limit?: number }) {
       )}
       <div className="mt-4 rounded-xl bg-[#191c22] border border-[#1e293b] p-4">
         {isLoading ? <div className="text-center py-8 text-[#64748b] font-mono text-sm">Loading…</div>
-          : <EvTable rows={shown} playerIds={playerIds} />}
+          : <EvTable rows={shown} playerIds={playerIds} sport={sport} />}
       </div>
       {!limit && <EdgeFooter />}
     </div>

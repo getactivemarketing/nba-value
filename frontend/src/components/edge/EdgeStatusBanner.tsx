@@ -1,8 +1,9 @@
 // frontend/src/components/edge/EdgeStatusBanner.tsx
 import { useEdgeHealth } from '@/hooks/useEdge';
+import type { Sport } from '@/lib/edgeFormat';
 
-export function EdgeStatusBanner() {
-  const { data, isError } = useEdgeHealth();
+export function EdgeStatusBanner({ sport = 'nba' }: { sport?: Sport }) {
+  const { data, isError } = useEdgeHealth(sport);
   if (!isError && !data?.delayed) return null;
   return (
     <div className="mb-4 rounded-lg border border-[#78350f] bg-[#1c1206] px-4 py-2 text-xs font-mono text-[#fbbf24]">

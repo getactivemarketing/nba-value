@@ -37,3 +37,23 @@ describe('outcomeLabel', () => {
     expect(outcomeLabel('player_points', 'under', 27.5, ev)).toBe('Under 27.5');
   });
 });
+
+import { edgeBase, marketKeysFor } from './edgeFormat';
+
+describe('sports', () => {
+  it('labels NFL markets', () => {
+    expect(marketLabel('player_rush_reception_yds')).toBe('Rush+Rec Yds');
+    expect(marketLabel('player_pass_interceptions')).toBe('INTs');
+  });
+  it('lists each sport\'s own markets, lines first', () => {
+    expect(marketKeysFor('nfl')).toEqual(['h2h', 'spreads', 'totals', 'player_pass_yds', 'player_pass_tds',
+      'player_pass_completions', 'player_pass_attempts', 'player_pass_interceptions', 'player_rush_yds',
+      'player_rush_attempts', 'player_receptions', 'player_reception_yds', 'player_rush_reception_yds']);
+    expect(marketKeysFor('nba')).toContain('player_points');
+    expect(marketKeysFor('nba')).not.toContain('player_pass_yds');
+  });
+  it('routes each sport under its own base', () => {
+    expect(edgeBase('nba')).toBe('/edge');
+    expect(edgeBase('nfl')).toBe('/nfl/edge');
+  });
+});

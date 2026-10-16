@@ -10,9 +10,22 @@ const MARKETS: Record<string, string> = {
   player_threes: 'Threes', player_points_rebounds_assists: 'Pts+Reb+Ast',
   player_points_rebounds: 'Pts+Reb', player_points_assists: 'Pts+Ast',
   player_rebounds_assists: 'Reb+Ast', h2h: 'Moneyline', spreads: 'Spread', totals: 'Total',
+  player_pass_yds: 'Pass Yds', player_pass_tds: 'Pass TDs', player_pass_completions: 'Completions',
+  player_pass_attempts: 'Pass Att', player_pass_interceptions: 'INTs', player_rush_yds: 'Rush Yds',
+  player_rush_attempts: 'Rush Att', player_receptions: 'Receptions', player_reception_yds: 'Rec Yds',
+  player_rush_reception_yds: 'Rush+Rec Yds',
 };
+const NBA_MARKETS = ['h2h', 'spreads', 'totals', 'player_points', 'player_rebounds', 'player_assists',
+  'player_threes', 'player_points_rebounds_assists', 'player_points_rebounds', 'player_points_assists',
+  'player_rebounds_assists'];
+const NFL_MARKETS = ['h2h', 'spreads', 'totals', 'player_pass_yds', 'player_pass_tds',
+  'player_pass_completions', 'player_pass_attempts', 'player_pass_interceptions', 'player_rush_yds',
+  'player_rush_attempts', 'player_receptions', 'player_reception_yds', 'player_rush_reception_yds'];
+export type Sport = 'nba' | 'nfl';
+export const marketKeysFor = (sport: Sport) => (sport === 'nfl' ? NFL_MARKETS : NBA_MARKETS);
+export const edgeBase = (sport: Sport) => (sport === 'nfl' ? '/nfl/edge' : '/edge');
 export const BOOK_KEYS = Object.keys(BOOKS);
-export const MARKET_KEYS = Object.keys(MARKETS);
+export const MARKET_KEYS = NBA_MARKETS;
 export const DFS_BOOKS = new Set(['prizepicks', 'underdog']);
 
 export const fmtAmerican = (n: number | null | undefined) =>

@@ -3,23 +3,23 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { useEdgeOdds } from '@/hooks/useEdge';
 import { EdgeStatusBanner } from '@/components/edge/EdgeStatusBanner';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
-import { BOOK_KEYS, bookLabel, fmtAmerican, marketLabel, MARKET_KEYS, outcomeLabel } from '@/lib/edgeFormat';
+import { BOOK_KEYS, bookLabel, fmtAmerican, marketKeysFor, marketLabel, outcomeLabel, type Sport } from '@/lib/edgeFormat';
 
-export function EdgeOdds() {
+export function EdgeOdds({ sport = 'nba' }: { sport?: Sport }) {
   const { eventId = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const market = params.get('market') || 'h2h';
-  const { data, isLoading } = useEdgeOdds(eventId, market);
+  const { data, isLoading } = useEdgeOdds(eventId, market, sport);
   const books = BOOK_KEYS.filter((b) => data?.rows.some((r) => r.prices[b]));
 
   return (
     <div>
-      <EdgeStatusBanner />
+      <EdgeStatusBanner sport={sport} />
       <h1 className="text-2xl font-black font-mono text-[#f1f5f9]">
         {data?.event ? `${data.event.away_team} @ ${data.event.home_team}` : 'Odds'}
       </h1>
       <div className="mt-3 flex flex-wrap gap-1">
-        {MARKET_KEYS.map((m) => (
+        {marketKeysFor(sport).map((m) => (
           <button key={m} onClick={() => setParams({ market: m })}
                   className={`text-[10px] font-mono rounded px-2 py-1 border ${m === market
                     ? 'border-[#a4e6ff] text-[#a4e6ff]' : 'border-[#1e293b] text-[#64748b]'}`}>

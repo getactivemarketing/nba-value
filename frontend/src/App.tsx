@@ -25,6 +25,8 @@ function App() {
         <Route path="/mlb/performance" element={<MLBEvaluation />} />
         <Route path="/nrfi" element={<NRFI />} />
         <Route path="/nfl" element={<NFLPicks />} />
+        <Route path="/nfl/edge" element={<EdgeFinder sport="nfl" />} />
+        <Route path="/nfl/edge/odds/:eventId" element={<EdgeOdds sport="nfl" />} />
         <Route path="/nfl/performance" element={<NFLEvaluation />} />
         <Route path="/trends" element={<Trends />} />
         <Route path="/evaluation" element={<Navigate to="/edge/results" replace />} />

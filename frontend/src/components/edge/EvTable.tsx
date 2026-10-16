@@ -1,9 +1,10 @@
 // frontend/src/components/edge/EvTable.tsx
 import { Link } from 'react-router-dom';
 import type { EvRow } from '@/types/edge';
-import { bookLabel, fmtAge, fmtAmerican, fmtEv } from '@/lib/edgeFormat';
+import { bookLabel, edgeBase, fmtAge, fmtAmerican, fmtEv, type Sport } from '@/lib/edgeFormat';
 
-export function EvTable({ rows, playerIds = {} }: { rows: EvRow[]; playerIds?: Record<string, number> }) {
+export function EvTable({ rows, playerIds = {}, sport = 'nba' }:
+  { rows: EvRow[]; playerIds?: Record<string, number>; sport?: Sport }) {
   if (!rows.length) {
     return <div className="text-center py-8 text-[#64748b] font-mono text-sm">No +EV prices right now.</div>;
   }
@@ -26,11 +27,11 @@ export function EvTable({ rows, playerIds = {} }: { rows: EvRow[]; playerIds?: R
               </td>
               <td className="py-2">
                 <div className="text-[#f1f5f9]">
-                  {r.player && playerIds[r.player]
+                  {sport === 'nba' && r.player && playerIds[r.player]
                     ? <Link to={`/edge/player/${playerIds[r.player]}?market=${r.market}`} className="hover:underline">{r.bet}</Link>
                     : r.bet}
                 </div>
-                <Link to={`/edge/odds/${r.event_id}?market=${r.market}`} className="text-[10px] text-[#64748b] font-mono hover:underline">
+                <Link to={`${edgeBase(sport)}/odds/${r.event_id}?market=${r.market}`} className="text-[10px] text-[#64748b] font-mono hover:underline">
                   {r.matchup}
                 </Link>
               </td>
