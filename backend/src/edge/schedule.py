@@ -26,9 +26,15 @@ def base_intervals(minutes_to_tip: float) -> tuple[int, int] | None:
     return (10, 15)
 
 
-def interval_for(market: str, minutes_to_tip: float, factor: int) -> timedelta | None:
+FAR_LINES_MINUTES = 60  # game lines between 36 h and the sport's window edge
+
+
+def interval_for(market: str, minutes_to_tip: float, factor: int,
+                 lines_window_hours: int = 36) -> timedelta | None:
     base = base_intervals(minutes_to_tip)
     if base is None:
+        if not market.startswith("player_") and 0 < minutes_to_tip <= lines_window_hours * 60:
+            return timedelta(minutes=FAR_LINES_MINUTES * factor)
         return None
     minutes = base[1] if market.startswith("player_") else base[0]
     return timedelta(minutes=minutes * factor)
@@ -47,13 +53,14 @@ def _minutes_to(commence: datetime, now: datetime) -> float:
 
 
 def fresh(quotes: Iterable[Quote], commence_by_event: dict[str, datetime], now: datetime,
-          factor: int) -> list[Quote]:
+          factor: int, lines_window_hours: int = 36) -> list[Quote]:
     out = []
     for q in quotes:
         commence = commence_by_event.get(q.event_id)
         if commence is None:
             continue
-        if not is_stale(q.observed_at, interval_for(q.market, _minutes_to(commence, now), factor), now):
+        if not is_stale(q.observed_at, interval_for(q.market, _minutes_to(commence, now), factor,
+                                                    lines_window_hours), now):
             out.append(q)
     return out
 
@@ -83,11 +90,11 @@ class PollPlan:
     prop_events: list[str]
 
 
-def plan_polls(events: list[dict], now: datetime, factor: int) -> PollPlan:
+def plan_polls(events: list[dict], now: datetime, factor: int, lines_window_hours: int = 36) -> PollPlan:
     lines, props = False, []
     for e in events:
         mins = _minutes_to(e["commence_time"], now)
-        li = interval_for("h2h", mins, factor)
+        li = interval_for("h2h", mins, factor, lines_window_hours)
         pi = interval_for("player_points", mins, factor)
         if li is not None and is_due(e.get("last_lines_poll"), li, now):
             lines = True
