@@ -136,36 +136,58 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime) -> dict:
         out["graded"] = grading.run_grading(conn, now)
         store.set_state(conn, "last_grading", _iso(now), now)
 
-    # Box scores once a day after 09:00 UTC, for yesterday (ET). A BallDontLie
-    # failure is recorded under its own key (the loop clears last_error on every
-    # good tick) and the day is marked done so we retry tomorrow, not every 30s.
-    yday = players.et_date(now) - timedelta(days=1)
-    if now.hour >= 9 and state.get("last_box_scores_date") != yday.isoformat():
+    # BallDontLie work never blocks odds: failures land in bdl_error.
+    for step in (box_scores_step, backfill_step):
         try:
-            out["box_rows"] = await players.ingest_box_scores(conn, bdl, yday)
-            store.set_state(conn, "bdl_error", "", now)
-        except players.BdlError as e:
-            store.set_state(conn, "bdl_error", f"balldontlie {e.status}: {e}"[:300], now)
-        store.set_state(conn, "last_box_scores_date", yday.isoformat(), now)
+            await step(conn, bdl, now)
+        except Exception as e:  # noqa: BLE001
+            store.set_state(conn, "bdl_error", redact(f"{step.__name__}: {type(e).__name__}: {e}")[:300], now)
 
     return out
 
 
-async def ensure_backfill(conn, bdl, now: datetime) -> None:
-    """One-time load of last season's box scores so hit rates work on night one.
+async def box_scores_step(conn, bdl, now: datetime) -> int:
+    """Load box scores for any of the last 3 ET days whose finished games lack them.
 
-    Runs inside the worker because only Railway can reach the private DB host.
+    Hourly. A day is only "done" when every team that finished a game that day
+    has rows, so a late or failed BallDontLie load is retried instead of lost.
+    """
+    last = _parse(store.get_state(conn).get("last_box_attempt"))
+    if last is not None and now - last < timedelta(minutes=60):
+        return 0
+    store.set_state(conn, "last_box_attempt", _iso(now), now)
+    loaded = 0
+    yday = players.et_date(now) - timedelta(days=1)
+    for d in (yday - timedelta(days=2), yday - timedelta(days=1), yday):
+        if grading.box_scores_missing(conn, d):
+            loaded += await players.ingest_box_scores(conn, bdl, d)
+    store.set_state(conn, "bdl_error", "", now)
+    return loaded
+
+
+async def backfill_step(conn, bdl, now: datetime, days: int = 3) -> int:
+    """Load last season's box scores a few days per tick, resuming from a cursor.
+
+    Runs between polls (never before them), so a deploy on game night does
+    not delay odds, and an error only costs the current step.
     """
     prev = current_nba_season(now.date()) - 1
-    key = f"backfill_{prev}"
-    if store.get_state(conn).get(key) == "done":
-        return
+    key = f"backfill_{prev}_next"
+    start, end = date(prev, 10, 15), date(prev + 1, 6, 30)
+    cursor = store.get_state(conn).get(key)
+    d = date.fromisoformat(cursor) if cursor else start
+    rows = 0
     try:
-        total = await players.backfill(conn, bdl, date(prev, 10, 15), date(prev + 1, 6, 30))
-        store.set_state(conn, key, "done", now)
-        log.info("edge backfill %s: %s rows", prev, total)
-    except players.BdlError as e:
-        store.set_state(conn, "bdl_error", f"backfill: balldontlie {e.status}: {e}"[:300], now)
+        for _ in range(days):
+            if d > end:
+                break
+            rows += await players.ingest_box_scores(conn, bdl, d)
+            d += timedelta(days=1)
+            store.set_state(conn, key, d.isoformat(), now)
+    except Exception as e:  # noqa: BLE001 - cursor stays put; next tick retries this date
+        conn.rollback()
+        store.set_state(conn, "bdl_error", redact(f"backfill {d}: {type(e).__name__}: {e}")[:300], now)
+    return rows
 
 
 async def _run() -> None:
@@ -174,7 +196,6 @@ async def _run() -> None:
     backoff = Backoff()
     blocked_until: datetime | None = None
     conn = store.connect()
-    await ensure_backfill(conn, bdl, datetime.now(timezone.utc))
     while True:
         now = datetime.now(timezone.utc)
         try:

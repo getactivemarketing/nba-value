@@ -5,7 +5,7 @@ Skipped unless EDGE_TEST_DB_URL points at a disposable database, e.g.
 The edge_* tables are dropped and recreated on every run.
 """
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import psycopg2
 import pytest
@@ -245,3 +245,77 @@ async def test_events_missing_from_the_feed_drop_out(conn):
     later = now + timedelta(minutes=61)
     await worker.tick(conn, _FakeOdds([ev("a")]), _FakeBdl(), later)  # b postponed
     assert [e["event_id"] for e in store.upcoming_events(conn, later)] == ["a"]
+
+
+class _BoxBdl:
+    """Fake BallDontLie: box scores for a date appear only once `ready` holds it."""
+
+    def __init__(self):
+        self.ready, self.calls = set(), []
+
+    async def teams(self):
+        return {2: "BOS", 9: "DET"}
+
+    async def stats_for_date(self, d):
+        self.calls.append(d)
+        if d not in self.ready:
+            return []
+        return [{"player": {"id": 434}, "team": {"id": 2, "abbreviation": "BOS"},
+                 "game": {"id": 1, "date": d.isoformat(), "season": 2026, "home_team_id": 9, "visitor_team_id": 2},
+                 "min": "36", "pts": 30, "reb": 8, "ast": 6, "fg3m": 4, "stl": 1, "blk": 0, "turnover": 3},
+                {"player": {"id": 777}, "team": {"id": 9, "abbreviation": "DET"},
+                 "game": {"id": 1, "date": d.isoformat(), "season": 2026, "home_team_id": 9, "visitor_team_id": 2},
+                 "min": "30", "pts": 20, "reb": 5, "ast": 5, "fg3m": 2, "stl": 1, "blk": 0, "turnover": 1}]
+
+
+@pytest.mark.asyncio
+async def test_missed_box_score_day_is_retried_until_loaded(conn):
+    from src.edge import worker
+
+    game_day = datetime(2026, 10, 20, 23, 0, tzinfo=timezone.utc)  # 7pm ET Oct 20
+    store.upsert_events(conn, [{**_event(), "commence_time": game_day}])
+    with conn.cursor() as cur:
+        cur.execute("UPDATE edge_events SET completed = TRUE, status = 'final'")
+    conn.commit()
+    bdl = _BoxBdl()
+    t = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
+    await worker.box_scores_step(conn, bdl, t)                       # BDL late: no rows yet
+    assert bdl.calls[-1].isoformat() == "2026-10-20"
+    n = len(bdl.calls)
+    await worker.box_scores_step(conn, bdl, t + timedelta(minutes=30))  # throttled (hourly)
+    assert len(bdl.calls) == n
+    bdl.ready.add(game_day.date())
+    await worker.box_scores_step(conn, bdl, t + timedelta(minutes=61))  # retried, now loads
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM edge_player_games WHERE game_date = '2026-10-20'")
+        assert cur.fetchone()[0] == 2
+    bdl.calls.clear()
+    await worker.box_scores_step(conn, bdl, t + timedelta(minutes=125))  # complete: no refetch
+    assert date(2026, 10, 20) not in bdl.calls
+
+
+class _FlakyBdl(_BoxBdl):
+    def __init__(self, fail_on):
+        super().__init__()
+        self.fail_on = fail_on
+
+    async def stats_for_date(self, d):
+        if d == self.fail_on:
+            self.fail_on = None
+            raise RuntimeError("network blip")
+        self.calls.append(d)
+        return []
+
+
+@pytest.mark.asyncio
+async def test_backfill_runs_in_steps_and_resumes_after_errors(conn):
+    from src.edge import worker
+
+    now = datetime(2026, 10, 18, 12, 0, tzinfo=timezone.utc)
+    bdl = _FlakyBdl(fail_on=date(2025, 10, 18))
+    await worker.backfill_step(conn, bdl, now, days=3)  # 10-15, 10-16, 10-17
+    assert bdl.calls == [date(2025, 10, 15), date(2025, 10, 16), date(2025, 10, 17)]
+    await worker.backfill_step(conn, bdl, now, days=3)  # 10-18 blows up: cursor stays
+    assert store.get_state(conn)["backfill_2025_next"] == "2025-10-18"
+    await worker.backfill_step(conn, bdl, now, days=3)  # resumes at 10-18
+    assert bdl.calls[3] == date(2025, 10, 18)

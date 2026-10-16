@@ -2,7 +2,7 @@
 """Closing-line value and results for logged opportunities (spec §6.4)."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from psycopg2.extras import RealDictCursor
 
@@ -52,6 +52,21 @@ def prop_result(opp: dict, player_game: dict | None, team_has_box: bool) -> str 
     if (player_game.get("minutes") or 0) <= 0:
         return "void"
     return grade_over_under(stat_for(opp["market"], player_game), float(opp["line"]), opp["side"])
+
+
+def box_scores_missing(conn, d) -> bool:
+    """True when a team that finished a game on ET date `d` has no box-score rows."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT home_team, away_team, commence_time FROM edge_events
+                       WHERE completed AND commence_time BETWEEN %s AND %s""",
+                    (datetime.combine(d, datetime.min.time(), timezone.utc) - timedelta(hours=12),
+                     datetime.combine(d, datetime.min.time(), timezone.utc) + timedelta(hours=36)))
+        teams = {ABBR_BY_NAME.get(t) for h, a, c in cur.fetchall() if et_date(c) == d for t in (h, a)} - {None}
+        if not teams:
+            return False
+        cur.execute("SELECT DISTINCT team FROM edge_player_games WHERE game_date = %s AND team = ANY(%s)",
+                    (d, sorted(teams)))
+        return len({r[0] for r in cur.fetchall()}) < len(teams)
 
 
 def games_in_progress(conn, now: datetime) -> bool:

@@ -157,3 +157,14 @@ async def test_resolve_survives_rate_limits():
     n = await p.resolve_new_players(conn, bdl, [_q("Jayson Tatum")], EVENT, NOW)
     assert n == 0  # nothing written, nothing raised; names retry on the next poll
     assert not any("INSERT" in s for s in conn.sql)
+
+
+@pytest.mark.asyncio
+async def test_bdl_network_errors_become_bdl_errors():
+    def handler(request):
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+    bdl = p.BdlClient(api_key="k", transport=httpx.MockTransport(handler), min_interval=0)
+    with pytest.raises(p.BdlError) as exc:
+        await bdl.teams()
+    assert exc.value.status == 0

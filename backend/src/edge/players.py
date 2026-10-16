@@ -142,15 +142,25 @@ class BdlError(Exception):
 class BdlClient:
     BASE = "https://api.balldontlie.io/v1"
 
-    def __init__(self, api_key: str | None = None, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, api_key: str | None = None, transport: httpx.AsyncBaseTransport | None = None,
+                 min_interval: float = 1.05):
         self.api_key = api_key if api_key is not None else settings.balldontlie_api_key
         self.transport = transport
+        self.min_interval = min_interval  # ALL-STAR allows 60 req/min
+        self._last_call = 0.0
         self._teams: dict[int, str] | None = None
         self._rosters: dict[str, tuple[float, list[dict]]] = {}
 
     async def _get(self, path: str, params: dict) -> dict:
-        async with httpx.AsyncClient(transport=self.transport, timeout=30.0) as c:
-            r = await c.get(f"{self.BASE}/{path}", params=params, headers={"Authorization": self.api_key})
+        wait = self._last_call + self.min_interval - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        self._last_call = time.monotonic()
+        try:
+            async with httpx.AsyncClient(transport=self.transport, timeout=30.0) as c:
+                r = await c.get(f"{self.BASE}/{path}", params=params, headers={"Authorization": self.api_key})
+        except httpx.HTTPError as e:
+            raise BdlError(0, f"BallDontLie network error on {path}: {type(e).__name__}") from None
         if r.status_code != 200:
             raise BdlError(r.status_code, f"BallDontLie {r.status_code} on {path}")
         return r.json()
@@ -260,8 +270,7 @@ async def backfill(conn, bdl: BdlClient, start: date, end: date) -> int:
         n = await ingest_box_scores(conn, bdl, d)
         total += n
         print(f"{d} {n} rows (total {total})", flush=True)
-        d += timedelta(days=1)
-        await asyncio.sleep(1.1)  # stays under 60 req/min
+        d += timedelta(days=1)  # BdlClient spaces requests itself
     return total
 
 
