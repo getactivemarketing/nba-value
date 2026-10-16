@@ -1,0 +1,26 @@
+[
+ {
+  "id": "57418b2cf5aca558b3c98eafac1e264a",
+  "sport_key": "americanfootball_nfl",
+  "sport_title": "NFL",
+  "commence_time": "2026-10-18T13:30:00Z",
+  "home_team": "Jacksonville Jaguars",
+  "away_team": "Houston Texans"
+ },
+ {
+  "id": "7c312fdf24fb35f58b0e07c2932cc997",
+  "sport_key": "americanfootball_nfl",
+  "sport_title": "NFL",
+  "commence_time": "2026-10-18T17:00:00Z",
+  "home_team": "Atlanta Falcons",
+  "away_team": "Chicago Bears"
+ },
+ {
+  "id": "e86227938fd3cf008fc5648fb5128344",
+  "sport_key": "americanfootball_nfl",
+  "sport_title": "NFL",
+  "commence_time": "2026-10-18T17:00:00Z",
+  "home_team": "Cleveland Browns",
+  "away_team": "Baltimore Ravens"
+ }
+]
