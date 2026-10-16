@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from psycopg2.extras import RealDictCursor
 
 from src.config import settings
+from src.edge.config import NBA, SportConfig
 from src.edge import players, schedule, store
 from src.edge.engine import fair_prob, group, prob_to_american, price_quotes
 from src.edge.quotes import Quote, sides_for
@@ -99,27 +100,34 @@ def _factor(conn) -> int:
     return int(store.get_state(conn).get("guard_factor", "1"))
 
 
-def games(conn, now: datetime) -> list[dict]:
+def games(conn, now: datetime, sport: SportConfig = NBA) -> list[dict]:
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""SELECT e.event_id, e.home_team, e.away_team, e.commence_time, e.last_lines_poll,
                               e.last_props_poll, COUNT(DISTINCT (q.player, q.market)) FILTER
                               (WHERE q.player <> '') AS prop_markets
                        FROM edge_events e LEFT JOIN edge_quotes q USING (event_id)
-                       WHERE e.commence_time > %s AND e.commence_time <= %s
-                       GROUP BY e.event_id ORDER BY e.commence_time""", (now, now + timedelta(hours=36)))
+                       WHERE e.commence_time > %s AND e.commence_time <= %s AND e.sport = %s
+                         AND e.status <> 'unavailable'
+                       GROUP BY e.event_id ORDER BY e.commence_time""",
+                    (now, now + timedelta(hours=sport.lines_window_hours), sport.key))
         return [dict(r) for r in cur.fetchall()]
 
 
 def ev_rows(conn, now: datetime, market: str | None = None, book: str | None = None,
-            min_ev: float | None = None, event_id: str | None = None) -> list[dict]:
-    events = {e["event_id"]: e for e in store.upcoming_events(conn, now)}
+            min_ev: float | None = None, event_id: str | None = None,
+            sport: SportConfig = NBA) -> list[dict]:
+    events = {e["event_id"]: e for e in store.upcoming_events(
+        conn, now, hours=sport.lines_window_hours, sport=sport.key)}
+    if event_id and event_id not in events:
+        return []  # another sport's (or a past) event
     ids = [event_id] if event_id else list(events)
     if not ids:
         return []
     commence = {k: v["commence_time"] for k, v in events.items()}
-    quotes = schedule.fresh(store.load_quotes(conn, ids, market), commence, now, _factor(conn))
+    quotes = schedule.fresh(store.load_quotes(conn, ids, market), commence, now, _factor(conn),
+                            sport.lines_window_hours)
     threshold = settings.edge_min_ev if min_ev is None else min_ev
-    player_ids = _player_ids(conn)
+    player_ids = _player_ids(conn) if sport.has_players else {}
     out = []
     for p in price_quotes(quotes, threshold, settings.edge_verify_ev):
         q = p.quote
@@ -145,14 +153,15 @@ def _player_ids(conn) -> dict[str, int]:
         return {name: pid for name, pid in cur.fetchall()}
 
 
-def odds(conn, now: datetime, event_id: str, market: str) -> dict:
+def odds(conn, now: datetime, event_id: str, market: str, sport: SportConfig = NBA) -> dict:
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT * FROM edge_events WHERE event_id = %s", (event_id,))
+        cur.execute("SELECT * FROM edge_events WHERE event_id = %s AND sport = %s", (event_id, sport.key))
         e = cur.fetchone()
     if not e:
         return {"event": None, "rows": []}
     quotes = store.load_quotes(conn, [event_id], market)
-    fresh_q = schedule.fresh(quotes, {event_id: e["commence_time"]}, now, _factor(conn))
+    fresh_q = schedule.fresh(quotes, {event_id: e["commence_time"]}, now, _factor(conn),
+                             sport.lines_window_hours)
     fair = {}
     for (_, mkt, player, line), books in group(fresh_q).items():
         for side in sides_for(mkt):
@@ -198,16 +207,18 @@ def player(conn, now: datetime, bdl_id: int, market: str, line: float | None, mi
     }
 
 
-def results(conn, now: datetime, days: int, market: str | None, book: str | None) -> dict:
-    sql = """SELECT event_id, market, player, line, side, book, price, clv, result, profit_units,
-                    first_seen_at FROM edge_opportunities
-             WHERE closing_done AND first_seen_at >= %s"""
-    params: list = [now - timedelta(days=days)]
+def results(conn, now: datetime, days: int, market: str | None, book: str | None,
+            sport: SportConfig = NBA) -> dict:
+    sql = """SELECT o.event_id, o.market, o.player, o.line, o.side, o.book, o.price, o.clv, o.result,
+                    o.profit_units, o.first_seen_at
+             FROM edge_opportunities o JOIN edge_events e USING (event_id)
+             WHERE o.closing_done AND o.first_seen_at >= %s AND e.sport = %s"""
+    params: list = [now - timedelta(days=days), sport.key]
     if market:
-        sql += " AND market = %s"
+        sql += " AND o.market = %s"
         params.append(market)
     if book:
-        sql += " AND book = %s"
+        sql += " AND o.book = %s"
         params.append(book)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)
@@ -239,8 +250,9 @@ def status(conn, now: datetime) -> dict:
     }
 
 
-def public_status(conn, now: datetime) -> dict:
+def public_status(conn, now: datetime, sport: SportConfig = NBA) -> dict:
     """The banner's view: no credits, no errors, nothing an outsider can use."""
     s = status(conn, now)
     age = s["heartbeat_age_s"]
-    return {"delayed": age is None or age > 600 or bool(s["last_error"])}
+    sport_error = store.get_state(conn).get(f"sport_error:{sport.slug}")
+    return {"delayed": age is None or age > 600 or bool(s["last_error"]) or bool(sport_error)}

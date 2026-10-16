@@ -175,7 +175,7 @@ def _health(c, headers):
 def test_users_behind_the_vercel_proxy_get_their_own_budget(monkeypatch):
     """Browsers reach Railway via Vercel's rewrite: X-Real-IP is Vercel, XFF has the user."""
     monkeypatch.setattr(edge_api, "_conn", _fake_conn)
-    monkeypatch.setattr(views, "public_status", lambda conn, now: {"ok": True})
+    monkeypatch.setattr(views, "public_status", lambda conn, now, sport=None: {"ok": True})
     edge_api._reset_limits()
     c = TestClient(app)
     vercel = "76.76.21.21"
@@ -189,7 +189,7 @@ def test_users_behind_the_vercel_proxy_get_their_own_budget(monkeypatch):
 
 def test_rotating_a_spoofed_forwarded_for_still_hits_the_peer_cap(monkeypatch):
     monkeypatch.setattr(edge_api, "_conn", _fake_conn)
-    monkeypatch.setattr(views, "public_status", lambda conn, now: {"ok": True})
+    monkeypatch.setattr(views, "public_status", lambda conn, now, sport=None: {"ok": True})
     monkeypatch.setattr(edge_api, "_peer_limiter", edge_api.RateLimiter(1.0, 10))
     edge_api._limiter.reset()
     c = TestClient(app)
@@ -214,3 +214,16 @@ def test_limiter_refills_and_stays_bounded():
     for ip in "bcdef":
         lim.allow(ip, now=2.0)
     assert len(lim) <= 3
+
+
+def test_unknown_sport_is_422_and_sport_is_part_of_the_cache_key(monkeypatch):
+    monkeypatch.setattr(edge_api, "_conn", _fake_conn)
+    seen = []
+    monkeypatch.setattr(views, "games", lambda conn, now, sport: seen.append(sport.slug) or [])
+    edge_api._cache.clear()
+    edge_api._reset_limits()
+    c = TestClient(app)
+    assert c.get(f"{P}/games", params={"sport": "nhl"}).status_code == 422
+    c.get(f"{P}/games")
+    c.get(f"{P}/games", params={"sport": "nfl"})
+    assert seen == ["nba", "nfl"]  # separate cache entries per sport

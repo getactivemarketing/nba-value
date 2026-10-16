@@ -21,6 +21,7 @@ from src.api.admin import _verify_cron_key
 from src.api.deps import require_admin
 from src.config import get_sync_database_url
 from src.edge import store, views
+from src.edge.config import SPORTS, SportConfig
 from src.utils.redact import redact
 
 TTL = 25.0
@@ -156,23 +157,29 @@ def _cached(key: tuple, build):
     return value
 
 
+def _sport(sport: str = Query("nba")) -> SportConfig:
+    if sport not in SPORTS:
+        raise HTTPException(status_code=422, detail=f"unknown sport {sport!r}; one of {sorted(SPORTS)}")
+    return SPORTS[sport]
+
+
 @router.get("/games")
-def get_games(tier: str = Depends(access_tier)) -> dict:
-    return {"games": _cached(("games",), lambda c, now: views.games(c, now)), "access_tier": tier}
+def get_games(sp: SportConfig = Depends(_sport), tier: str = Depends(access_tier)) -> dict:
+    return {"games": _cached(("games", sp.slug), lambda c, now: views.games(c, now, sp)), "access_tier": tier}
 
 
 @router.get("/ev")
 def get_ev(market: str | None = None, book: str | None = None,
            min_ev: float | None = Query(None, ge=0, le=1), event_id: str | None = None,
-           tier: str = Depends(access_tier)) -> dict:
-    rows = _cached(("ev", market, book, min_ev, event_id), lambda c, now: views.ev_rows(
-        c, now, market=market, book=book, min_ev=min_ev, event_id=event_id))
+           sp: SportConfig = Depends(_sport), tier: str = Depends(access_tier)) -> dict:
+    rows = _cached(("ev", sp.slug, market, book, min_ev, event_id), lambda c, now: views.ev_rows(
+        c, now, market=market, book=book, min_ev=min_ev, event_id=event_id, sport=sp))
     return {"rows": rows, "access_tier": tier}
 
 
 @router.get("/odds/{event_id}")
-def get_odds(event_id: str, market: str = "h2h") -> dict:
-    return _cached(("odds", event_id, market), lambda c, now: views.odds(c, now, event_id, market))
+def get_odds(event_id: str, market: str = "h2h", sp: SportConfig = Depends(_sport)) -> dict:
+    return _cached(("odds", sp.slug, event_id, market), lambda c, now: views.odds(c, now, event_id, market, sp))
 
 
 @router.get("/players/{bdl_id}")
@@ -184,13 +191,14 @@ def get_player(bdl_id: int, market: str = "player_points", line: float | None = 
 
 @router.get("/results")
 def get_results(days: int = Query(365, ge=1, le=730), market: str | None = None,
-                book: str | None = None) -> dict:
-    return _cached(("results", days, market, book), lambda c, now: views.results(c, now, days, market, book))
+                book: str | None = None, sp: SportConfig = Depends(_sport)) -> dict:
+    return _cached(("results", sp.slug, days, market, book),
+                   lambda c, now: views.results(c, now, days, market, book, sp))
 
 
 @router.get("/health")
-def get_public_health() -> dict:
-    return _cached(("health",), lambda c, now: views.public_status(c, now))
+def get_public_health(sp: SportConfig = Depends(_sport)) -> dict:
+    return _cached(("health", sp.slug), lambda c, now: views.public_status(c, now, sp))
 
 
 @router.get("/status", dependencies=[Depends(require_admin)])

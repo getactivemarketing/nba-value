@@ -544,3 +544,61 @@ async def test_account_wide_errors_still_raise_for_global_backoff(conn):
     from src.edge.config import NBA, NFL
     with pytest.raises(OddsApiError):
         await worker.tick(conn, _FakeOdds([], fail_nfl=401), _FakeBdl(), NOW, sports=[NBA, NFL])
+
+
+def _seed_two_sports(conn):
+    """One NBA and one NFL game 2 h out, each with a clear +EV over at fanduel."""
+    store.upsert_events(conn, [_event(), _nfl_event()])
+
+    def qs(eid, market, player):
+        return [Quote(eid, market, player, side, 10.5, book, price, "https://x", NOW - timedelta(minutes=1))
+                for book, over, under in (("pinnacle", -110, -110), ("novig", -110, -110),
+                                          ("draftkings", -112, -108), ("fanduel", 140, -170))
+                for side, price in (("over", over), ("under", under))]
+    store.write_quotes(conn, qs("e1", "player_points", "Jayson Tatum") + qs("n1", "player_rush_yds", "Bijan Robinson"))
+
+
+def test_views_never_mix_sports(conn):
+    from src.edge import views
+    from src.edge.config import NBA, NFL
+    _seed_two_sports(conn)
+    nba = views.ev_rows(conn, NOW, min_ev=0.0, sport=NBA)
+    nfl = views.ev_rows(conn, NOW, min_ev=0.0, sport=NFL)
+    assert nba and {r["event_id"] for r in nba} == {"e1"}
+    assert nfl and {r["event_id"] for r in nfl} == {"n1"}
+    assert all(r["bdl_player_id"] is None for r in nfl)
+    assert nfl[0]["market_label"] == "Rush Yds"
+    # an NFL event id under NBA returns nothing
+    assert views.ev_rows(conn, NOW, min_ev=0.0, event_id="n1", sport=NBA) == []
+    assert views.odds(conn, NOW, "n1", "player_rush_yds", sport=NBA)["rows"] == []
+    assert views.odds(conn, NOW, "n1", "player_rush_yds", sport=NFL)["rows"]
+    assert [g["event_id"] for g in views.games(conn, NOW, sport=NFL)] == ["n1"]
+    assert [g["event_id"] for g in views.games(conn, NOW, sport=NBA)] == ["e1"]
+
+
+def test_nfl_lines_two_days_out_are_priced(conn):
+    from src.edge import views
+    from src.edge.config import NFL
+    store.upsert_events(conn, [_nfl_event(hours=48)])
+    qs = [Quote("n1", "spreads", "", side, -3.5, book, price, None, NOW - timedelta(minutes=20))
+          for book, h, a in (("pinnacle", -110, -110), ("novig", -110, -110), ("draftkings", -110, -110),
+                             ("fanduel", 130, -160))
+          for side, price in (("home", h), ("away", a))]
+    store.write_quotes(conn, qs)
+    rows = views.ev_rows(conn, NOW, min_ev=0.0, sport=NFL)
+    assert any(r["market"] == "spreads" and r["book"] == "fanduel" for r in rows)
+
+
+def test_results_are_per_sport(conn):
+    from src.edge import views
+    from src.edge.config import NBA, NFL
+    store.upsert_events(conn, [_event(), _nfl_event()])
+    with conn.cursor() as cur:
+        for eid in ("e1", "n1"):
+            cur.execute("""INSERT INTO edge_opportunities (event_id, market, player, side, line, book, price,
+                           first_seen_at, last_seen_at, fair_prob, ev, max_ev, n_books, devig_method,
+                           closing_done, clv) VALUES (%s, 'h2h', '', 'home', 0, 'fanduel', 110, %s, %s,
+                           0.5, 0.05, 0.05, 5, 'power', TRUE, 0.01)""", (eid, NOW, NOW))
+    conn.commit()
+    assert views.results(conn, NOW, 30, None, None, sport=NBA)["n"] == 1
+    assert views.results(conn, NOW, 30, None, None, sport=NFL)["n"] == 1
