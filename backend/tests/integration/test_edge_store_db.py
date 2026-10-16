@@ -331,3 +331,24 @@ def test_only_one_worker_holds_the_lock(conn):
         assert store.try_worker_lock(other) is True
     finally:
         other.close()
+
+
+def test_api_serves_from_the_real_pool(conn, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from src.config import settings
+    from src.edge import api as edge_api
+    from src.main import app
+
+    monkeypatch.setattr(edge_api, "_pool", None)
+    monkeypatch.setattr(edge_api, "get_sync_database_url", lambda: URL)
+    edge_api._cache.clear()
+    edge_api._limiter.reset()
+    c = TestClient(app)
+    for path in ("/edge/games", "/edge/ev", "/edge/health", "/edge/results"):
+        edge_api._cache.clear()
+        r = c.get(f"{settings.api_v1_prefix}{path}")
+        assert r.status_code == 200, (path, r.text[:300])
+    pool = edge_api._pool
+    assert pool is not None and len(pool._used) == 0  # every connection went back
+    pool.closeall()

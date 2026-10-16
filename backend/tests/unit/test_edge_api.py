@@ -81,3 +81,85 @@ def test_ci_clusters_the_same_bet_across_books_and_prices():
     assert s["clv"]["ci95"] is None  # one independent bet: no interval yet
     two = same_bet + [row("fanduel", 110, -0.01, player="B")]
     assert views.results_summary(two)["clv"]["bets"] == 2
+
+
+# --- Hardening: bounded cache, pooled connections, per-IP rate limit.
+
+def test_cache_is_bounded(monkeypatch):
+    monkeypatch.setattr(edge_api, "_conn", _fake_conn)
+    edge_api._cache.clear()
+    for i in range(edge_api.MAX_CACHE_ENTRIES + 100):
+        edge_api._cached(("k", i), lambda c, now, i=i: i)
+    assert len(edge_api._cache) <= edge_api.MAX_CACHE_ENTRIES
+    assert ("k", edge_api.MAX_CACHE_ENTRIES + 99) in edge_api._cache  # newest kept
+
+
+class _FakeConn:
+    def __init__(self):
+        self.closed = 0
+        self.rolled_back = 0
+
+    def rollback(self):
+        self.rolled_back += 1
+
+
+class _FakePool:
+    def __init__(self):
+        self.out, self.returned = [], []
+
+    def getconn(self):
+        c = _FakeConn()
+        self.out.append(c)
+        return c
+
+    def putconn(self, conn, close=False):
+        self.returned.append((conn, close))
+
+
+def test_connections_come_from_a_shared_pool_and_go_back(monkeypatch):
+    pool = _FakePool()
+    monkeypatch.setattr(edge_api, "_get_pool", lambda: pool)
+    with edge_api._conn() as c:
+        assert c is pool.out[0]
+    assert pool.returned == [(c, False)] and c.rolled_back == 1  # no open transaction left behind
+
+
+def test_a_failed_request_discards_its_connection(monkeypatch):
+    pool = _FakePool()
+    monkeypatch.setattr(edge_api, "_get_pool", lambda: pool)
+    try:
+        with edge_api._conn():
+            raise RuntimeError("query failed")
+    except RuntimeError:
+        pass
+    assert pool.returned[0][1] is True
+
+
+def test_pool_is_created_once(monkeypatch):
+    made = []
+    monkeypatch.setattr(edge_api, "_pool", None)
+    monkeypatch.setattr(edge_api, "ThreadedConnectionPool", lambda *a, **k: made.append(1) or _FakePool())
+    assert edge_api._get_pool() is edge_api._get_pool() and len(made) == 1
+
+
+def test_public_routes_are_rate_limited_per_client_ip(monkeypatch):
+    monkeypatch.setattr(edge_api, "_conn", _fake_conn)
+    monkeypatch.setattr(views, "public_status", lambda conn, now: {"ok": True})
+    edge_api._limiter.reset()
+    c = TestClient(app)
+    codes = [c.get(f"{P}/health", headers={"X-Real-IP": "1.2.3.4"}).status_code
+             for _ in range(edge_api.RATE_BURST + 5)]
+    assert codes[:edge_api.RATE_BURST] == [200] * edge_api.RATE_BURST
+    assert codes[-1] == 429
+    # A different client is unaffected.
+    assert c.get(f"{P}/health", headers={"X-Real-IP": "5.6.7.8"}).status_code == 200
+    edge_api._limiter.reset()
+
+
+def test_limiter_refills_and_stays_bounded():
+    lim = edge_api.RateLimiter(rate_per_s=1.0, burst=2, max_clients=3)
+    assert lim.allow("a", now=0) and lim.allow("a", now=0) and not lim.allow("a", now=0)
+    assert lim.allow("a", now=1.0)  # one token back after a second
+    for ip in "bcdef":
+        lim.allow(ip, now=2.0)
+    assert len(lim) <= 3
