@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.config import settings
 from src.database import init_db
 from src.api import health, markets, bets, evaluation, admin, trends, backtest, mlb, nfl
-from src.api.deps import require_nba_picks_public
+from src.api.deps import require_admin, require_nba_picks_public
 from src.edge import api as edge_api
 
 # Configure structured logging
@@ -229,7 +229,8 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(markets.router, prefix=settings.api_v1_prefix, tags=["Markets"], dependencies=_nba_gate)
 app.include_router(bets.router, prefix=settings.api_v1_prefix, tags=["Bets"], dependencies=_nba_gate)
 app.include_router(evaluation.router, prefix=settings.api_v1_prefix, tags=["Evaluation"], dependencies=_nba_gate)
-app.include_router(admin.router, prefix=settings.api_v1_prefix, tags=["Admin"])
+# Every /admin route needs X-Cron-Key; /cron/run-all also checks it itself.
+app.include_router(admin.router, prefix=settings.api_v1_prefix, tags=["Admin"], dependencies=[Depends(require_admin)])
 app.include_router(trends.router, prefix=settings.api_v1_prefix, tags=["Trends"])
 app.include_router(backtest.router, prefix=settings.api_v1_prefix, tags=["Backtest"], dependencies=_nba_gate)
 app.include_router(mlb.router, prefix=settings.api_v1_prefix, tags=["MLB"])

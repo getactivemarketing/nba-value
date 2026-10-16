@@ -1252,7 +1252,7 @@ async def debug_odds_ingest() -> dict:
     except Exception as e:
         results["ingestion_error"] = redact(e)
         import traceback
-        results["ingestion_traceback"] = traceback.format_exc()
+        results["ingestion_traceback"] = redact(traceback.format_exc())
 
     return results
 
@@ -1393,7 +1393,7 @@ async def debug_trigger_posts(task: str = "all") -> dict:
             except Exception as e:
                 import traceback
                 results["nba_picks_error"] = redact(e)[:200]
-                results["nba_picks_trace"] = traceback.format_exc()[-800:]
+                results["nba_picks_trace"] = redact(traceback.format_exc())[-800:]
 
         # NBA results (yesterday)
         if task in ("all", "nba_results"):

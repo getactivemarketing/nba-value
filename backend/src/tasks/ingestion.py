@@ -14,6 +14,7 @@ from src.services.data.odds_api import OddsAPIClient
 from src.services.data.balldontlie import BallDontLieClient
 from src.models import Game as GameModel, Team as TeamModel, TeamStats, OddsSnapshot, Market
 from src.utils.season import current_nba_season
+from src.utils.redact import redact
 
 logger = structlog.get_logger()
 
@@ -299,13 +300,13 @@ async def _ingest_odds_async() -> dict:
         return result
 
     except Exception as e:
-        logger.error("Odds ingestion failed", error=str(e))
+        logger.error("Odds ingestion failed", error=redact(e))
         return {
             "games_fetched": 0,
             "snapshots_stored": 0,
             "api_requests_remaining": client.requests_remaining,
             "status": "error",
-            "error": str(e),
+            "error": redact(e),
         }
 
 
@@ -400,12 +401,12 @@ async def _update_nba_stats_async() -> dict:
         return result
 
     except Exception as e:
-        logger.error("NBA stats update failed", error=str(e))
+        logger.error("NBA stats update failed", error=redact(e))
         return {
             "teams_updated": 0,
             "games_fetched": 0,
             "status": "error",
-            "error": str(e),
+            "error": redact(e),
         }
 
 
@@ -528,9 +529,9 @@ async def _sync_game_results_async() -> dict:
             }
 
     except Exception as e:
-        logger.error("Game results sync failed", error=str(e))
+        logger.error("Game results sync failed", error=redact(e))
         return {
             "games_updated": 0,
             "status": "error",
-            "error": str(e),
+            "error": redact(e),
         }

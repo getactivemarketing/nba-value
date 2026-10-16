@@ -15,6 +15,7 @@ from src.tasks.ingestion import (
 from src.tasks.scoring import _run_pre_game_scoring_async
 from src.tasks.stats_calculation import _calculate_team_stats_async
 from src.config import get_sync_database_url
+from src.utils.redact import redact
 from src.utils.season import current_nba_season
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -47,10 +48,10 @@ async def trigger_odds_ingestion() -> TaskResult:
             message=f"Ingested odds for {result.get('games_fetched', 0)} games, "
                     f"{result.get('snapshots_stored', 0)} snapshots stored. "
                     f"API requests remaining: {result.get('api_requests_remaining', 'unknown')}"
-                    + (f" Error: {error_msg}" if error_msg else ""),
+                    + (f" Error: {redact(error_msg)}" if error_msg else ""),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=redact(e))
 
 
 @router.post("/ingest/stats", response_model=TaskResult)
@@ -71,7 +72,7 @@ async def trigger_stats_update() -> TaskResult:
                     + (f" Error: {error_msg}" if error_msg else ""),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=redact(e))
 
 
 @router.post("/sync/results", response_model=TaskResult)
@@ -88,7 +89,7 @@ async def trigger_results_sync() -> TaskResult:
             message=f"Updated {result.get('games_updated', 0)} game results.",
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=redact(e))
 
 
 @router.post("/scoring/run", response_model=TaskResult)
@@ -110,7 +111,7 @@ async def trigger_scoring() -> TaskResult:
                     f"Errors: {result.get('errors', 0)}",
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=redact(e))
 
 
 @router.post("/stats/calculate", response_model=TaskResult)
@@ -131,7 +132,7 @@ async def trigger_stats_calculation() -> TaskResult:
                     f"Errors: {result.get('errors', 0)}",
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=redact(e))
 
 
 @router.post("/backfill/games")
@@ -208,7 +209,7 @@ async def backfill_historical_games(days: int = 30) -> TaskResult:
             message=f"Backfilled {games_added} completed games from the past {days} days.",
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=redact(e))
 
 
 @router.get("/status")
@@ -316,7 +317,7 @@ async def cron_run_all(x_cron_key: str = Header(None)) -> dict:
         results["tasks"]["team_stats"] = stats_result
     except Exception as e:
         logger.error(f"Cron: Team stats failed: {e}")
-        results["tasks"]["team_stats"] = {"status": "error", "error": str(e)}
+        results["tasks"]["team_stats"] = {"status": "error", "error": redact(e)}
 
     # 2. Ingest odds
     try:
@@ -326,7 +327,7 @@ async def cron_run_all(x_cron_key: str = Header(None)) -> dict:
         results["tasks"]["odds_ingestion"] = odds_result
     except Exception as e:
         logger.error(f"Cron: Odds ingestion failed: {e}")
-        results["tasks"]["odds_ingestion"] = {"status": "error", "error": str(e)}
+        results["tasks"]["odds_ingestion"] = {"status": "error", "error": redact(e)}
 
     # 3. Run scoring
     try:
@@ -336,7 +337,7 @@ async def cron_run_all(x_cron_key: str = Header(None)) -> dict:
         results["tasks"]["scoring"] = scoring_result
     except Exception as e:
         logger.error(f"Cron: Scoring failed: {e}")
-        results["tasks"]["scoring"] = {"status": "error", "error": str(e)}
+        results["tasks"]["scoring"] = {"status": "error", "error": redact(e)}
 
     # 4. Snapshot predictions
     try:
@@ -346,7 +347,7 @@ async def cron_run_all(x_cron_key: str = Header(None)) -> dict:
         results["tasks"]["snapshot"] = snapshot_result
     except Exception as e:
         logger.error(f"Cron: Snapshot failed: {e}")
-        results["tasks"]["snapshot"] = {"status": "error", "error": str(e)}
+        results["tasks"]["snapshot"] = {"status": "error", "error": redact(e)}
 
     # 5. Grade predictions
     try:
@@ -356,7 +357,7 @@ async def cron_run_all(x_cron_key: str = Header(None)) -> dict:
         results["tasks"]["grading"] = grading_result
     except Exception as e:
         logger.error(f"Cron: Grading failed: {e}")
-        results["tasks"]["grading"] = {"status": "error", "error": str(e)}
+        results["tasks"]["grading"] = {"status": "error", "error": redact(e)}
 
     # 6. Sync game results
     try:
@@ -366,7 +367,7 @@ async def cron_run_all(x_cron_key: str = Header(None)) -> dict:
         results["tasks"]["results_sync"] = sync_result
     except Exception as e:
         logger.error(f"Cron: Results sync failed: {e}")
-        results["tasks"]["results_sync"] = {"status": "error", "error": str(e)}
+        results["tasks"]["results_sync"] = {"status": "error", "error": redact(e)}
 
     # 7. Backfill any missing snapshots
     try:
@@ -375,7 +376,7 @@ async def cron_run_all(x_cron_key: str = Header(None)) -> dict:
         results["tasks"]["backfill_snapshots"] = backfill_result
     except Exception as e:
         logger.error(f"Cron: Backfill failed: {e}")
-        results["tasks"]["backfill_snapshots"] = {"status": "error", "error": str(e)}
+        results["tasks"]["backfill_snapshots"] = {"status": "error", "error": redact(e)}
 
     results["status"] = "completed"
     logger.info("Cron: All tasks complete", results=results)
