@@ -22,6 +22,10 @@ MARKET_LABEL = {
     "player_threes": "Threes", "player_points_rebounds_assists": "Pts+Reb+Ast",
     "player_points_rebounds": "Pts+Reb", "player_points_assists": "Pts+Ast",
     "player_rebounds_assists": "Reb+Ast", "h2h": "Moneyline", "spreads": "Spread", "totals": "Total",
+    "player_pass_yds": "Pass Yds", "player_pass_tds": "Pass TDs", "player_pass_completions": "Completions",
+    "player_pass_attempts": "Pass Att", "player_pass_interceptions": "INTs", "player_rush_yds": "Rush Yds",
+    "player_rush_attempts": "Rush Att", "player_receptions": "Receptions", "player_reception_yds": "Rec Yds",
+    "player_rush_reception_yds": "Rush+Rec Yds",
 }
 
 

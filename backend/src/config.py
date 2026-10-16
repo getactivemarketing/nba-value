@@ -132,6 +132,7 @@ class Settings(BaseSettings):
     edge_min_ev: float = 0.02
     edge_verify_ev: float = 0.15
     edge_credit_cap: int = 3_500_000
+    edge_sports: str = "nba,nfl"
 
     # Path to the MLB totals model. v2 (trained through 2026-07-06 via
     # retrain_mlb_totals) passed the holdout gate vs v1: MAE 3.538 vs 3.564,
