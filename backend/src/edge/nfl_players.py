@@ -176,10 +176,13 @@ def player_ids(conn, teams: set[str]) -> dict[str, int]:
 
 
 STATS_SETTLE = timedelta(hours=2)  # stat corrections land after the whistle
+GRADE_WINDOW = timedelta(days=14)  # older ungraded props are reported as stale, not rescanned
 
 
 async def refresh_schedule(conn, bdl: BdlNflClient, season: int, now: datetime) -> int:
-    rows = [game_row(g) for g in await bdl.games(season)]
+    # Regular season only for now: BallDontLie's playoff week numbering is unverified and
+    # snap counts join on (season, week), so playoff games could collide with weeks 1-4.
+    rows = [r for r in (game_row(g) for g in await bdl.games(season)) if not r["postseason"]]
     if not rows:
         return 0
     with conn.cursor() as cur:
@@ -202,10 +205,11 @@ async def load_due_stats(conn, bdl: BdlNflClient, now: datetime, limit: int = 6)
     Serves both the hourly step and the backfill: anything final without stats is due.
     """
     with conn.cursor() as cur:
-        cur.execute("""SELECT bdl_game_id FROM edge_nfl_games
+        cur.execute("""SELECT bdl_game_id, home, away FROM edge_nfl_games
                        WHERE status_state = 'final' AND stats_loaded_at IS NULL AND final_seen_at <= %s
                        ORDER BY game_date LIMIT %s""", (now - STATS_SETTLE, limit))
-        ids = [r[0] for r in cur.fetchall()]
+        teams_by_game = {r[0]: {r[1], r[2]} for r in cur.fetchall()}
+        ids = list(teams_by_game)
     if not ids:
         return 0
     rows = [r for r in (stat_row(s) for s in await bdl.stats(ids)) if r and r["bdl_game_id"] in ids]
@@ -216,7 +220,16 @@ async def load_due_stats(conn, bdl: BdlNflClient, now: datetime, limit: int = 6)
                 ON CONFLICT (bdl_player_id, bdl_game_id) DO UPDATE SET
                 {", ".join(f"{c} = EXCLUDED.{c}" for c in cols[2:])}""",
                            [tuple(r[c] for c in cols) for r in rows])
-        cur.execute("UPDATE edge_nfl_games SET stats_loaded_at = %s WHERE bdl_game_id = ANY(%s)", (now, ids))
+        # Complete only when both teams' box scores arrived: BallDontLie can show a game final
+        # before /stats is populated, and a game marked loaded with no rows would grade every
+        # player who played as 0. Incomplete games stay due and are retried next run.
+        seen: dict[int, set] = {}
+        for r in rows:
+            seen.setdefault(r["bdl_game_id"], set()).add(r["team"])
+        complete = [g for g, teams in teams_by_game.items() if teams <= seen.get(g, set())]
+        if complete:
+            cur.execute("UPDATE edge_nfl_games SET stats_loaded_at = %s WHERE bdl_game_id = ANY(%s)",
+                        (now, complete))
     conn.commit()
     return len(rows)
 
@@ -271,7 +284,8 @@ def grade_props(conn, now: datetime) -> int:
                               e.commence_time
                        FROM edge_opportunities o JOIN edge_events e USING (event_id)
                        WHERE o.result IS NULL AND o.player <> '' AND e.sport = 'americanfootball_nfl'
-                         AND e.commence_time <= %s""", (now - timedelta(hours=3),))
+                         AND e.commence_time <= %s AND e.commence_time > %s""",
+                    (now - timedelta(hours=3), now - GRADE_WINDOW))
         for o in cur.fetchall():
             home, away = NFL_ABBR_BY_NAME.get(o["home_team"]), NFL_ABBR_BY_NAME.get(o["away_team"])
             cur.execute("""SELECT bdl_player_id, team FROM edge_nfl_players
@@ -294,7 +308,19 @@ def grade_props(conn, now: datetime) -> int:
                            AND player_norm = %s AND snaps > 0""",
                         (g["season"], g["week"], p["team"], normalize_name(o["player"])))
             played = cur.fetchone() is not None
-            r = nfl_prop_result(o, dict(stat) if stat else None, g["snaps_loaded_at"] is not None, played)
+            if stat is None:
+                cur.execute("SELECT 1 FROM edge_nfl_player_games WHERE bdl_game_id = %s AND team = %s LIMIT 1",
+                            (g["bdl_game_id"], p["team"]))
+                if cur.fetchone() is None:
+                    continue  # his team's box score is not in: never grade 0 or void on a gap
+            # Absence from snap counts only means 'inactive' if his name key has matched
+            # nflverse before; nicknames ('Hollywood' vs 'Marquise' Brown) never match.
+            cur.execute("""SELECT 1 FROM edge_nfl_snaps WHERE team = %s AND player_norm = %s
+                           AND NOT (season = %s AND week = %s) LIMIT 1""",
+                        (p["team"], normalize_name(o["player"]), g["season"], g["week"]))
+            name_proven = cur.fetchone() is not None
+            r = nfl_prop_result(o, dict(stat) if stat else None,
+                                g["snaps_loaded_at"] is not None and name_proven, played)
             if r is not None:
                 cur.execute("UPDATE edge_opportunities SET result = %s, profit_units = %s WHERE id = %s",
                             (r, profit_units(r, o["price"]), o["id"]))

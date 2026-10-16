@@ -157,10 +157,21 @@ async def nfl_backfill_step(conn, nfl_bdl, now: datetime) -> int:
     """Until done: last season's schedule + snaps once, then settled box scores a few games per tick."""
     season = current_nfl_season(now.date())
     state = store.get_state(conn)
+    # Last season's snaps: separate key and a 6 h gate, off the event loop. An nflverse outage
+    # must not re-fetch the schedule or block odds every tick.
+    last_snaps = _parse(state.get("nfl:last_backfill_snaps"))
+    if state.get("backfill_nfl_snaps") != str(season - 1) and (
+            last_snaps is None or now - last_snaps >= timedelta(hours=6)):
+        store.set_state(conn, "nfl:last_backfill_snaps", _iso(now), now)
+        try:
+            await asyncio.to_thread(nfl_players.load_snaps, conn, season - 1, now)
+            store.set_state(conn, "backfill_nfl_snaps", str(season - 1), now)
+        except Exception as e:  # noqa: BLE001
+            conn.rollback()
+            store.set_state(conn, "snaps_error", redact(f"backfill snaps: {type(e).__name__}: {e}")[:300], now)
     try:
         if state.get("backfill_nfl_schedule") != str(season - 1):
             await nfl_players.refresh_schedule(conn, nfl_bdl, season - 1, now)
-            nfl_players.load_snaps(conn, season - 1, now)
             store.set_state(conn, "backfill_nfl_schedule", str(season - 1), now)
         n = await nfl_players.load_due_stats(conn, nfl_bdl, now, limit=6)
         store.set_state(conn, "backfill_nfl_next", "done" if n == 0 else _iso(now), now)

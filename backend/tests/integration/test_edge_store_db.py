@@ -747,7 +747,11 @@ def test_snaps_map_team_codes_and_mark_games(conn):
 async def test_backfill_resumes_after_a_rate_limit(conn, monkeypatch):
     from src.edge import nfl_players, worker
     monkeypatch.setattr(nfl_players, "load_snaps", lambda *a, **k: 0)  # never call nflverse in tests
-    bdl = _FakeNflSchedule(_nfl_games_fixture(), {}, fail_stats=429)
+    games = _nfl_games_fixture()
+    tmpl = json.load(open("tests/fixtures/edge/bdl_nfl_stats_game.json"))["data"][0]
+    box = {g["id"]: [dict(tmpl, player={"id": 100 + i}, team=g[side], game=g)
+                     for i, side in enumerate(("home_team", "visitor_team"))] for g in games}
+    bdl = _FakeNflSchedule(games, box, fail_stats=429)  # both teams' box scores, once the 429 clears
     await nfl_players.refresh_schedule(conn, bdl, 2026, NOW - timedelta(days=3))  # finals seen long ago
     later = NOW + timedelta(days=30)
 
@@ -780,8 +784,12 @@ def _seed_graded_nfl_game(conn, status="final", stats_loaded=True, snaps_loaded=
         cur.execute("""INSERT INTO edge_nfl_player_games (bdl_player_id, bdl_game_id, season, week, game_date, team,
                        opponent, is_home, rush_yds, rec_yds) VALUES (10, 7001, 2026, 6, '2026-10-18', 'ATL', 'CHI',
                        TRUE, 88, 12)""")
+        cur.execute("""INSERT INTO edge_nfl_player_games (bdl_player_id, bdl_game_id, season, week, game_date, team,
+                       opponent, is_home, pass_yds) VALUES (99, 7001, 2026, 6, '2026-10-18', 'CHI', 'ATL',
+                       FALSE, 240)""")  # CHI's box score is in
         cur.execute("""INSERT INTO edge_nfl_snaps (season, week, team, player_norm, snaps, loaded_at) VALUES
-                       (2026, 6, 'CHI', 'dj moore', 51, %s), (2026, 6, 'ATL', 'benched guy', 3, %s)""", (NOW, NOW))
+                       (2026, 6, 'CHI', 'dj moore', 51, %s), (2026, 6, 'ATL', 'benched guy', 3, %s),
+                       (2026, 5, 'CHI', 'late scratch', 40, %s)""", (NOW, NOW, NOW))  # name key proven in week 5
         for player, market in (("Bijan Robinson", "player_rush_yds"), ("DJ Moore", "player_receptions"),
                                 ("Benched Guy", "player_reception_yds"), ("Late Scratch", "player_rush_yds")):
             cur.execute("""INSERT INTO edge_opportunities (event_id, market, player, side, line, book, price,
@@ -828,3 +836,90 @@ def test_nfl_player_page_includes_snap_only_games_as_zero(conn):
     page = views.nfl_player(conn, NOW, 20, "player_receptions", 3.5)   # DJ Moore: snaps, no stat row
     assert page["name"] == "DJ Moore" and page["team"] == "CHI"
     assert [g["value"] for g in page["games"]] == [0.0] and page["hit_rates"]["l5"]["games"] == 1
+
+
+def test_a_partial_box_score_is_not_marked_loaded(conn):
+    """BDL can flip a game final before /stats is populated: never mark it loaded on 0 or one-team rows."""
+    import asyncio
+    from src.edge import nfl_players
+    games = _nfl_games_fixture()
+    stats = json.load(open("tests/fixtures/edge/bdl_nfl_stats_game.json"))["data"]
+    gid = stats[0]["game"]["id"]
+    one_team = [r for r in stats if r["team"]["abbreviation"] == stats[0]["team"]["abbreviation"]]
+    bdl = _FakeNflSchedule(games, {gid: one_team})
+    asyncio.run(nfl_players.refresh_schedule(conn, bdl, 2026, NOW - timedelta(hours=3)))
+    asyncio.run(nfl_players.load_due_stats(conn, bdl, NOW, limit=100))
+
+    def loaded(g):
+        with conn.cursor() as cur:
+            cur.execute("SELECT stats_loaded_at IS NOT NULL FROM edge_nfl_games WHERE bdl_game_id = %s", (g,))
+            return cur.fetchone()[0]
+
+    assert loaded(gid) is False                                   # one team only: retried
+    assert loaded(games[1]["id"]) is False                        # zero rows: retried
+    bdl._stats[gid] = stats
+    asyncio.run(nfl_players.load_due_stats(conn, bdl, NOW + timedelta(hours=1), limit=100))
+    assert loaded(gid) is True
+
+
+def test_played_counts_as_zero_only_when_his_team_box_score_is_in(conn):
+    from src.edge import grading
+    kickoff = _seed_graded_nfl_game(conn)
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM edge_nfl_player_games WHERE team = 'CHI'")
+    conn.commit()
+    grading.run_grading(conn, kickoff + timedelta(days=1))
+    r = _results(conn)
+    assert r["DJ Moore"] is None and r["Late Scratch"] is None   # CHI stats missing: wait, never 0 or void
+    assert r["Bijan Robinson"] == "win"
+
+
+def test_an_unproven_name_key_waits_instead_of_voiding(conn):
+    """'Hollywood Brown' in the book vs 'Marquise Brown' in nflverse: absence proves nothing."""
+    from src.edge import grading
+    kickoff = _seed_graded_nfl_game(conn)
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM edge_nfl_snaps WHERE player_norm = 'late scratch'")
+    conn.commit()
+    grading.run_grading(conn, kickoff + timedelta(days=1))
+    assert _results(conn)["Late Scratch"] is None
+
+
+def test_postseason_games_are_left_out_for_now(conn):
+    import asyncio
+    from src.edge import nfl_players
+    g = dict(_nfl_games_fixture()[0], id=8001, postseason=True, week=1)
+    asyncio.run(nfl_players.refresh_schedule(conn, _FakeNflSchedule([g], {}), 2026, NOW))
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM edge_nfl_games WHERE bdl_game_id = 8001")
+        assert cur.fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_failing_nflverse_download_does_not_refetch_the_schedule_every_tick(conn, monkeypatch):
+    from src.edge import nfl_players, worker
+    calls = {"games": 0, "snaps": 0}
+
+    def boom(*a, **k):
+        calls["snaps"] += 1
+        raise ConnectionError("nflverse down")
+    monkeypatch.setattr(nfl_players, "load_snaps", boom)
+    bdl = _FakeNflSchedule(_nfl_games_fixture(), {})
+    orig = bdl.games
+
+    async def counting(season, week=None):
+        calls["games"] += 1
+        return await orig(season, week)
+    bdl.games = counting
+    later = NOW + timedelta(days=30)
+    await worker.nfl_backfill_step(conn, bdl, later)
+    await worker.nfl_backfill_step(conn, bdl, later + timedelta(seconds=30))
+    assert calls["games"] == 1 and calls["snaps"] == 1   # schedule once; snaps retried on the 6 h gate
+    assert "nflverse down" in store.get_state(conn)["snaps_error"]
+
+
+def test_grading_skips_props_older_than_the_window(conn):
+    from src.edge import grading
+    kickoff = _seed_graded_nfl_game(conn)
+    grading.run_grading(conn, kickoff + timedelta(days=20))
+    assert set(_results(conn).values()) == {None}   # outside 14 days: reported as stale, not rescanned
