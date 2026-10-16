@@ -445,3 +445,47 @@ def test_first_prune_is_bounded(conn):
     store.upsert_events(conn, [dict(_event(), event_id="ancient", commence_time=tip)])
     _hist(conn, "ancient", [("fanduel", p, tip - timedelta(minutes=30 - i)) for i, p in enumerate((-110, -112, -114))])
     assert worker.prune_step(conn, NOW) == 0  # first run looks back a bounded window only
+
+
+def _nfl_event(event_id="n1", hours=2):
+    return {"event_id": event_id, "sport": "americanfootball_nfl", "home_team": "Atlanta Falcons",
+            "away_team": "Chicago Bears", "commence_time": NOW + timedelta(hours=hours)}
+
+
+def test_one_sports_refresh_never_drops_the_others_events(conn):
+    store.upsert_events(conn, [_event(), _nfl_event()])
+    # NBA's feed lists only e1: NFL's n1 must survive.
+    store.drop_missing_events(conn, ["e1"], NOW, sport="basketball_nba")
+    nfl = store.upcoming_events(conn, NOW, hours=168, sport="americanfootball_nfl")
+    nba = store.upcoming_events(conn, NOW, sport="basketball_nba")
+    assert [e["event_id"] for e in nfl] == ["n1"] and [e["event_id"] for e in nba] == ["e1"]
+
+
+def test_games_in_progress_is_per_sport(conn):
+    store.upsert_events(conn, [_nfl_event(hours=-1)])
+    from src.edge import grading
+    assert grading.games_in_progress(conn, NOW, "americanfootball_nfl") is True
+    assert grading.games_in_progress(conn, NOW, "basketball_nba") is False
+
+
+def test_nfl_props_are_never_graded_even_when_the_name_matches_an_nba_player(conn):
+    from src.edge import grading
+    store.upsert_events(conn, [_nfl_event(hours=-5)])
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_players (odds_name, bdl_player_id, team, match_method, confidence, updated_at)
+                       VALUES ('Josh Allen', 999, 'ORL', 'exact', 1.0, %s)""", (NOW,))
+        cur.execute("""INSERT INTO edge_opportunities (event_id, market, player, side, line, book, price,
+                       first_seen_at, last_seen_at, fair_prob, ev, max_ev, n_books, devig_method, closing_done)
+                       VALUES ('n1', 'player_pass_yds', 'Josh Allen', 'over', 250.5, 'fanduel', 110,
+                               %s, %s, 0.5, 0.05, 0.05, 5, 'power', TRUE)""", (NOW, NOW))
+        # The NBA Josh Allen played that night: unscoped grading would find this row.
+        from src.edge.players import et_date
+        cur.execute("""INSERT INTO edge_player_games (bdl_player_id, bdl_game_id, season, game_date, team,
+                       opponent, is_home, minutes, pts, reb, ast, fg3m, stl, blk, tov)
+                       VALUES (999, 1, 2026, %s, 'ORL', 'MIA', TRUE, 30, 12, 5, 3, 1, 1, 0, 2)""",
+                    (et_date(NOW - timedelta(hours=5)),))
+    conn.commit()
+    grading.run_grading(conn, NOW + timedelta(hours=1))
+    with conn.cursor() as cur:
+        cur.execute("SELECT result FROM edge_opportunities WHERE event_id = 'n1'")
+        assert cur.fetchone()[0] is None

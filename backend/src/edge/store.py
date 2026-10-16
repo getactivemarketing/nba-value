@@ -89,10 +89,15 @@ def upsert_events(conn, rows: list[dict]) -> int:
     return len(rows)
 
 
-def upcoming_events(conn, now: datetime, hours: int = 36) -> list[dict]:
+def upcoming_events(conn, now: datetime, hours: int = 36, sport: str | None = None) -> list[dict]:
+    sql = """SELECT * FROM edge_events WHERE commence_time > %s AND commence_time <= %s
+             AND status <> 'unavailable'"""
+    params: list = [now, now + timedelta(hours=hours)]
+    if sport:
+        sql += " AND sport = %s"
+        params.append(sport)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""SELECT * FROM edge_events WHERE commence_time > %s AND commence_time <= %s
-                       AND status <> 'unavailable' ORDER BY commence_time""", (now, now + timedelta(hours=hours)))
+        cur.execute(sql + " ORDER BY commence_time", params)
         return [dict(r) for r in cur.fetchall()]
 
 
@@ -126,12 +131,20 @@ def mark_unavailable(conn, event_ids: list[str]) -> None:
     conn.commit()
 
 
-def drop_missing_events(conn, live_ids: list[str], now: datetime) -> int:
-    """Future events no longer in the feed are marked unavailable."""
+def drop_missing_events(conn, live_ids: list[str], now: datetime, sport: str | None = None) -> int:
+    """Future events of `sport` no longer in its feed are marked unavailable.
+
+    Scoped per sport: each sport's feed only lists its own events, so an
+    unscoped update would drop every other sport's games.
+    """
+    sql = """UPDATE edge_events SET status = 'unavailable'
+             WHERE commence_time > %s AND status = 'scheduled' AND NOT (event_id = ANY(%s))"""
+    params: list = [now, live_ids]
+    if sport:
+        sql += " AND sport = %s"
+        params.append(sport)
     with conn.cursor() as cur:
-        cur.execute("""UPDATE edge_events SET status = 'unavailable'
-                       WHERE commence_time > %s AND status = 'scheduled' AND NOT (event_id = ANY(%s))""",
-                    (now, live_ids))
+        cur.execute(sql, params)
         n = cur.rowcount
     conn.commit()
     return n

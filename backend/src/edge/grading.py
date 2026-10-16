@@ -58,7 +58,7 @@ def box_scores_missing(conn, d) -> bool:
     """True when a team that finished a game on ET date `d` has no box-score rows."""
     with conn.cursor() as cur:
         cur.execute("""SELECT home_team, away_team, commence_time FROM edge_events
-                       WHERE completed AND commence_time BETWEEN %s AND %s""",
+                       WHERE completed AND sport = 'basketball_nba' AND commence_time BETWEEN %s AND %s""",
                     (datetime.combine(d, datetime.min.time(), timezone.utc) - timedelta(hours=12),
                      datetime.combine(d, datetime.min.time(), timezone.utc) + timedelta(hours=36)))
         teams = {ABBR_BY_NAME.get(t) for h, a, c in cur.fetchall() if et_date(c) == d for t in (h, a)} - {None}
@@ -69,11 +69,15 @@ def box_scores_missing(conn, d) -> bool:
         return len({r[0] for r in cur.fetchall()}) < len(teams)
 
 
-def games_in_progress(conn, now: datetime) -> bool:
+def games_in_progress(conn, now: datetime, sport: str | None = None) -> bool:
+    sql = """SELECT 1 FROM edge_events WHERE NOT completed
+             AND commence_time <= %s AND commence_time > %s"""
+    params: list = [now, now - timedelta(hours=4)]
+    if sport:
+        sql += " AND sport = %s"
+        params.append(sport)
     with conn.cursor() as cur:
-        cur.execute("""SELECT 1 FROM edge_events WHERE NOT completed
-                       AND commence_time <= %s AND commence_time > %s LIMIT 1""",
-                    (now, now - timedelta(hours=4)))
+        cur.execute(sql + " LIMIT 1", params)
         return cur.fetchone() is not None
 
 
@@ -130,7 +134,9 @@ def run_grading(conn, now: datetime) -> dict:
                               e.away_team, p.bdl_player_id
                        FROM edge_opportunities o JOIN edge_events e USING (event_id)
                        LEFT JOIN edge_players p ON p.odds_name = o.player
-                       WHERE o.result IS NULL AND o.player <> '' AND e.commence_time <= %s""",
+                       WHERE o.result IS NULL AND o.player <> '' AND e.commence_time <= %s
+                         -- prop grading needs NBA box scores; NFL props get CLV only until Phase B
+                         AND e.sport = 'basketball_nba'""",
                     (now - timedelta(hours=3),))
         for o in cur.fetchall():
             if o["bdl_player_id"] is None:
