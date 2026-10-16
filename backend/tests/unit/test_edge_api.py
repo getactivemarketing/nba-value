@@ -68,3 +68,16 @@ def test_errors_never_leak_the_key(monkeypatch):
     edge_api._cache.clear()
     r = TestClient(app, raise_server_exceptions=False).get(f"{P}/games")
     assert r.status_code == 503 and "leakyleakyleaky1" not in r.text
+
+
+def test_ci_clusters_the_same_bet_across_books_and_prices():
+    def row(book, price, clv, player="A"):
+        return {"clv": clv, "result": "win", "profit_units": 1.0, "market": "player_points", "book": book,
+                "event_id": "e1", "player": player, "line": 25.5, "side": "over", "price": price}
+
+    same_bet = [row("fanduel", 120, 0.03), row("betmgm", 125, 0.031), row("caesars", 118, 0.029)]
+    s = views.results_summary(same_bet)
+    assert s["clv"]["measured"] == 3 and s["clv"]["bets"] == 1
+    assert s["clv"]["ci95"] is None  # one independent bet: no interval yet
+    two = same_bet + [row("fanduel", 110, -0.01, player="B")]
+    assert views.results_summary(two)["clv"]["bets"] == 2

@@ -15,6 +15,8 @@ from src.edge.teams import ABBR_BY_NAME
 from src.services.mlb.clv import summarize_clv
 from src.utils.season import current_nba_season
 
+BET_KEY = ("event_id", "market", "player", "line", "side")
+
 MARKET_LABEL = {
     "player_points": "Points", "player_rebounds": "Rebounds", "player_assists": "Assists",
     "player_threes": "Threes", "player_points_rebounds_assists": "Pts+Reb+Ast",
@@ -55,11 +57,23 @@ def odds_grid(quotes: list[Quote], fair_by_outcome: dict[tuple, float]) -> list[
 def results_summary(rows: list[dict]) -> dict:
     def block(rs: list[dict]) -> dict:
         clv = summarize_clv([float(r["clv"]) if r["clv"] is not None else None for r in rs])
-        if clv["mean_clv"] is not None and clv["std_error"] is not None:
-            clv["ci95"] = [round(clv["mean_clv"] - 1.96 * clv["std_error"], 5),
-                           round(clv["mean_clv"] + 1.96 * clv["std_error"], 5)]
+        # The same bet logged at several books/prices is one outcome, not several:
+        # the interval is computed over per-bet means so it is not overstated.
+        by_bet: dict[tuple, list[float]] = {}
+        for i, r in enumerate(rs):
+            if r["clv"] is None:
+                continue
+            key = tuple(r.get(k) for k in BET_KEY) if all(k in r for k in BET_KEY) else (i,)
+            by_bet.setdefault(key, []).append(float(r["clv"]))
+        means = [statistics.fmean(v) for v in by_bet.values()]
+        clv["bets"] = len(means)
+        if len(means) > 1:
+            se = statistics.stdev(means) / len(means) ** 0.5
+            m = statistics.fmean(means)
+            clv["std_error"] = round(se, 5)
+            clv["ci95"] = [round(m - 1.96 * se, 5), round(m + 1.96 * se, 5)]
         else:
-            clv["ci95"] = None
+            clv["std_error"], clv["ci95"] = None, None
         graded = [r for r in rs if r["result"] in ("win", "loss", "push")]
         wins = sum(r["result"] == "win" for r in graded)
         losses = sum(r["result"] == "loss" for r in graded)
@@ -181,7 +195,8 @@ def player(conn, now: datetime, bdl_id: int, market: str, line: float | None, mi
 
 
 def results(conn, now: datetime, days: int, market: str | None, book: str | None) -> dict:
-    sql = """SELECT market, book, clv, result, profit_units, first_seen_at FROM edge_opportunities
+    sql = """SELECT event_id, market, player, line, side, book, price, clv, result, profit_units,
+                    first_seen_at FROM edge_opportunities
              WHERE closing_done AND first_seen_at >= %s"""
     params: list = [now - timedelta(days=days)]
     if market:

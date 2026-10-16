@@ -29,7 +29,7 @@ export interface PlayerResponse {
   games: PlayerGame[]; prices: { book: string; side: string; line: number; price: number; link: string | null }[];
 }
 export interface ClvBlock {
-  measured: number; mean_clv: number | null; median_clv: number | null; beat_close_rate: number | null;
+  measured: number; bets: number; mean_clv: number | null; median_clv: number | null; beat_close_rate: number | null;
   std_error: number | null; verdict: string; ci95: [number, number] | null;
 }
 export interface RecordBlock {

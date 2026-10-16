@@ -54,7 +54,8 @@ export function EdgeResults() {
         ))}
       </div>
       <p className="text-[10px] text-[#64748b] font-mono mt-1.5 italic">
-        Sample: {c.measured} measured ({c.verdict}).
+        Sample: {c.measured} prices across {c.bets} distinct bets ({c.verdict}). The interval counts each bet once,
+        however many books offered it.
       </p>
       <div className="mt-4 h-56 rounded-xl bg-[#191c22] border border-[#1e293b] p-4">
         <ResponsiveContainer width="100%" height="100%">
