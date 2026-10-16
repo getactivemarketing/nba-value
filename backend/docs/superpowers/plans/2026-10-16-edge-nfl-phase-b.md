@@ -748,6 +748,7 @@ async def test_backfill_resumes_after_a_rate_limit(conn, monkeypatch):
     bdl.fail_stats = None
     await worker.nfl_backfill_step(conn, bdl, later)
     assert loaded() == 6  # resumes: 6 games per tick
+```
 
 (Add `import json` at the top of the integration file if it is not already imported.)
 
