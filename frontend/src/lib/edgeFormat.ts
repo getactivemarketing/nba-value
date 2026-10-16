@@ -25,3 +25,15 @@ export function fmtAge(iso: string, now: Date = new Date()): string {
 }
 export const bookLabel = (k: string) => BOOKS[k] ?? k;
 export const marketLabel = (k: string) => MARKETS[k] ?? k;
+
+/** Spread lines are stored from the HOME side; an away row shows the negated line. */
+export function outcomeLabel(market: string, side: string, line: number,
+  ev: { home_team: string; away_team: string }): string {
+  const team = side === 'home' ? ev.home_team : ev.away_team;
+  if (market === 'h2h') return team;
+  if (market === 'spreads') {
+    const l = side === 'home' ? line : -line;
+    return `${team} ${l > 0 ? '+' : ''}${l}`;
+  }
+  return `${side === 'over' ? 'Over' : 'Under'} ${line}`;
+}

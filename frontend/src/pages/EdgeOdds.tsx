@@ -3,7 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { useEdgeOdds } from '@/hooks/useEdge';
 import { EdgeStatusBanner } from '@/components/edge/EdgeStatusBanner';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
-import { BOOK_KEYS, bookLabel, fmtAmerican, marketLabel, MARKET_KEYS } from '@/lib/edgeFormat';
+import { BOOK_KEYS, bookLabel, fmtAmerican, marketLabel, MARKET_KEYS, outcomeLabel } from '@/lib/edgeFormat';
 
 export function EdgeOdds() {
   const { eventId = '' } = useParams();
@@ -41,7 +41,9 @@ export function EdgeOdds() {
                 <tr key={`${r.player}-${r.line}-${r.side}`} className="border-b border-[#1e293b]/50">
                   <td className="py-2 text-[#f1f5f9] whitespace-nowrap">
                     {r.player && <span className="mr-1">{r.player}</span>}
-                    <span className="text-[#94a3b8] font-mono text-xs">{r.side} {market === 'h2h' ? '' : r.line}</span>
+                    <span className={r.player ? 'text-[#94a3b8] font-mono text-xs' : ''}>
+                      {data.event ? outcomeLabel(market, r.side, r.line, data.event) : r.side}
+                    </span>
                   </td>
                   <td className="py-2 text-center font-mono text-xs text-[#94a3b8]">{fmtAmerican(r.fair_price)}</td>
                   {books.map((b) => {

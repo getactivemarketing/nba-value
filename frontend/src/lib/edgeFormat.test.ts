@@ -1,6 +1,6 @@
 // frontend/src/lib/edgeFormat.test.ts
 import { describe, expect, it } from 'vitest';
-import { bookLabel, fmtAge, fmtAmerican, fmtEv, fmtPct, marketLabel } from './edgeFormat';
+import { bookLabel, fmtAge, fmtAmerican, fmtEv, fmtPct, marketLabel, outcomeLabel } from './edgeFormat';
 
 describe('edgeFormat', () => {
   it('formats American odds with a sign', () => {
@@ -22,5 +22,18 @@ describe('edgeFormat', () => {
     expect(bookLabel('williamhill_us')).toBe('Caesars');
     expect(bookLabel('unknown_book')).toBe('unknown_book');
     expect(marketLabel('player_points_rebounds_assists')).toBe('Pts+Reb+Ast');
+  });
+});
+
+describe('outcomeLabel', () => {
+  const ev = { home_team: 'Detroit Pistons', away_team: 'Boston Celtics' };
+  it('shows the away spread from the away side', () => {
+    expect(outcomeLabel('spreads', 'away', -5.5, ev)).toBe('Boston Celtics +5.5');
+    expect(outcomeLabel('spreads', 'home', -5.5, ev)).toBe('Detroit Pistons -5.5');
+  });
+  it('names moneyline teams and totals/props sides', () => {
+    expect(outcomeLabel('h2h', 'home', 0, ev)).toBe('Detroit Pistons');
+    expect(outcomeLabel('totals', 'over', 221.5, ev)).toBe('Over 221.5');
+    expect(outcomeLabel('player_points', 'under', 27.5, ev)).toBe('Under 27.5');
   });
 });
