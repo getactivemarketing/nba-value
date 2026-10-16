@@ -761,3 +761,62 @@ async def test_backfill_resumes_after_a_rate_limit(conn, monkeypatch):
     bdl.fail_stats = None
     await worker.nfl_backfill_step(conn, bdl, later)
     assert loaded() == 6  # resumes: 6 games per tick
+
+
+def _seed_graded_nfl_game(conn, status="final", stats_loaded=True, snaps_loaded=True):
+    """BDL game 7001: CHI @ ATL on 2026-10-18; opportunity n1 on the matching Odds API event."""
+    kickoff = datetime(2026, 10, 18, 17, tzinfo=timezone.utc)
+    store.upsert_events(conn, [dict(_nfl_event(), commence_time=kickoff)])
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_nfl_games (bdl_game_id, season, week, game_date, home, away, postseason,
+                       status_state, final_seen_at, stats_loaded_at, snaps_loaded_at)
+                       VALUES (7001, 2026, 6, '2026-10-18', 'ATL', 'CHI', FALSE, %s, %s, %s, %s)""",
+                    (status, kickoff, kickoff + timedelta(hours=6) if stats_loaded else None,
+                     kickoff + timedelta(hours=20) if snaps_loaded else None))
+        for name, pid, team in (("Bijan Robinson", 10, "ATL"), ("DJ Moore", 20, "CHI"), ("Benched Guy", 30, "ATL"),
+                                ("Late Scratch", 40, "CHI")):
+            cur.execute("""INSERT INTO edge_nfl_players (odds_name, team, bdl_player_id, match_method, confidence,
+                           updated_at) VALUES (%s, %s, %s, 'exact', 1.0, %s)""", (name, team, pid, NOW))
+        cur.execute("""INSERT INTO edge_nfl_player_games (bdl_player_id, bdl_game_id, season, week, game_date, team,
+                       opponent, is_home, rush_yds, rec_yds) VALUES (10, 7001, 2026, 6, '2026-10-18', 'ATL', 'CHI',
+                       TRUE, 88, 12)""")
+        cur.execute("""INSERT INTO edge_nfl_snaps (season, week, team, player_norm, snaps, loaded_at) VALUES
+                       (2026, 6, 'CHI', 'dj moore', 51, %s), (2026, 6, 'ATL', 'benched guy', 3, %s)""", (NOW, NOW))
+        for player, market in (("Bijan Robinson", "player_rush_yds"), ("DJ Moore", "player_receptions"),
+                                ("Benched Guy", "player_reception_yds"), ("Late Scratch", "player_rush_yds")):
+            cur.execute("""INSERT INTO edge_opportunities (event_id, market, player, side, line, book, price,
+                           first_seen_at, last_seen_at, fair_prob, ev, max_ev, n_books, devig_method, closing_done)
+                           VALUES ('n1', %s, %s, 'over', 0.5, 'fanduel', 100, %s, %s, 0.5, 0.05, 0.05, 5,
+                           'power', TRUE)""", (market, player, NOW, NOW))
+    conn.commit()
+    return kickoff
+
+
+def _results(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT player, result FROM edge_opportunities WHERE event_id = 'n1' ORDER BY player")
+        return dict(cur.fetchall())
+
+
+def test_nfl_props_grade_under_book_rules(conn):
+    from src.edge import grading
+    kickoff = _seed_graded_nfl_game(conn)
+    grading.run_grading(conn, kickoff + timedelta(days=1))
+    assert _results(conn) == {"Benched Guy": "loss",     # played (3 snaps), no stat row -> 0 < 0.5
+                              "Bijan Robinson": "win",   # 88 rush yards
+                              "DJ Moore": "loss",        # played 51 snaps, 0 catches
+                              "Late Scratch": "void"}    # not in snaps once loaded
+
+
+def test_nfl_props_wait_for_stats_and_snaps(conn):
+    from src.edge import grading
+    kickoff = _seed_graded_nfl_game(conn, stats_loaded=False)
+    grading.run_grading(conn, kickoff + timedelta(days=1))
+    assert set(_results(conn).values()) == {None}
+    with conn.cursor() as cur:
+        cur.execute("UPDATE edge_nfl_games SET stats_loaded_at = %s, snaps_loaded_at = NULL", (kickoff + timedelta(hours=6),))
+        cur.execute("DELETE FROM edge_nfl_snaps")  # snaps not published yet
+    conn.commit()
+    grading.run_grading(conn, kickoff + timedelta(days=1))
+    r = _results(conn)
+    assert r["Bijan Robinson"] == "win" and r["Late Scratch"] is None and r["DJ Moore"] is None  # rule 6

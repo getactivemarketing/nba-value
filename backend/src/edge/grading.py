@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from psycopg2.extras import RealDictCursor
 
+from src.config import settings
 from src.edge import store
 from src.edge.config import CLOSING_WINDOW_MINUTES
 from src.edge.engine import american_to_decimal, clv, fair_prob, group, latest_before
@@ -154,4 +155,7 @@ def run_grading(conn, now: datetime) -> dict:
                 _set(cur, o["id"], result=r, profit_units=profit_units(r, o["price"]))
                 graded += 1
     conn.commit()
+    if settings.edge_nfl_players:
+        from src.edge import nfl_players  # NFL props: box scores + snap counts (Phase B)
+        graded += nfl_players.grade_props(conn, now)
     return {"closed": closed, "graded": graded}

@@ -248,3 +248,56 @@ def load_snaps(conn, season: int, now: datetime, frame=None) -> int:
                     (now, season))
     conn.commit()
     return len(rows)
+
+
+def nfl_prop_result(opp: dict, stat: dict | None, snaps_loaded: bool, played: bool) -> str | None:
+    """Sportsbook rules: a stat row grades; played without a row grades as 0;
+    absent from published snap counts is void (inactive); otherwise wait."""
+    from src.edge.grading import grade_over_under  # grading imports this module
+    if stat is not None:
+        return grade_over_under(stat_for(opp["market"], stat), float(opp["line"]), opp["side"])
+    if played:
+        return grade_over_under(0.0, float(opp["line"]), opp["side"])
+    if snaps_loaded:
+        return "void"
+    return None
+
+
+def grade_props(conn, now: datetime) -> int:
+    from src.edge.grading import profit_units  # grading imports this module
+    graded = 0
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""SELECT o.id, o.market, o.side, o.line, o.price, o.player, e.home_team, e.away_team,
+                              e.commence_time
+                       FROM edge_opportunities o JOIN edge_events e USING (event_id)
+                       WHERE o.result IS NULL AND o.player <> '' AND e.sport = 'americanfootball_nfl'
+                         AND e.commence_time <= %s""", (now - timedelta(hours=3),))
+        for o in cur.fetchall():
+            home, away = NFL_ABBR_BY_NAME.get(o["home_team"]), NFL_ABBR_BY_NAME.get(o["away_team"])
+            cur.execute("""SELECT bdl_player_id, team FROM edge_nfl_players
+                           WHERE odds_name = %s AND team = ANY(%s) AND bdl_player_id IS NOT NULL""",
+                        (o["player"], [home, away]))
+            p = cur.fetchone()
+            if p is None:
+                continue  # rule 1: unmatched
+            kickoff_et = et_date(o["commence_time"])
+            cur.execute("""SELECT * FROM edge_nfl_games WHERE home = %s AND away = %s
+                           AND game_date BETWEEN %s AND %s""",
+                        (home, away, kickoff_et - timedelta(days=1), kickoff_et + timedelta(days=1)))
+            g = cur.fetchone()
+            if g is None or g["status_state"] != "final" or g["stats_loaded_at"] is None:
+                continue  # rule 2: stats not complete
+            cur.execute("SELECT * FROM edge_nfl_player_games WHERE bdl_player_id = %s AND bdl_game_id = %s",
+                        (p["bdl_player_id"], g["bdl_game_id"]))
+            stat = cur.fetchone()
+            cur.execute("""SELECT 1 FROM edge_nfl_snaps WHERE season = %s AND week = %s AND team = %s
+                           AND player_norm = %s AND snaps > 0""",
+                        (g["season"], g["week"], p["team"], normalize_name(o["player"])))
+            played = cur.fetchone() is not None
+            r = nfl_prop_result(o, dict(stat) if stat else None, g["snaps_loaded_at"] is not None, played)
+            if r is not None:
+                cur.execute("UPDATE edge_opportunities SET result = %s, profit_units = %s WHERE id = %s",
+                            (r, profit_units(r, o["price"]), o["id"]))
+                graded += 1
+    conn.commit()
+    return graded

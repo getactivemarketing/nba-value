@@ -56,3 +56,13 @@ async def test_client_follows_cursors_and_uses_the_nfl_base():
     await c.stats([11, 12])
     assert all("/nfl/v1/" in u for u in seen)
     assert "game_ids%5B%5D=11" in seen[-1] and "game_ids%5B%5D=12" in seen[-1]
+
+
+def test_nfl_prop_result_rules():
+    opp = {"market": "player_reception_yds", "line": 40.5, "side": "over"}
+    row = {c: 0 for c in nfl.STAT_COLS} | {"rec_yds": 55}
+    assert nfl.nfl_prop_result(opp, row, snaps_loaded=False, played=False) == "win"     # rule 3
+    assert nfl.nfl_prop_result(opp, None, snaps_loaded=True, played=True) == "loss"     # rule 4: played, 0 yards
+    assert nfl.nfl_prop_result({**opp, "side": "under"}, None, True, True) == "win"
+    assert nfl.nfl_prop_result(opp, None, snaps_loaded=True, played=False) == "void"    # rule 5
+    assert nfl.nfl_prop_result(opp, None, snaps_loaded=False, played=False) is None     # rule 6: wait
