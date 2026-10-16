@@ -1,5 +1,11 @@
 """FastAPI application entry point."""
 
+# First, before any import can log: legacy code prints raw httpx errors, which
+# embed the Odds API key in the URL. Scrub all log and stdout/stderr output.
+from src.utils.redact import install_redaction
+
+install_redaction()
+
 import os
 import threading
 import time
@@ -15,10 +21,6 @@ from src.database import init_db
 from src.api import health, markets, bets, evaluation, admin, trends, backtest, mlb, nfl
 from src.api.deps import require_admin, require_nba_picks_public
 from src.edge import api as edge_api
-from src.utils.redact import install_redaction
-
-# Legacy code prints raw httpx errors, which embed the Odds API key; scrub all output.
-install_redaction()
 
 # Configure structured logging
 structlog.configure(

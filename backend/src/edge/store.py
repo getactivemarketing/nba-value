@@ -13,8 +13,19 @@ from src.edge.quotes import Quote
 _QCOLS = "event_id, market, player, side, line, book, price, link, observed_at"
 
 
+# The database is cross-region: bound connect time, and keep idle sessions
+# alive in both directions so dead ones are noticed in ~1 minute, not hours.
+# Server-side keepalives matter for the worker lock: Postgres holds a dead
+# session's advisory lock until it notices the client is gone.
+CONNECT_KWARGS = {
+    "connect_timeout": 5,
+    "keepalives": 1, "keepalives_idle": 30, "keepalives_interval": 10, "keepalives_count": 3,
+}
+SERVER_KEEPALIVES = "-c tcp_keepalives_idle=30 -c tcp_keepalives_interval=10 -c tcp_keepalives_count=3"
+
+
 def connect():
-    return psycopg2.connect(get_sync_database_url())
+    return psycopg2.connect(get_sync_database_url(), options=SERVER_KEEPALIVES, **CONNECT_KWARGS)
 
 
 # Arbitrary constant: one Edge worker per database. Two would double credit use.
@@ -28,6 +39,25 @@ def try_worker_lock(conn) -> bool:
         held = cur.fetchone()[0]
     conn.commit()
     return bool(held)
+
+
+def take_over_stale_lock(conn, now: datetime, stale_after: timedelta) -> bool:
+    """Evict the lock holder if its heartbeat is older than `stale_after`.
+
+    Covers a holder whose session died without Postgres noticing (it keeps the
+    lock until its keepalives give up), including this worker's own old session.
+    A missing heartbeat is not stale: a new holder writes one right after locking.
+    """
+    beat = get_state(conn).get("heartbeat_at")
+    if not beat or now - datetime.fromisoformat(beat) < stale_after:
+        return False
+    with conn.cursor() as cur:
+        cur.execute("""SELECT pg_terminate_backend(pid) FROM pg_locks
+                       WHERE locktype = 'advisory' AND objid = %s AND granted
+                         AND pid <> pg_backend_pid()""", (WORKER_LOCK_ID,))
+        evicted = any(r[0] for r in cur.fetchall())
+    conn.commit()
+    return evicted
 
 
 def _quote(r) -> Quote:

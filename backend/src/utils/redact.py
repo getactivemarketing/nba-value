@@ -42,10 +42,13 @@ _installed = False
 
 
 def install_redaction() -> None:
-    """Scrub every log record and all stdout/stderr output, process-wide.
+    """Scrub every formatted log line and all stdout/stderr output, process-wide.
 
     Legacy code passes raw httpx errors to print() and loggers in ~110 places;
-    this catches them all instead of patching each one. Idempotent.
+    this catches them all instead of patching each one. Redaction happens on
+    the finished string in Formatter.format, so records keep their args (uvicorn's
+    access formatter unpacks them) and %-format errors stay inside the handler's
+    error path instead of raising into the caller. Idempotent.
     """
     global _installed
     if _installed:
@@ -54,18 +57,11 @@ def install_redaction() -> None:
     import logging
     import sys
 
-    base = logging.getLogRecordFactory()
-    fmt = logging.Formatter()
+    original = logging.Formatter.format
 
-    def factory(*args, **kwargs):
-        record = base(*args, **kwargs)
-        record.msg = redact(record.getMessage())
-        record.args = ()
-        if record.exc_info and record.exc_info[0] is not None:
-            record.exc_text = redact(fmt.formatException(record.exc_info))
-            record.exc_info = None
-        return record
+    def format(self, record):  # noqa: A001 - mirrors logging.Formatter.format
+        return redact(original(self, record))
 
-    logging.setLogRecordFactory(factory)
+    logging.Formatter.format = format
     sys.stdout = RedactingStream(sys.stdout)
     sys.stderr = RedactingStream(sys.stderr)

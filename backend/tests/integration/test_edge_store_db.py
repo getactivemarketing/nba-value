@@ -327,7 +327,11 @@ def test_only_one_worker_holds_the_lock(conn):
         assert store.try_worker_lock(conn) is True
         assert store.try_worker_lock(conn) is True  # re-entrant for the holder
         assert store.try_worker_lock(other) is False
-        conn.close()  # the lock dies with the holder's session
+        conn.close()  # the lock dies with the holder's session (released asynchronously)
+        import time
+        deadline = time.monotonic() + 3
+        while not store.try_worker_lock(other) and time.monotonic() < deadline:
+            time.sleep(0.05)
         assert store.try_worker_lock(other) is True
     finally:
         other.close()
@@ -405,3 +409,39 @@ def test_worker_prunes_once_a_day_from_its_cursor(conn):
     assert worker.prune_step(conn, NOW + timedelta(hours=1)) == 0  # ran today already
     assert worker.prune_step(conn, NOW + timedelta(days=1)) == 1   # next day; overlap catches stragglers
     assert store.get_state(conn)["history_pruned_before"]
+
+
+def test_a_stale_lock_holder_is_evicted(conn):
+    holder = psycopg2.connect(URL)
+    try:
+        assert store.try_worker_lock(holder)
+        store.set_state(holder, "heartbeat_at", (NOW - timedelta(minutes=3)).isoformat(), NOW)
+        assert store.take_over_stale_lock(conn, NOW, timedelta(minutes=10)) is False  # alive: leave it
+        assert store.try_worker_lock(conn) is False
+        store.set_state(holder, "heartbeat_at", (NOW - timedelta(minutes=20)).isoformat(), NOW)
+        assert store.take_over_stale_lock(conn, NOW, timedelta(minutes=10)) is True
+        assert store.try_worker_lock(conn) is True
+    finally:
+        holder.close()
+
+
+def test_a_failing_prune_backs_off_instead_of_blocking_the_tick(conn, monkeypatch):
+    from src.edge import worker
+
+    def boom(*a, **k):
+        raise psycopg2.errors.QueryCanceled("canceling statement due to statement timeout")
+
+    monkeypatch.setattr(store, "prune_history", boom)
+    assert worker.prune_step(conn, NOW) == 0  # no exception escapes into tick
+    state = store.get_state(conn)              # and the connection is still usable
+    assert state["last_prune"] and "QueryCanceled" in state["prune_error"]
+    assert worker.prune_step(conn, NOW + timedelta(hours=1)) == 0  # backs off, no retry storm
+
+
+def test_first_prune_is_bounded(conn):
+    from src.edge import worker
+
+    tip = NOW - timedelta(days=30)
+    store.upsert_events(conn, [dict(_event(), event_id="ancient", commence_time=tip)])
+    _hist(conn, "ancient", [("fanduel", p, tip - timedelta(minutes=30 - i)) for i, p in enumerate((-110, -112, -114))])
+    assert worker.prune_step(conn, NOW) == 0  # first run looks back a bounded window only

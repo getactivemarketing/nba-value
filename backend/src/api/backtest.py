@@ -12,6 +12,7 @@ from src.tasks.backtest_runner import (
     get_backtest_results,
 )
 from src.config import get_sync_database_url
+from src.utils.redact import redact
 
 router = APIRouter(prefix="/backtest", tags=["Backtest"])
 
@@ -96,7 +97,7 @@ async def run_backtest_endpoint(request: BacktestRequest) -> BacktestResponse:
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=redact(e))
 
 
 @router.get("/results")
@@ -116,7 +117,7 @@ async def get_backtest_history(
             "results": results
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=redact(e))
 
 
 @router.get("/results/{backtest_id}")
@@ -168,7 +169,7 @@ async def get_backtest_detail(backtest_id: int) -> dict:
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=redact(e))
 
 
 @router.get("/quick")
@@ -222,4 +223,4 @@ async def quick_backtest(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=redact(e))

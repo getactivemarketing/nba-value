@@ -124,36 +124,87 @@ def test_connections_come_from_a_shared_pool_and_go_back(monkeypatch):
     assert pool.returned == [(c, False)] and c.rolled_back == 1  # no open transaction left behind
 
 
-def test_a_failed_request_discards_its_connection(monkeypatch):
+def test_a_plain_error_keeps_the_connection_but_a_dead_one_is_discarded(monkeypatch):
+    import psycopg2
+
     pool = _FakePool()
     monkeypatch.setattr(edge_api, "_get_pool", lambda: pool)
-    try:
-        with edge_api._conn():
-            raise RuntimeError("query failed")
-    except RuntimeError:
-        pass
-    assert pool.returned[0][1] is True
+    for exc in (RuntimeError("bad query"), psycopg2.OperationalError("server closed the connection")):
+        try:
+            with edge_api._conn():
+                raise exc
+        except type(exc):
+            pass
+    (c1, close1), (c2, close2) = pool.returned
+    assert close1 is False and c1.rolled_back == 1  # rolled back and reused
+    assert close2 is True                            # broken: thrown away
 
 
-def test_pool_is_created_once(monkeypatch):
+def test_pool_is_created_once_with_timeouts_and_keepalives(monkeypatch):
     made = []
     monkeypatch.setattr(edge_api, "_pool", None)
-    monkeypatch.setattr(edge_api, "ThreadedConnectionPool", lambda *a, **k: made.append(1) or _FakePool())
+    monkeypatch.setattr(edge_api, "ThreadedConnectionPool",
+                        lambda *a, **k: made.append(k) or _FakePool())
     assert edge_api._get_pool() is edge_api._get_pool() and len(made) == 1
+    kw = made[0]
+    assert kw["connect_timeout"] <= 10 and kw["keepalives"] == 1 and "statement_timeout" in kw["options"]
 
 
-def test_public_routes_are_rate_limited_per_client_ip(monkeypatch):
+def test_a_stale_pooled_connection_is_retried_once(monkeypatch):
+    import psycopg2
+
+    pool = _FakePool()
+    monkeypatch.setattr(edge_api, "_get_pool", lambda: pool)
+    edge_api._cache.clear()
+    calls = []
+
+    def build(conn, now):
+        calls.append(conn)
+        if len(calls) == 1:
+            raise psycopg2.OperationalError("SSL connection has been closed unexpectedly")
+        return "ok"
+
+    assert edge_api._cached(("stale",), build) == "ok"
+    assert len(calls) == 2 and calls[0] is not calls[1]
+
+
+def _health(c, headers):
+    return c.get(f"{P}/health", headers=headers).status_code
+
+
+def test_users_behind_the_vercel_proxy_get_their_own_budget(monkeypatch):
+    """Browsers reach Railway via Vercel's rewrite: X-Real-IP is Vercel, XFF has the user."""
     monkeypatch.setattr(edge_api, "_conn", _fake_conn)
     monkeypatch.setattr(views, "public_status", lambda conn, now: {"ok": True})
+    edge_api._reset_limits()
+    c = TestClient(app)
+    vercel = "76.76.21.21"
+    user_a = {"X-Real-IP": vercel, "X-Forwarded-For": "1.2.3.4, 76.76.21.21"}
+    user_b = {"X-Real-IP": vercel, "X-Forwarded-For": "5.6.7.8"}
+    codes = [_health(c, user_a) for _ in range(edge_api.RATE_BURST + 5)]
+    assert codes[:edge_api.RATE_BURST] == [200] * edge_api.RATE_BURST and codes[-1] == 429
+    assert _health(c, user_b) == 200  # a second user via the same proxy is unaffected
+    edge_api._reset_limits()
+
+
+def test_rotating_a_spoofed_forwarded_for_still_hits_the_peer_cap(monkeypatch):
+    monkeypatch.setattr(edge_api, "_conn", _fake_conn)
+    monkeypatch.setattr(views, "public_status", lambda conn, now: {"ok": True})
+    monkeypatch.setattr(edge_api, "_peer_limiter", edge_api.RateLimiter(1.0, 10))
     edge_api._limiter.reset()
     c = TestClient(app)
-    codes = [c.get(f"{P}/health", headers={"X-Real-IP": "1.2.3.4"}).status_code
-             for _ in range(edge_api.RATE_BURST + 5)]
-    assert codes[:edge_api.RATE_BURST] == [200] * edge_api.RATE_BURST
-    assert codes[-1] == 429
-    # A different client is unaffected.
-    assert c.get(f"{P}/health", headers={"X-Real-IP": "5.6.7.8"}).status_code == 200
-    edge_api._limiter.reset()
+    codes = [_health(c, {"X-Real-IP": "9.9.9.9", "X-Forwarded-For": f"10.0.0.{i}"}) for i in range(12)]
+    assert codes[:10] == [200] * 10 and codes[-1] == 429
+    edge_api._reset_limits()
+
+
+def test_admin_requests_are_not_rate_limited(monkeypatch):
+    monkeypatch.setattr(edge_api, "_conn", _fake_conn)
+    monkeypatch.setattr(views, "status", lambda conn, now: {"heartbeat_age_s": 5})
+    monkeypatch.setattr(edge_api, "_limiter", edge_api.RateLimiter(1.0, 1))
+    c = TestClient(app)
+    h = {"X-Cron-Key": admin_api.CRON_API_KEY, "X-Real-IP": "1.1.1.1"}
+    assert [c.get(f"{P}/status", headers=h).status_code for _ in range(3)] == [200, 200, 200]
 
 
 def test_limiter_refills_and_stays_bounded():

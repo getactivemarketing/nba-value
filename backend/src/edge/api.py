@@ -13,17 +13,20 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 
+from src.api.admin import _verify_cron_key
 from src.api.deps import require_admin
 from src.config import get_sync_database_url
-from src.edge import views
+from src.edge import store, views
 from src.utils.redact import redact
 
 TTL = 25.0
 MAX_CACHE_ENTRIES = 512
 POOL_MAX = 8
+STATEMENT_TIMEOUT_MS = 15_000
 RATE_PER_S = 1.0  # sustained: 60 requests/minute per client
 RATE_BURST = 60   # an open Edge page makes ~6 requests/minute
 
@@ -55,13 +58,28 @@ class RateLimiter:
         return len(self._buckets)
 
 
+# Browsers reach Railway through Vercel's /api rewrite, so X-Real-IP (set by
+# Railway's edge) is a Vercel egress address shared by many users; the user is
+# the leftmost X-Forwarded-For entry. That header is spoofable by direct
+# callers, so a second, much larger budget per connecting address caps them.
+PEER_RATE_PER_S = 20.0
+PEER_BURST = 600
 _limiter = RateLimiter(RATE_PER_S, RATE_BURST)
+_peer_limiter = RateLimiter(PEER_RATE_PER_S, PEER_BURST)
 
 
-def rate_limit(request: Request) -> None:
-    # Railway's edge sets X-Real-IP to the caller's address.
-    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
-    if not _limiter.allow(ip):
+def _reset_limits() -> None:
+    _limiter.reset()
+    _peer_limiter.reset()
+
+
+def rate_limit(request: Request, x_cron_key: str | None = Header(None)) -> None:
+    if x_cron_key and _verify_cron_key(x_cron_key):
+        return
+    peer = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    client = forwarded or peer
+    if not _peer_limiter.allow(peer) or not _limiter.allow(client):
         raise HTTPException(status_code=429, detail="Too many requests", headers={"Retry-After": "5"})
 
 
@@ -77,7 +95,9 @@ def _get_pool() -> ThreadedConnectionPool:
     global _pool
     with _pool_lock:
         if _pool is None:
-            _pool = ThreadedConnectionPool(1, POOL_MAX, get_sync_database_url())
+            _pool = ThreadedConnectionPool(
+                1, POOL_MAX, get_sync_database_url(), **store.CONNECT_KWARGS,
+                options=f"{store.SERVER_KEEPALIVES} -c statement_timeout={STATEMENT_TIMEOUT_MS}")
         return _pool
 
 
@@ -93,8 +113,8 @@ def _conn():
         broken = False
         try:
             yield conn
-        except BaseException:
-            broken = True
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            broken = True  # the session is dead; anything else just needs a rollback
             raise
         finally:
             if not broken and not conn.closed:
@@ -117,8 +137,13 @@ def _cached(key: tuple, build):
     if hit and time.monotonic() - hit[0] < TTL:
         return hit[1]
     try:
-        with _conn() as conn:
-            value = build(conn, datetime.now(timezone.utc))
+        try:
+            with _conn() as conn:
+                value = build(conn, datetime.now(timezone.utc))
+        except psycopg2.OperationalError:
+            # A pooled connection can die while idle; it was discarded, so retry once.
+            with _conn() as conn:
+                value = build(conn, datetime.now(timezone.utc))
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001

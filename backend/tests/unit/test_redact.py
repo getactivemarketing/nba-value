@@ -87,3 +87,45 @@ def test_entry_points_install_scrubbing(setup):
     assert p.returncode == 0, p.stderr[-500:]
     assert "apiKey=***" in p.stdout
     assert "zz9988776655" not in p.stdout + p.stderr
+
+
+def test_uvicorn_access_log_still_formats():
+    """Uvicorn's AccessFormatter unpacks record.args; scrubbing must not clear them."""
+    from uvicorn.logging import AccessFormatter
+
+    install_redaction()
+    raw = io.StringIO()
+    handler = logging.StreamHandler(raw)
+    handler.setFormatter(AccessFormatter('%(client_addr)s - "%(request_line)s" %(status_code)s'))
+    log = logging.getLogger("test.uvicorn.access")
+    log.setLevel(logging.INFO)
+    log.addHandler(handler)
+    log.propagate = False
+    try:
+        log.info('%s - "%s %s HTTP/%s" %d', "1.2.3.4", "GET", "/x?apiKey=zz9988776655", "1.1", 200)
+    finally:
+        log.removeHandler(handler)
+    assert '1.2.3.4 - "GET /x?apiKey=*** HTTP/1.1" 200' in raw.getvalue()
+
+
+def test_bad_log_format_does_not_raise_into_the_caller():
+    install_redaction()
+    log = logging.getLogger("test.badformat")
+    log.addHandler(logging.NullHandler())
+    log.propagate = False
+    log.warning("value %d", "notanint")  # must not raise TypeError here
+
+
+def test_backtest_errors_do_not_echo_the_key(monkeypatch):
+    from src.api import admin as admin_api
+    from src.api import backtest
+
+    def boom():
+        raise RuntimeError("upstream https://x?apiKey=zz9988776655")
+
+    monkeypatch.setattr(backtest, "get_backtest_results", lambda *a, **k: boom())
+    paths = [r.path for r in app.routes if getattr(r, "path", "").endswith("/results")
+             and "backtest" in getattr(r, "path", "")]
+    r = TestClient(app, raise_server_exceptions=False).get(
+        paths[0], headers={"X-Cron-Key": admin_api.CRON_API_KEY})
+    assert r.status_code == 500 and "zz9988776655" not in r.text

@@ -25,6 +25,7 @@ from src.utils.season import current_nba_season
 
 log = logging.getLogger("edge.worker")
 TICK_SECONDS = 30
+STALE_LOCK = timedelta(minutes=10)  # heartbeat age at which a standby evicts the holder
 
 
 class Backoff:
@@ -172,20 +173,32 @@ async def box_scores_step(conn, bdl, now: datetime) -> int:
 
 PRUNE_AFTER = timedelta(days=3)    # games older than this are graded and closed
 PRUNE_OVERLAP = timedelta(days=2)  # re-scan behind the last cutoff for late-graded games
+PRUNE_FIRST_WINDOW = timedelta(days=7)  # first run: history only exists since the worker started
 
 
 def prune_step(conn, now: datetime) -> int:
-    """Daily: thin price history for games that tipped more than 3 days ago."""
+    """Daily: thin price history for games that tipped more than 3 days ago.
+
+    Never raises: a failure (e.g. a statement timeout) is recorded in
+    prune_error and retried the next day, so it cannot block the tick.
+    """
     state = store.get_state(conn)
     last = _parse(state.get("last_prune"))
     if last is not None and now - last < timedelta(hours=24):
         return 0
     prev_cutoff = _parse(state.get("history_pruned_before"))
     before = now - PRUNE_AFTER
-    deleted = store.prune_history(conn, before=before,
-                                  after=prev_cutoff - PRUNE_OVERLAP if prev_cutoff else None)
+    after = prev_cutoff - PRUNE_OVERLAP if prev_cutoff else before - PRUNE_FIRST_WINDOW
+    try:
+        deleted = store.prune_history(conn, before=before, after=after)
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        store.set_state(conn, "prune_error", redact(f"{type(e).__name__}: {e}")[:300], now)
+        store.set_state(conn, "last_prune", _iso(now), now)
+        return 0
     store.set_state(conn, "history_pruned_before", _iso(before), now)
     store.set_state(conn, "last_prune", _iso(now), now)
+    store.set_state(conn, "prune_error", "", now)
     return deleted
 
 
@@ -230,37 +243,49 @@ async def _run() -> None:
     blocked_until: datetime | None = None
     conn = store.connect()
     locked = False  # the advisory lock lives and dies with `conn`'s session
-    while True:
-        now = datetime.now(timezone.utc)
-        try:
-            if conn.closed:
-                conn, locked = store.connect(), False
-            if not locked:
-                locked = store.try_worker_lock(conn)
-                if not locked:
-                    # No heartbeat while standing by: it would hide a dead primary.
-                    log.warning("another edge worker holds the lock; standing by")
-                    await asyncio.sleep(TICK_SECONDS)
-                    continue
-            store.set_state(conn, "heartbeat_at", _iso(now), now)
-            if blocked_until is None or now >= blocked_until:
-                result = await tick(conn, client, bdl, now)
-                backoff.success()
-                blocked_until = None
-                store.set_state(conn, "last_error", "", now)
-                log.info("edge tick %s", result)
-        except OddsApiError as e:
-            blocked_until = backoff.failure(e.status, now)
-            log.error("edge odds api error %s: %s", e.status, e)
-            store.set_state(conn, "last_error", f"odds_api {e.status}: {e}"[:500], now)
-        except Exception as e:  # noqa: BLE001 - the loop must survive anything
-            log.exception("edge tick failed")
+    standby_logged: datetime | None = None
+    try:
+        while True:
+            now = datetime.now(timezone.utc)
             try:
-                conn.rollback()
-                store.set_state(conn, "last_error", redact(f"{type(e).__name__}: {e}")[:500], now)
-            except Exception:  # noqa: BLE001
-                conn, locked = _reconnect(conn), False
-        await asyncio.sleep(TICK_SECONDS)
+                if conn.closed:
+                    conn, locked = store.connect(), False
+                if not locked:
+                    locked = store.try_worker_lock(conn)
+                    if not locked and store.take_over_stale_lock(conn, now, STALE_LOCK):
+                        log.warning("evicted an edge worker with a stale heartbeat")
+                        locked = store.try_worker_lock(conn)
+                    if not locked:
+                        # No heartbeat while standing by: it would hide a dead primary.
+                        if standby_logged is None or now - standby_logged >= timedelta(minutes=10):
+                            log.warning("another edge worker holds the lock; standing by")
+                            standby_logged = now
+                        await asyncio.sleep(TICK_SECONDS)
+                        continue
+                store.set_state(conn, "heartbeat_at", _iso(now), now)
+                if blocked_until is None or now >= blocked_until:
+                    result = await tick(conn, client, bdl, now)
+                    backoff.success()
+                    blocked_until = None
+                    store.set_state(conn, "last_error", "", now)
+                    log.info("edge tick %s", result)
+            except OddsApiError as e:
+                blocked_until = backoff.failure(e.status, now)
+                log.error("edge odds api error %s: %s", e.status, e)
+                store.set_state(conn, "last_error", f"odds_api {e.status}: {e}"[:500], now)
+            except Exception as e:  # noqa: BLE001 - the loop must survive anything
+                log.exception("edge tick failed")
+                try:
+                    conn.rollback()
+                    store.set_state(conn, "last_error", redact(f"{type(e).__name__}: {e}")[:500], now)
+                except Exception:  # noqa: BLE001
+                    conn, locked = _reconnect(conn), False
+            await asyncio.sleep(TICK_SECONDS)
+    finally:
+        try:
+            conn.close()  # never leave a session (and its lock) behind on restart
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def configure_logging() -> None:

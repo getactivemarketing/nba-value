@@ -11,18 +11,26 @@ class _Stop(Exception):
 
 class _Conn:
     closed = 0
+    made: list = []
+
+    def __init__(self):
+        _Conn.made.append(self)
 
     def rollback(self):
         pass
 
+    def close(self):
+        self.closed = 1
 
-def _run_ticks(monkeypatch, lock_results):
+
+def _run_ticks(monkeypatch, lock_results, takeover=False):
     """Run the worker loop for len(lock_results) iterations; return tick count."""
     ticks, locks = [], iter(lock_results)
     monkeypatch.setattr(worker, "EdgeOddsClient", lambda: object())
     monkeypatch.setattr(worker.players, "BdlClient", lambda: object())
     monkeypatch.setattr(store, "connect", lambda: _Conn())
     monkeypatch.setattr(store, "try_worker_lock", lambda conn: next(locks))
+    monkeypatch.setattr(store, "take_over_stale_lock", lambda conn, now, stale: takeover)
     monkeypatch.setattr(store, "set_state", lambda *a, **k: None)
 
     async def tick(conn, client, bdl, now):
@@ -70,6 +78,7 @@ def test_reconnect_closes_the_old_session_so_its_lock_is_released(monkeypatch):
     monkeypatch.setattr(worker.players, "BdlClient", lambda: object())
     monkeypatch.setattr(store, "connect", _BadConn)
     monkeypatch.setattr(store, "try_worker_lock", lambda conn: True)
+    monkeypatch.setattr(store, "take_over_stale_lock", lambda *a: False)
     monkeypatch.setattr(store, "set_state", lambda *a, **k: None)
 
     async def tick(*a):
@@ -83,3 +92,15 @@ def test_reconnect_closes_the_old_session_so_its_lock_is_released(monkeypatch):
     with pytest.raises(_Stop):
         asyncio.run(worker._run())
     assert len(conns) == 2 and conns[0].closed_by_worker
+
+
+def test_standby_takes_over_from_a_stale_holder(monkeypatch):
+    # Denied, holder evicted, granted on the retry in the same iteration:
+    # both iterations tick (vs 1 without the takeover).
+    assert _run_ticks(monkeypatch, [False, True], takeover=True) == 2
+
+
+def test_the_loop_closes_its_connection_when_it_exits(monkeypatch):
+    _Conn.made.clear()
+    _run_ticks(monkeypatch, [True])
+    assert _Conn.made and all(c.closed for c in _Conn.made)  # main() restarts _run with a fresh session
