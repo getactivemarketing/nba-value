@@ -27,8 +27,8 @@ export function EvTable({ rows, playerIds = {}, sport = 'nba' }:
               </td>
               <td className="py-2">
                 <div className="text-[#f1f5f9]">
-                  {sport === 'nba' && r.player && playerIds[r.player]
-                    ? <Link to={`/edge/player/${playerIds[r.player]}?market=${r.market}`} className="hover:underline">{r.bet}</Link>
+                  {r.player && playerIds[r.player]
+                    ? <Link to={`${edgeBase(sport)}/player/${playerIds[r.player]}?market=${r.market}`} className="hover:underline">{r.bet}</Link>
                     : r.bet}
                 </div>
                 <Link to={`${edgeBase(sport)}/odds/${r.event_id}?market=${r.market}`} className="text-[10px] text-[#64748b] font-mono hover:underline">

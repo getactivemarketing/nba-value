@@ -23,6 +23,7 @@ const NFL_MARKETS = ['h2h', 'spreads', 'totals', 'player_pass_yds', 'player_pass
   'player_rush_attempts', 'player_receptions', 'player_reception_yds', 'player_rush_reception_yds'];
 export type Sport = 'nba' | 'nfl';
 export const marketKeysFor = (sport: Sport) => (sport === 'nfl' ? NFL_MARKETS : NBA_MARKETS);
+export const propMarketsFor = (sport: Sport) => marketKeysFor(sport).filter((m) => m.startsWith('player_'));
 export const edgeBase = (sport: Sport) => (sport === 'nfl' ? '/nfl/edge' : '/edge');
 export const BOOK_KEYS = Object.keys(BOOKS);
 export const MARKET_KEYS = NBA_MARKETS;

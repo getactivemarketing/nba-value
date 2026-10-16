@@ -21,14 +21,16 @@ function App() {
         <Route path="/" element={<EdgeHome />} />
         <Route path="/edge" element={<EdgeFinder key="nba" />} />
         <Route path="/edge/odds/:eventId" element={<EdgeOdds key="nba" />} />
-        <Route path="/edge/player/:id" element={<EdgePlayer />} />
-        <Route path="/edge/results" element={<EdgeResults />} />
+        <Route path="/edge/player/:id" element={<EdgePlayer key="nba" />} />
+        <Route path="/edge/results" element={<EdgeResults key="nba" />} />
         <Route path="/mlb" element={<MLBPicks />} />
         <Route path="/mlb/performance" element={<MLBEvaluation />} />
         <Route path="/nrfi" element={<NRFI />} />
         <Route path="/nfl" element={<NFLPicks />} />
         <Route path="/nfl/edge" element={<EdgeFinder key="nfl" sport="nfl" />} />
         <Route path="/nfl/edge/odds/:eventId" element={<EdgeOdds key="nfl" sport="nfl" />} />
+        <Route path="/nfl/edge/player/:id" element={<EdgePlayer key="nfl" sport="nfl" />} />
+        <Route path="/nfl/edge/results" element={<EdgeResults key="nfl" sport="nfl" />} />
         <Route path="/nfl/performance" element={<NFLEvaluation />} />
         <Route path="/trends" element={<Trends />} />
         <Route path="/evaluation" element={<Navigate to="/edge/results" replace />} />

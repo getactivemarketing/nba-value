@@ -10,9 +10,9 @@ export const useEdgeEv = (params: EvParams, sport: Sport = 'nba') =>
 export const useEdgeOdds = (eventId: string, market: string, sport: Sport = 'nba') =>
   useQuery({ queryKey: ['edge', sport, 'odds', eventId, market], queryFn: () => edgeApi.odds(eventId, market, sport),
     refetchInterval: 30000, enabled: !!eventId });
-export const useEdgePlayer = (id: number, market: string, line?: number, minMinutes?: number) =>
-  useQuery({ queryKey: ['edge', 'player', id, market, line, minMinutes],
-    queryFn: () => edgeApi.player(id, market, line, minMinutes), enabled: id > 0 });
+export const useEdgePlayer = (id: number, market: string, line?: number, minMinutes?: number, sport: Sport = 'nba') =>
+  useQuery({ queryKey: ['edge', sport, 'player', id, market, line, minMinutes],
+    queryFn: () => edgeApi.player(id, market, line, minMinutes, sport), enabled: id > 0 });
 export const useEdgeResults = (days = 365, sport: Sport = 'nba') =>
   useQuery({ queryKey: ['edge', sport, 'results', days], queryFn: () => edgeApi.results(days, sport), staleTime: 300000 });
 export const useEdgeHealth = (sport: Sport = 'nba') =>

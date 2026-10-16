@@ -2,7 +2,7 @@
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useEdgeResults } from '@/hooks/useEdge';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
-import { bookLabel, fmtPct, marketLabel } from '@/lib/edgeFormat';
+import { bookLabel, fmtPct, marketLabel, type Sport } from '@/lib/edgeFormat';
 import type { ResultsBlock } from '@/types/edge';
 
 const pts = (x: number | null) => (x == null ? '—' : `${x >= 0 ? '+' : ''}${(x * 100).toFixed(2)} pts`);
@@ -28,13 +28,13 @@ function Breakdown({ title, data, label }: { title: string; data: Record<string,
   );
 }
 
-export function EdgeResults() {
-  const { data, isLoading } = useEdgeResults();
+export function EdgeResults({ sport = 'nba' }: { sport?: Sport }) {
+  const { data, isLoading } = useEdgeResults(365, sport);
   if (isLoading || !data) return <div className="text-center py-8 text-[#64748b] font-mono text-sm">Loading…</div>;
   const c = data.clv;
   return (
     <div>
-      <h1 className="text-3xl font-bold text-[#f1f5f9] font-display tracking-tight">Track record</h1>
+      <h1 className="text-3xl font-bold text-[#f1f5f9] font-display tracking-tight">{sport === 'nfl' ? 'NFL track record' : 'Track record'}</h1>
       <p className="text-sm text-[#64748b] font-mono max-w-2xl mt-2 leading-relaxed">
         Every +EV price is logged the moment we first see it and graded against the closing line. Closing-line
         value (CLV) is the gap between the market's final fair price and the price you got. It settles a betting

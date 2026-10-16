@@ -40,6 +40,7 @@ const SPORTS = [
     pages: [
       { path: '/nfl', label: 'Picks' },
       { path: '/nfl/edge', label: '+EV' },
+      { path: '/nfl/edge/results', label: 'Track record' },
       { path: '/nfl/performance', label: 'Results' },
     ],
   },

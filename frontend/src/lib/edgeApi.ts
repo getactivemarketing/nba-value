@@ -17,9 +17,10 @@ export const edgeApi = {
   async odds(eventId: string, market: string, sport: Sport = 'nba'): Promise<OddsResponse> {
     return (await client.get<OddsResponse>(`/edge/odds/${eventId}`, { params: { market, sport } })).data;
   },
-  async player(id: number, market: string, line?: number, minMinutes?: number): Promise<PlayerResponse> {
+  async player(id: number, market: string, line?: number, minMinutes?: number,
+    sport: Sport = 'nba'): Promise<PlayerResponse> {
     return (await client.get<PlayerResponse>(`/edge/players/${id}`,
-      { params: { market, line, min_minutes: minMinutes } })).data;
+      { params: { market, line, min_minutes: minMinutes, sport } })).data;
   },
   async results(days = 365, sport: Sport = 'nba'): Promise<ResultsResponse> {
     return (await client.get<ResultsResponse>('/edge/results', { params: { days, sport } })).data;

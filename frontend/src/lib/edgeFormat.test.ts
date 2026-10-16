@@ -57,3 +57,12 @@ describe('sports', () => {
     expect(edgeBase('nfl')).toBe('/nfl/edge');
   });
 });
+
+import { propMarketsFor } from './edgeFormat';
+describe('prop markets', () => {
+  it('lists only player markets per sport', () => {
+    expect(propMarketsFor('nfl')).toHaveLength(10);
+    expect(propMarketsFor('nfl').every((m) => m.startsWith('player_'))).toBe(true);
+    expect(propMarketsFor('nba')).toContain('player_points');
+  });
+});

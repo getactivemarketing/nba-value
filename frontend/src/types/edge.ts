@@ -20,11 +20,11 @@ export interface OddsResponse {
 }
 export interface HitRate { hits: number; misses: number; pushes: number; games: number; rate: number | null; }
 export interface PlayerGame {
-  game_date: string; opponent: string; is_home: boolean; minutes: number; value: number;
+  game_date: string; opponent: string; is_home: boolean; minutes: number; value: number; week?: number;
 }
 export interface PlayerResponse {
   bdl_player_id: number; name: string | null; team: string | null; market: string; line: number | null;
-  opponent: string | null; is_home: boolean | null;
+  opponent: string | null; is_home: boolean | null; position?: string | null;
   hit_rates: Record<'l5' | 'l10' | 'l20' | 'season' | 'vs_opponent' | 'home_away', HitRate> | null;
   games: PlayerGame[]; prices: { book: string; side: string; line: number; price: number; link: string | null }[];
 }

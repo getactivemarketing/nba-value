@@ -4,39 +4,38 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useEdgePlayer } from '@/hooks/useEdge';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
-import { bookLabel, fmtAmerican, fmtPct, marketLabel } from '@/lib/edgeFormat';
+import { bookLabel, fmtAmerican, fmtPct, marketLabel, propMarketsFor, type Sport } from '@/lib/edgeFormat';
 
 const WINDOWS = [['l5', 'Last 5'], ['l10', 'Last 10'], ['l20', 'Last 20'], ['season', 'Season'],
   ['vs_opponent', 'vs Opp'], ['home_away', 'Home/Away']] as const;
-const PROP_MARKETS = ['player_points', 'player_rebounds', 'player_assists', 'player_threes',
-  'player_points_rebounds_assists', 'player_points_rebounds', 'player_points_assists', 'player_rebounds_assists'];
 
-export function EdgePlayer() {
+export function EdgePlayer({ sport = 'nba' }: { sport?: Sport }) {
   const { id = '0' } = useParams();
   const [params, setParams] = useSearchParams();
-  const market = params.get('market') || 'player_points';
+  const market = params.get('market') || (sport === 'nfl' ? 'player_reception_yds' : 'player_points');
   const [minMinutes, setMinMinutes] = useState(0);
-  const { data, isLoading } = useEdgePlayer(Number(id), market, undefined, minMinutes);
+  const { data, isLoading } = useEdgePlayer(Number(id), market, undefined,
+    sport === 'nba' ? minMinutes : undefined, sport);
   if (isLoading || !data) return <div className="text-center py-8 text-[#64748b] font-mono text-sm">Loading…</div>;
-  const chart = [...data.games].reverse().map((g) => ({ ...g, label: g.game_date.slice(5) }));
+  const chart = [...data.games].reverse().map((g) => ({ ...g, label: sport === 'nfl' && g.week ? `W${g.week}` : g.game_date.slice(5) }));
 
   return (
     <div>
       <h1 className="text-3xl font-bold text-[#f1f5f9] font-display tracking-tight">{data.name ?? 'Player'}</h1>
       <p className="text-sm text-[#64748b] mt-1 font-mono">
-        {data.team}{data.opponent ? ` · next: ${data.is_home ? 'vs' : '@'} ${data.opponent}` : ''}
+        {data.position ? `${data.position} · ` : ''}{data.team}{data.opponent ? ` · next: ${data.is_home ? 'vs' : '@'} ${data.opponent}` : ''}
         {data.line != null ? ` · line ${data.line}` : ' · no line posted'}
       </p>
       <div className="mt-3 flex flex-wrap gap-1">
-        {PROP_MARKETS.map((m) => (
+        {propMarketsFor(sport).map((m) => (
           <button key={m} onClick={() => setParams({ market: m })}
                   className={`text-[10px] font-mono rounded px-2 py-1 border ${m === market
                     ? 'border-[#a4e6ff] text-[#a4e6ff]' : 'border-[#1e293b] text-[#64748b]'}`}>{marketLabel(m)}</button>
         ))}
-        <select value={minMinutes} onChange={(e) => setMinMinutes(Number(e.target.value))}
+        {sport === 'nba' && <select value={minMinutes} onChange={(e) => setMinMinutes(Number(e.target.value))}
                 className="ml-2 bg-[#191c22] border border-[#1e293b] rounded px-2 py-1 text-[10px] font-mono text-[#f1f5f9]">
           {[0, 20, 25, 30].map((v) => <option key={v} value={v}>{v ? `≥ ${v} min` : 'All minutes'}</option>)}
-        </select>
+        </select>}
       </div>
       {data.hit_rates && (
         <div className="mt-4 grid grid-cols-3 sm:grid-cols-6 gap-2">
@@ -67,6 +66,11 @@ export function EdgePlayer() {
           </BarChart>
         </ResponsiveContainer>
       </div>
+      {sport === 'nfl' && (
+        <p className="text-[10px] text-[#64748b] font-mono mt-1.5 italic">
+          Stats: BallDontLie. Participation: nflverse snap counts.
+        </p>
+      )}
       {data.prices.length > 0 && (
         <table className="mt-4 w-full text-sm">
           <tbody>

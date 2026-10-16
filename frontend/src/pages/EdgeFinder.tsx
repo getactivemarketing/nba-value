@@ -44,9 +44,6 @@ export function EdgeFinder({ limit, sport = 'nba' }: { limit?: number; sport?: S
           <p className="text-sm text-[#64748b] mt-1 font-mono">
             Prices that beat the devigged sharp consensus. Updated every 30 seconds.
           </p>
-          {sport === 'nfl' && (
-            <p className="text-xs text-[#64748b] mt-1 font-mono">NFL player pages and prop results are coming next week.</p>
-          )}
           <div className="mt-4 flex flex-wrap gap-2 text-xs font-mono">
             <select value={market} onChange={(e) => setMarket(e.target.value)}
                     className="bg-[#191c22] border border-[#1e293b] rounded px-2 py-1 text-[#f1f5f9]">
