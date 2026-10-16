@@ -319,3 +319,15 @@ async def test_backfill_runs_in_steps_and_resumes_after_errors(conn):
     assert store.get_state(conn)["backfill_2025_next"] == "2025-10-18"
     await worker.backfill_step(conn, bdl, now, days=3)  # resumes at 10-18
     assert bdl.calls[3] == date(2025, 10, 18)
+
+
+def test_only_one_worker_holds_the_lock(conn):
+    other = psycopg2.connect(URL)
+    try:
+        assert store.try_worker_lock(conn) is True
+        assert store.try_worker_lock(conn) is True  # re-entrant for the holder
+        assert store.try_worker_lock(other) is False
+        conn.close()  # the lock dies with the holder's session
+        assert store.try_worker_lock(other) is True
+    finally:
+        other.close()

@@ -17,6 +17,19 @@ def connect():
     return psycopg2.connect(get_sync_database_url())
 
 
+# Arbitrary constant: one Edge worker per database. Two would double credit use.
+WORKER_LOCK_ID = 7_311_020
+
+
+def try_worker_lock(conn) -> bool:
+    """Session-level advisory lock; released automatically if the holder disconnects."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (WORKER_LOCK_ID,))
+        held = cur.fetchone()[0]
+    conn.commit()
+    return bool(held)
+
+
 def _quote(r) -> Quote:
     return Quote(r[0], r[1], r[2], r[3], float(r[4]), r[5], int(r[6]), r[7], r[8])
 

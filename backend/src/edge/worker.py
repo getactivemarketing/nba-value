@@ -193,17 +193,34 @@ async def backfill_step(conn, bdl, now: datetime, days: int = 3) -> int:
     return rows
 
 
+def _reconnect(old):
+    """Close first: a live old session would keep holding the worker lock."""
+    try:
+        old.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return store.connect()
+
+
 async def _run() -> None:
     client = EdgeOddsClient()
     bdl = players.BdlClient()
     backoff = Backoff()
     blocked_until: datetime | None = None
     conn = store.connect()
+    locked = False  # the advisory lock lives and dies with `conn`'s session
     while True:
         now = datetime.now(timezone.utc)
         try:
             if conn.closed:
-                conn = store.connect()
+                conn, locked = store.connect(), False
+            if not locked:
+                locked = store.try_worker_lock(conn)
+                if not locked:
+                    # No heartbeat while standing by: it would hide a dead primary.
+                    log.warning("another edge worker holds the lock; standing by")
+                    await asyncio.sleep(TICK_SECONDS)
+                    continue
             store.set_state(conn, "heartbeat_at", _iso(now), now)
             if blocked_until is None or now >= blocked_until:
                 result = await tick(conn, client, bdl, now)
@@ -221,7 +238,7 @@ async def _run() -> None:
                 conn.rollback()
                 store.set_state(conn, "last_error", redact(f"{type(e).__name__}: {e}")[:500], now)
             except Exception:  # noqa: BLE001
-                conn = store.connect()
+                conn, locked = _reconnect(conn), False
         await asyncio.sleep(TICK_SECONDS)
 
 
