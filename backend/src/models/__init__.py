@@ -36,6 +36,10 @@ from src.models.nfl_odds_snapshot import NFLOddsSnapshot
 from src.models.nfl_shadow_prediction import NFLShadowPrediction
 from src.models.nfl_prediction_snapshot import NFLPredictionSnapshot
 
+# TruLine Edge
+from src.models.edge import (EdgeApiCall, EdgeEvent, EdgeOpportunity, EdgePlayer,
+                             EdgePlayerGame, EdgeQuote, EdgeQuoteHistory, EdgeWorkerState)
+
 __all__ = [
     # NBA Models
     "Game",
@@ -71,4 +75,13 @@ __all__ = [
     "NFLOddsSnapshot",
     "NFLShadowPrediction",
     "NFLPredictionSnapshot",
+    # TruLine Edge
+    "EdgeApiCall",
+    "EdgeEvent",
+    "EdgeOpportunity",
+    "EdgePlayer",
+    "EdgePlayerGame",
+    "EdgeQuote",
+    "EdgeQuoteHistory",
+    "EdgeWorkerState",
 ]
