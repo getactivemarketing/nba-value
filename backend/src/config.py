@@ -61,8 +61,11 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:5173",
         "https://nba-value.vercel.app",
-        "https://*.vercel.app",
+        "https://truline.app",
+        "https://www.truline.app",
     ]
+    # Vercel preview deployments of this project only (allow_origins has no wildcards).
+    cors_origin_regex: str = r"https://nba-[a-z0-9-]+-samir-patels-projects-5c7af3f7\.vercel\.app"
 
     # Logging
     log_level: str = "INFO"
