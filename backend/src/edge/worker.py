@@ -78,12 +78,15 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime) -> dict:
         store.drop_missing_events(conn, [e["id"] for e in events_json], now)
         store.set_state(conn, "last_events_refresh", _iso(now), now)
 
-    factor = schedule.guard_factor(store.cost_last_24h(conn, now), int(state.get("guard_factor", "1")),
-                                   settings.edge_credit_cap, int(state["credits_remaining"])
-                                   if state.get("credits_remaining") else None)
-    if factor != int(state.get("guard_factor", "1")):
-        log.warning("edge credit guard factor -> %s", factor)
-    store.set_state(conn, "guard_factor", str(factor), now)
+    current = int(state.get("guard_factor", "1"))
+    factor = schedule.guard_factor(
+        store.cost_last_24h(conn, now), current, settings.edge_credit_cap,
+        int(state["credits_remaining"]) if state.get("credits_remaining") else None,
+        _parse(state.get("guard_changed_at")), now)
+    if factor != current:
+        log.warning("edge credit guard factor %s -> %s", current, factor)
+        store.set_state(conn, "guard_factor", str(factor), now)
+        store.set_state(conn, "guard_changed_at", _iso(now), now)
 
     events = store.upcoming_events(conn, now)
     plan = schedule.plan_polls(events, now, factor)

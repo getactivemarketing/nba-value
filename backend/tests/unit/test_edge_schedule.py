@@ -48,12 +48,20 @@ def test_fresh_filters_by_each_event_and_market():
 
 
 def test_guard_factor():
-    cap = 3_500_000
-    assert s.guard_factor(30_000, 1, cap, 4_000_000) == 1     # 0.9M/month
-    assert s.guard_factor(150_000, 1, cap, 4_000_000) == 2    # 4.5M -> 2.25M
-    assert s.guard_factor(150_000, 2, cap, 4_000_000) == 4    # base 300k/day -> 9M -> /4
-    assert s.guard_factor(10_000_000, 1, cap, 4_000_000) == 8  # capped at 8
-    assert s.guard_factor(1_000, 1, cap, 40_000) == 8          # nearly out of credits
+    cap, H = 3_500_000, timedelta(hours=1)
+    # 130k/day projects 3.9M > cap: one notch up, not a ratchet to 8
+    assert s.guard_factor(130_000, 1, cap, 4_000_000, None, NOW) == 2
+    # within 6h of the last change: hold, whatever the window says
+    assert s.guard_factor(130_000, 2, cap, 4_000_000, NOW - 2 * H, NOW) == 2
+    # after a day at x2 the spend is 65k/day (1.95M): halving would project 3.9M > 0.9*cap, so stay
+    assert s.guard_factor(65_000, 2, cap, 4_000_000, NOW - 24 * H, NOW) == 2
+    # genuinely quiet: step back down
+    assert s.guard_factor(30_000, 2, cap, 4_000_000, NOW - 24 * H, NOW) == 1
+    # never above 8; nearly out of credits forces 8 immediately
+    assert s.guard_factor(10_000_000, 8, cap, 4_000_000, NOW - 24 * H, NOW) == 8
+    assert s.guard_factor(1_000, 1, cap, 40_000, NOW - H, NOW) == 8
+    assert s.guard_factor(30_000, 1, cap, 4_000_000, None, NOW) == 1
+
 
 
 def test_plan_polls():

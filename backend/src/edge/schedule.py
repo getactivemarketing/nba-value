@@ -13,6 +13,7 @@ from src.edge.quotes import Quote
 
 FACTORS = (1, 2, 4, 8)
 LOW_CREDITS = 50_000
+HOLD = timedelta(hours=6)
 
 
 def base_intervals(minutes_to_tip: float) -> tuple[int, int] | None:
@@ -57,19 +58,23 @@ def fresh(quotes: Iterable[Quote], commence_by_event: dict[str, datetime], now: 
     return out
 
 
-def guard_factor(cost_last_24h: int, current_factor: int, cap: int, remaining: int | None) -> int:
-    """Smallest factor whose projected monthly use fits the cap (max 8).
+def guard_factor(cost_last_24h: int, current_factor: int, cap: int, remaining: int | None,
+                 changed_at: datetime | None, now: datetime) -> int:
+    """Polling slowdown factor (1, 2, 4, 8) that keeps projected monthly use under `cap`.
 
-    cost_last_24h was spent at `current_factor`, so the unthrottled daily cost
-    is roughly cost_last_24h * current_factor.
+    Moves one notch at a time and at most every HOLD, because the trailing 24h
+    spend mixes factors: re-projecting it every tick ratchets straight to 8.
     """
     if remaining is not None and remaining < LOW_CREDITS:
         return FACTORS[-1]
-    base_monthly = cost_last_24h * current_factor * 30
-    for f in FACTORS:
-        if base_monthly / f <= cap:
-            return f
-    return FACTORS[-1]
+    if changed_at is not None and now - changed_at < HOLD:
+        return current_factor
+    projected = cost_last_24h * 30
+    if projected > cap:
+        return min(current_factor * 2, FACTORS[-1])
+    if current_factor > 1 and projected * 2 <= cap * 0.9:
+        return current_factor // 2
+    return current_factor
 
 
 @dataclass(frozen=True)
