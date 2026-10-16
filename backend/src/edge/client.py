@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import httpx
 
 from src.config import settings
-from src.edge.config import BOOKS, LINE_MARKETS, PROP_MARKETS, SPORT_KEY
+from src.edge.config import BOOKS, LINE_MARKETS, NBA, SportConfig
 from src.utils.redact import redact
 
 BASE = "https://api.the-odds-api.com/v4"
@@ -52,18 +52,18 @@ class EdgeOddsClient:
         return r.json(), Usage(_int(h.get("x-requests-remaining")), _int(h.get("x-requests-used")),
                                _int(h.get("x-requests-last")))
 
-    async def get_events(self):
-        return await self._get(f"/sports/{SPORT_KEY}/events", {})
+    async def get_events(self, sport: SportConfig = NBA):
+        return await self._get(f"/sports/{sport.key}/events", {})
 
-    async def get_game_odds(self):
-        return await self._get(f"/sports/{SPORT_KEY}/odds", {
+    async def get_game_odds(self, sport: SportConfig = NBA):
+        return await self._get(f"/sports/{sport.key}/odds", {
             "bookmakers": ",".join(BOOKS), "markets": ",".join(LINE_MARKETS),
             "oddsFormat": "american", "includeLinks": "true"})
 
-    async def get_event_odds(self, event_id: str):
-        return await self._get(f"/sports/{SPORT_KEY}/events/{event_id}/odds", {
-            "bookmakers": ",".join(BOOKS), "markets": ",".join(PROP_MARKETS),
+    async def get_event_odds(self, event_id: str, sport: SportConfig = NBA):
+        return await self._get(f"/sports/{sport.key}/events/{event_id}/odds", {
+            "bookmakers": ",".join(BOOKS), "markets": ",".join(sport.prop_markets),
             "oddsFormat": "american", "includeLinks": "true"})
 
-    async def get_scores(self, days_from: int = 1):
-        return await self._get(f"/sports/{SPORT_KEY}/scores", {"daysFrom": days_from})
+    async def get_scores(self, days_from: int = 1, sport: SportConfig = NBA):
+        return await self._get(f"/sports/{sport.key}/scores", {"daysFrom": days_from})

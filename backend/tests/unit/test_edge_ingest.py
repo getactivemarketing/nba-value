@@ -71,3 +71,27 @@ async def test_client_reads_usage_headers():
     c = client_mod.EdgeOddsClient(api_key="k" * 16, transport=httpx.MockTransport(handler))
     data, usage = await c.get_game_odds()
     assert data == [] and usage == client_mod.Usage(4999000, 1000, 6)
+
+
+@pytest.mark.asyncio
+async def test_client_uses_the_sports_key_and_prop_markets():
+    import httpx
+    from src.edge.client import EdgeOddsClient
+    from src.edge.config import NFL, NFL_PROP_MARKETS
+
+    seen = []
+
+    def handler(request):
+        seen.append(request.url)
+        return httpx.Response(200, json=[], headers={"x-requests-remaining": "5"})
+
+    c = EdgeOddsClient(api_key="k", transport=httpx.MockTransport(handler))
+    await c.get_events(NFL)
+    await c.get_game_odds(NFL)
+    await c.get_event_odds("e9", NFL)
+    await c.get_scores(days_from=2, sport=NFL)
+    paths = [u.path for u in seen]
+    assert paths == ["/v4/sports/americanfootball_nfl/events", "/v4/sports/americanfootball_nfl/odds",
+                     "/v4/sports/americanfootball_nfl/events/e9/odds", "/v4/sports/americanfootball_nfl/scores"]
+    assert seen[2].params["markets"] == ",".join(NFL_PROP_MARKETS)
+    assert seen[3].params["daysFrom"] == "2"
