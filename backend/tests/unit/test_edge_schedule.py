@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from src.edge import schedule as s
 from src.edge.quotes import Quote
+from src.edge.worker import Backoff
 
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
 
@@ -62,3 +63,16 @@ def test_plan_polls():
     plan = s.plan_polls(events, NOW, 1)
     assert plan.lines is True                  # "near" lines interval (3m) elapsed
     assert plan.prop_events == ["far"]         # never polled; "near" polled 1m ago
+
+
+
+def test_backoff_rules():
+    b = Backoff()
+    assert b.failure(401, NOW) == NOW + timedelta(minutes=15)
+    assert b.failure(429, NOW) == NOW + timedelta(seconds=30)
+    assert b.failure(503, NOW) == NOW + timedelta(seconds=60)
+    for _ in range(10):
+        until = b.failure(500, NOW)
+    assert until == NOW + timedelta(minutes=10)
+    b.success()
+    assert b.failure(429, NOW) == NOW + timedelta(seconds=30)
