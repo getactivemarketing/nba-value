@@ -48,6 +48,36 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+async def add_missing_columns(eng, migrations, lock_timeout_ms: int = 5000):
+    """ALTER only the columns that are actually missing, each with a lock timeout.
+
+    Runs while the previous container still serves. ADD COLUMN IF NOT EXISTS
+    takes an ACCESS EXCLUSIVE lock even when the column exists, so issuing it
+    unconditionally let one open transaction on the old container hang boot
+    until the healthcheck failed. Returns (added, skipped) as (table, column).
+    """
+    from sqlalchemy import text
+
+    async with eng.connect() as conn:
+        rows = (await conn.execute(text(
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema()"))).all()
+    have = {(t, c) for t, c in rows}
+    tables = {t for t, _ in have}
+    added, skipped = [], []
+    for table, column, col_type in migrations:
+        if table not in tables or (table, column) in have:
+            continue
+        try:
+            async with eng.begin() as conn:  # one transaction each: a failure skips only itself
+                await conn.execute(text(f"SET LOCAL lock_timeout = '{int(lock_timeout_ms)}ms'"))
+                await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}"))
+            added.append((table, column))
+        except Exception:  # noqa: BLE001 - lock busy: never block boot; next boot retries
+            skipped.append((table, column))
+    return added, skipped
+
+
 async def init_db() -> None:
     """Initialize database tables and run pending column migrations."""
     from sqlalchemy import text
@@ -76,14 +106,9 @@ async def init_db() -> None:
         ("prediction_snapshots", "celebration_tweet_posted", "BOOLEAN DEFAULT FALSE"),
     ]
 
-    async with engine.begin() as conn:
-        for table, column, col_type in column_migrations:
-            try:
-                await conn.execute(text(
-                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}"
-                ))
-            except Exception:
-                pass  # Column already exists or table doesn't exist yet
+    added, skipped = await add_missing_columns(engine, column_migrations)
+    if added or skipped:
+        print(f"[DB] columns added: {added}; skipped (lock busy, retried next boot): {skipped}", flush=True)
 
     # Add unique constraints needed for ON CONFLICT upserts
     unique_constraints = [
