@@ -9,11 +9,13 @@ usage, min_value_score default 40, key-prefix masking).
 """
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import asc, select
 
+from src.api.deps import require_admin
 from src.config import settings
+from src.utils.redact import redact
 from src.database import async_session
 from src.models import NFLGame, NFLPredictionSnapshot
 
@@ -204,16 +206,17 @@ async def get_games(
     return NFLGamesResponse(games=summaries, total=len(summaries), tracking_only=tracking_only)
 
 
-@router.get("/debug/odds")
+@router.get("/debug/odds", dependencies=[Depends(require_admin)])
 async def debug_odds(live: bool = Query(
     True, description="Also hit The Odds API for a live event count (set false to skip the network call)")
 ) -> dict:
     """Odds/data sanity probe for the ~Sept scheduler go-live.
 
-    Reports masked key presence, current nfl_* table counts, and (when
-    live=true) a live The Odds API event/market count so odds ingestion can be
-    verified before enabling the scheduler. Never exposes the full API key
-    (8-char prefix only). A DB or Odds-API failure is reported in-band, not as
+    Reports key presence, current nfl_* table counts, and (when live=true) a
+    live The Odds API event/market count so odds ingestion can be verified
+    before enabling the scheduler. Admin-only (X-Cron-Key). No part of the key
+    is ever returned, and errors are redacted: httpx error text embeds the
+    request URL, which carries apiKey=. A DB or Odds-API failure is reported in-band, not as
     a 500 — this is a diagnostic endpoint.
     """
     from sqlalchemy import text
@@ -221,7 +224,6 @@ async def debug_odds(live: bool = Query(
 
     results: dict = {
         "odds_api_key_set": bool(settings.odds_api_key),
-        "odds_api_key_prefix": (settings.odds_api_key[:8] + "...") if settings.odds_api_key else None,
     }
     try:
         async with async_session() as session:
@@ -233,7 +235,7 @@ async def debug_odds(live: bool = Query(
                 row = await session.execute(text(f"SELECT COUNT(*) FROM {table}"))
                 results[label] = row.scalar()
     except Exception as e:  # noqa: BLE001 - debug probe must never 500 the caller
-        raise HTTPException(status_code=503, detail=f"NFL data probe failed: {e}")
+        raise HTTPException(status_code=503, detail=f"NFL data probe failed: {redact(e)}")
 
     if live:
         # Live odds probe (network). Isolated so an Odds-API hiccup still returns
@@ -247,7 +249,7 @@ async def debug_odds(live: bool = Query(
             results["live_event_count"] = len(events)
             results["live_market_row_count"] = len(rows)
         except Exception as e:  # noqa: BLE001 - network probe is best-effort
-            results["live_odds_error"] = str(e)
+            results["live_odds_error"] = redact(e)
 
     return results
 

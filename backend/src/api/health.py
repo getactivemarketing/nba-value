@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
+from src.utils.redact import redact
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> dict:
         await db.execute(text("SELECT 1"))
         checks["checks"]["database"] = "ok"
     except Exception as e:
-        checks["checks"]["database"] = f"error: {str(e)}"
+        checks["checks"]["database"] = f"error: {redact(e)}"
         checks["status"] = "unhealthy"
 
     # Model check. Added 2026-08-02 because nothing in the system could say
@@ -46,7 +47,7 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> dict:
         if checks["checks"]["models"]["status"] == "degraded" and checks["status"] == "healthy":
             checks["status"] = "degraded"
     except Exception as e:
-        checks["checks"]["models"] = {"status": "unknown", "error": str(e)}
+        checks["checks"]["models"] = {"status": "unknown", "error": redact(e)}
 
     return checks
 
@@ -162,7 +163,7 @@ async def scheduler_status(db: AsyncSession = Depends(get_db)) -> dict:
         except Exception as e:
             checks["tasks"][task_name] = {
                 "status": "error",
-                "error": str(e),
+                "error": redact(e),
             }
 
     # Overall health

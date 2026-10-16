@@ -6,11 +6,13 @@ from decimal import Decimal
 from typing import Literal
 
 import structlog
-from fastapi import APIRouter, Query, HTTPException, Path
+from fastapi import APIRouter, Depends, Query, HTTPException, Path
 from pydantic import BaseModel
 from sqlalchemy import select, and_, or_, desc, func
 
+from src.api.deps import require_admin
 from src.config import settings
+from src.utils.redact import redact
 from src.database import async_session
 from src.models import (
     MLBGame, MLBTeam, MLBPitcher, MLBPitcherStats,
@@ -1173,7 +1175,7 @@ async def _get_pitcher_info(session, pitcher: MLBPitcher) -> PitcherInfo:
     )
 
 
-@router.get("/debug/odds")
+@router.get("/debug/odds", dependencies=[Depends(require_admin)])
 async def debug_odds() -> dict:
     """Debug endpoint: check odds ingestion status without calling external APIs."""
     from sqlalchemy import text
@@ -1183,7 +1185,6 @@ async def debug_odds() -> dict:
 
     # Check API key
     results["odds_api_key_set"] = bool(settings.odds_api_key)
-    results["odds_api_key_prefix"] = settings.odds_api_key[:8] + "..." if settings.odds_api_key else None
 
     # Check existing data
     async with async_session() as session:
@@ -1220,7 +1221,7 @@ async def debug_odds() -> dict:
     return results
 
 
-@router.get("/debug/odds/ingest")
+@router.get("/debug/odds/ingest", dependencies=[Depends(require_admin)])
 async def debug_odds_ingest() -> dict:
     """Debug endpoint: actually try odds ingestion and report results."""
     from src.services.mlb.ingest import MLBDataIngestor, MLBOddsClient
@@ -1240,7 +1241,7 @@ async def debug_odds_ingest() -> dict:
                 "bookmakers_count": len(odds_data[0].get("bookmakers", [])),
             }
     except Exception as e:
-        results["odds_api_error"] = str(e)
+        results["odds_api_error"] = redact(e)
 
     # Try full ingestion
     try:
@@ -1249,27 +1250,26 @@ async def debug_odds_ingest() -> dict:
             count = await ingestor.ingest_odds()
             results["markets_ingested"] = count
     except Exception as e:
-        results["ingestion_error"] = str(e)
+        results["ingestion_error"] = redact(e)
         import traceback
         results["ingestion_traceback"] = traceback.format_exc()
 
     return results
 
 
-@router.get("/debug/social-config")
+@router.get("/debug/social-config", dependencies=[Depends(require_admin)])
 async def debug_social_config() -> dict:
     """Show which social posting services are configured."""
     from src.config import settings
     return {
         "twitter_posting_enabled": settings.twitter_posting_enabled,
         "blotato_api_key_set": bool(settings.blotato_api_key),
-        "blotato_api_key_prefix": (settings.blotato_api_key[:8] + "...") if settings.blotato_api_key else None,
         "blotato_twitter_account_id": settings.blotato_twitter_account_id or None,
         "typefully_api_key_set": bool(settings.typefully_api_key),
     }
 
 
-@router.get("/debug/tweet-test")
+@router.get("/debug/tweet-test", dependencies=[Depends(require_admin)])
 async def debug_tweet_test() -> dict:
     """Send a test intro tweet via Blotato."""
     from src.services.social.blotato import post_tweet
@@ -1294,7 +1294,7 @@ async def debug_tweet_test() -> dict:
     }
 
 
-@router.get("/debug/trigger-posts")
+@router.get("/debug/trigger-posts", dependencies=[Depends(require_admin)])
 async def debug_trigger_posts(task: str = "all") -> dict:
     """Manually trigger social scheduler tasks for testing.
 
@@ -1337,7 +1337,7 @@ async def debug_trigger_posts(task: str = "all") -> dict:
                 else:
                     results["results"] = {"posted": False, "reason": "no_data"}
             except Exception as e:
-                results["results_error"] = str(e)[:200]
+                results["results_error"] = redact(e)[:200]
 
         # NRFI results recap (yesterday)
         if task in ("all", "nrfi_results"):
@@ -1349,7 +1349,7 @@ async def debug_trigger_posts(task: str = "all") -> dict:
                 else:
                     results["nrfi_results"] = {"posted": False, "reason": "no_data"}
             except Exception as e:
-                results["nrfi_results_error"] = str(e)[:200]
+                results["nrfi_results_error"] = redact(e)[:200]
 
         # Daily picks thread (today)
         if task in ("all", "picks"):
@@ -1361,7 +1361,7 @@ async def debug_trigger_posts(task: str = "all") -> dict:
                 else:
                     results["picks"] = {"posted": False, "reason": "no_data"}
             except Exception as e:
-                results["picks_error"] = str(e)[:200]
+                results["picks_error"] = redact(e)[:200]
 
         # NRFI plays (today)
         if task in ("all", "nrfi"):
@@ -1373,7 +1373,7 @@ async def debug_trigger_posts(task: str = "all") -> dict:
                 else:
                     results["nrfi"] = {"posted": False, "reason": "no_data"}
             except Exception as e:
-                results["nrfi_error"] = str(e)[:200]
+                results["nrfi_error"] = redact(e)[:200]
 
         # NBA daily picks
         if task in ("all", "nba_picks"):
@@ -1392,7 +1392,7 @@ async def debug_trigger_posts(task: str = "all") -> dict:
                     results["nba_picks"] = {"posted": False, "reason": "no_data", "tweet_count": len(tweets) if tweets else 0}
             except Exception as e:
                 import traceback
-                results["nba_picks_error"] = str(e)[:200]
+                results["nba_picks_error"] = redact(e)[:200]
                 results["nba_picks_trace"] = traceback.format_exc()[-800:]
 
         # NBA results (yesterday)
@@ -1406,7 +1406,7 @@ async def debug_trigger_posts(task: str = "all") -> dict:
                 else:
                     results["nba_results"] = {"posted": False, "reason": "no_data"}
             except Exception as e:
-                results["nba_results_error"] = str(e)[:200]
+                results["nba_results_error"] = redact(e)[:200]
 
         # First inning recaps (games whose 1st inning just ended)
         if task in ("all", "first_inning"):
@@ -1470,7 +1470,7 @@ async def debug_trigger_posts(task: str = "all") -> dict:
                         )
                         posted += 1
                 except Exception as e:
-                    results.setdefault("first_inning_errors", []).append(str(e)[:100])
+                    results.setdefault("first_inning_errors", []).append(redact(e)[:100])
             await session.commit()
             results["first_inning"] = {"posted": posted, "checked": len(games)}
 
@@ -1502,20 +1502,20 @@ async def debug_trigger_posts(task: str = "all") -> dict:
                         )
                         posted += 1
                 except Exception as e:
-                    results.setdefault("final_errors", []).append(str(e)[:100])
+                    results.setdefault("final_errors", []).append(redact(e)[:100])
             await session.commit()
             results["final"] = {"posted": posted, "checked": len(games)}
 
     return results
 
 
-@router.get("/debug/version")
+@router.get("/debug/version", dependencies=[Depends(require_admin)])
 async def debug_version() -> dict:
     """Returns a unique version string to verify deployments."""
     return {"version": "2026-04-07-v4-add-constraint", "commit": "latest"}
 
 
-@router.get("/debug/backfill-predictions")
+@router.get("/debug/backfill-predictions", dependencies=[Depends(require_admin)])
 async def debug_backfill_predictions(days: int = 14) -> dict:
     """Score completed games retroactively to build historical track record."""
     from datetime import timedelta
@@ -1555,14 +1555,14 @@ async def debug_backfill_predictions(days: int = 14) -> dict:
                 predictions.append(prediction)
                 results["scored"] += 1
             except Exception as e:
-                results["errors"].append(f"{game.game_id}: {str(e)[:100]}")
+                results["errors"].append(f"{game.game_id}: {redact(e)[:100]}")
 
         if predictions:
             try:
                 saved = await scorer.save_predictions(predictions)
                 results["saved_rows"] = saved
             except Exception as e:
-                results["save_error"] = str(e)[:200]
+                results["save_error"] = redact(e)[:200]
 
         # Keep first 5 errors only
         if len(results["errors"]) > 5:
@@ -1572,7 +1572,7 @@ async def debug_backfill_predictions(days: int = 14) -> dict:
     return results
 
 
-@router.get("/debug/pregame-tweets")
+@router.get("/debug/pregame-tweets", dependencies=[Depends(require_admin)])
 async def debug_pregame_tweets(dry_run: bool = True) -> dict:
     """Generate pregame tweets for top NRFI picks (dry-run by default)."""
     from src.services.social.content import generate_pregame_nrfi_tweet, _get_team_first_inning_pct

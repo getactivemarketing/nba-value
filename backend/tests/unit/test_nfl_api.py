@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
 
+from src.api import admin as admin_api
 from src.api import nfl as nfl_api
 from src.config import settings
 from src.main import app
@@ -187,9 +188,10 @@ def test_debug_odds_masks_key_and_skips_network_when_live_false(monkeypatch):
     _patch_session(monkeypatch, [_count(0), _count(0), _count(0)])
 
     client = TestClient(app)
-    body = client.get(f"{settings.api_v1_prefix}/nfl/debug/odds", params={"live": "false"}).json()
+    body = client.get(f"{settings.api_v1_prefix}/nfl/debug/odds", params={"live": "false"},
+                      headers={"X-Cron-Key": admin_api.CRON_API_KEY}).json()
     assert body["odds_api_key_set"] is True
-    assert body["odds_api_key_prefix"] == "abcd1234..."      # 8-char prefix only
+    assert "odds_api_key_prefix" not in body                  # no part of the key
     assert "abcd1234efgh5678" not in str(body)               # full key never leaks
     assert body["existing_markets"] == 42
     assert "live_event_count" not in body                    # network skipped
