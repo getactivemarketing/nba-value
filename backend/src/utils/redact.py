@@ -23,3 +23,49 @@ def redact(text: object) -> str:
         if secret and len(secret) >= 8:
             s = s.replace(secret, "***")
     return s
+
+
+class RedactingStream:
+    """Wraps stdout/stderr so print() and structlog output are scrubbed too."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, s):
+        return self._stream.write(redact(s))
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+_installed = False
+
+
+def install_redaction() -> None:
+    """Scrub every log record and all stdout/stderr output, process-wide.
+
+    Legacy code passes raw httpx errors to print() and loggers in ~110 places;
+    this catches them all instead of patching each one. Idempotent.
+    """
+    global _installed
+    if _installed:
+        return
+    _installed = True
+    import logging
+    import sys
+
+    base = logging.getLogRecordFactory()
+    fmt = logging.Formatter()
+
+    def factory(*args, **kwargs):
+        record = base(*args, **kwargs)
+        record.msg = redact(record.getMessage())
+        record.args = ()
+        if record.exc_info and record.exc_info[0] is not None:
+            record.exc_text = redact(fmt.formatException(record.exc_info))
+            record.exc_info = None
+        return record
+
+    logging.setLogRecordFactory(factory)
+    sys.stdout = RedactingStream(sys.stdout)
+    sys.stderr = RedactingStream(sys.stderr)

@@ -20,7 +20,7 @@ from src.edge.client import EdgeOddsClient, OddsApiError, Usage
 from src.edge.config import LINE_MARKETS, PROP_MARKETS
 from src.edge.engine import price_quotes
 from src.edge.ingest import event_row, parse_event
-from src.utils.redact import redact
+from src.utils.redact import install_redaction, redact
 from src.utils.season import current_nba_season
 
 log = logging.getLogger("edge.worker")
@@ -225,8 +225,13 @@ async def _run() -> None:
         await asyncio.sleep(TICK_SECONDS)
 
 
-def main() -> None:
+def configure_logging() -> None:
+    install_redaction()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+
+
+def main() -> None:
+    configure_logging()
     while True:
         try:
             asyncio.run(_run())
