@@ -4,6 +4,7 @@ Skipped unless EDGE_TEST_DB_URL points at a disposable database, e.g.
     EDGE_TEST_DB_URL=postgresql://edge@127.0.0.1:55432/edgetest
 The edge_* tables are dropped and recreated on every run.
 """
+import json
 import os
 from datetime import date, datetime, timedelta, timezone
 
@@ -681,3 +682,82 @@ async def test_a_roster_error_leaves_names_unseen_not_unmatched(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM edge_nfl_players")
         assert cur.fetchone()[0] == 0
+
+
+def _nfl_games_fixture():
+    return json.load(open("tests/fixtures/edge/bdl_nfl_games_w5.json"))["data"]
+
+
+class _FakeNflSchedule(_FakeNflBdl):
+    def __init__(self, games, stats_by_game, fail_stats=None):
+        super().__init__({})
+        self._games, self._stats, self.fail_stats = games, stats_by_game, fail_stats
+
+    async def games(self, season, week=None):
+        return [g for g in self._games if g["season"] == season and (week is None or g["week"] == week)]
+
+    async def stats(self, game_ids):
+        from src.edge.players import BdlError
+        if self.fail_stats:
+            raise BdlError(self.fail_stats, f"BallDontLie NFL {self.fail_stats} on stats")
+        return [s for g in game_ids for s in self._stats.get(g, [])]
+
+
+def test_stats_load_only_two_hours_after_final_and_only_for_listed_games(conn):
+    import asyncio
+    from src.edge import nfl_players
+    games = _nfl_games_fixture()
+    stats = json.load(open("tests/fixtures/edge/bdl_nfl_stats_game.json"))["data"]
+    gid = stats[0]["game"]["id"]
+    preseason = dict(stats[0], game=dict(stats[0]["game"], id=999999))  # not in /games
+    bdl = _FakeNflSchedule(games, {gid: stats, 999999: [preseason]})
+    asyncio.run(nfl_players.refresh_schedule(conn, bdl, 2026, NOW))
+    assert asyncio.run(nfl_players.load_due_stats(conn, bdl, NOW)) == 0          # final just seen: wait 2 h
+    n = asyncio.run(nfl_players.load_due_stats(conn, bdl, NOW + timedelta(hours=3), limit=100))
+    assert n >= len(stats)
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM edge_nfl_player_games WHERE bdl_game_id = 999999")
+        assert cur.fetchone()[0] == 0                                             # preseason never enters
+        cur.execute("SELECT COUNT(*) FROM edge_nfl_games WHERE stats_loaded_at IS NOT NULL")
+        assert cur.fetchone()[0] >= 1
+    assert asyncio.run(nfl_players.load_due_stats(conn, bdl, NOW + timedelta(hours=4))) == 0  # idempotent
+
+
+def test_snaps_map_team_codes_and_mark_games(conn):
+    import asyncio
+    import pandas as pd
+    from src.edge import nfl_players
+    g = {"id": 5001, "season": 2026, "week": 6, "date": "2026-10-18T00:00:00.000Z", "postseason": False,
+         "status_state": "final", "home_team": {"abbreviation": "LAR"}, "visitor_team": {"abbreviation": "WSH"}}
+    asyncio.run(nfl_players.refresh_schedule(conn, _FakeNflSchedule([g], {}), 2026, NOW))
+    frame = pd.DataFrame([
+        {"season": 2026, "week": 6, "game_type": "REG", "team": "LA", "player": "Puka Nacua",
+         "offense_snaps": 60, "defense_snaps": 0, "st_snaps": 0},
+        {"season": 2026, "week": 6, "game_type": "REG", "team": "WAS", "player": "Terry McLaurin",
+         "offense_snaps": 55, "defense_snaps": 0, "st_snaps": 2}])
+    assert nfl_players.load_snaps(conn, 2026, NOW, frame=frame) == 2
+    with conn.cursor() as cur:
+        cur.execute("SELECT team, player_norm, snaps FROM edge_nfl_snaps ORDER BY team")
+        assert cur.fetchall() == [("LAR", "puka nacua", 60), ("WSH", "terry mclaurin", 57)]
+        cur.execute("SELECT snaps_loaded_at IS NOT NULL FROM edge_nfl_games WHERE bdl_game_id = 5001")
+        assert cur.fetchone()[0] is True
+
+
+@pytest.mark.asyncio
+async def test_backfill_resumes_after_a_rate_limit(conn, monkeypatch):
+    from src.edge import nfl_players, worker
+    monkeypatch.setattr(nfl_players, "load_snaps", lambda *a, **k: 0)  # never call nflverse in tests
+    bdl = _FakeNflSchedule(_nfl_games_fixture(), {}, fail_stats=429)
+    await nfl_players.refresh_schedule(conn, bdl, 2026, NOW - timedelta(days=3))  # finals seen long ago
+    later = NOW + timedelta(days=30)
+
+    def loaded():
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM edge_nfl_games WHERE stats_loaded_at IS NOT NULL")
+            return cur.fetchone()[0]
+
+    await worker.nfl_backfill_step(conn, bdl, later)
+    assert "429" in (store.get_state(conn).get("bdl_error") or "") and loaded() == 0  # nothing marked
+    bdl.fail_stats = None
+    await worker.nfl_backfill_step(conn, bdl, later)
+    assert loaded() == 6  # resumes: 6 games per tick

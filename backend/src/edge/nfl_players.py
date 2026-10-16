@@ -10,15 +10,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import httpx
-from psycopg2.extras import execute_values
+from psycopg2.extras import RealDictCursor, execute_values
 
 from src.config import settings
-from src.edge.players import BdlError, match_player
+from src.edge.players import BdlError, et_date, match_player, normalize_name
 from src.edge.quotes import Quote
-from src.edge.teams import NFL_ABBR_BY_NAME
+from src.edge.teams import NFL_ABBR_BY_NAME, NFLVERSE_TO_BDL
 
 log = logging.getLogger("edge.nfl_players")
 ROSTER_TTL = 6 * 3600
@@ -173,3 +173,78 @@ def player_ids(conn, teams: set[str]) -> dict[str, int]:
         cur.execute("""SELECT odds_name, bdl_player_id FROM edge_nfl_players
                        WHERE bdl_player_id IS NOT NULL AND team = ANY(%s)""", (sorted(teams),))
         return {n: pid for n, pid in cur.fetchall()}
+
+
+STATS_SETTLE = timedelta(hours=2)  # stat corrections land after the whistle
+
+
+async def refresh_schedule(conn, bdl: BdlNflClient, season: int, now: datetime) -> int:
+    rows = [game_row(g) for g in await bdl.games(season)]
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        execute_values(cur, """
+            INSERT INTO edge_nfl_games (bdl_game_id, season, week, game_date, home, away, postseason,
+                                        status_state, final_seen_at)
+            VALUES %s
+            ON CONFLICT (bdl_game_id) DO UPDATE SET
+                week = EXCLUDED.week, game_date = EXCLUDED.game_date, status_state = EXCLUDED.status_state,
+                final_seen_at = COALESCE(edge_nfl_games.final_seen_at, EXCLUDED.final_seen_at)
+        """, [(r["bdl_game_id"], r["season"], r["week"], r["game_date"], r["home"], r["away"], r["postseason"],
+               r["status_state"], now if r["status_state"] == "final" else None) for r in rows])
+    conn.commit()
+    return len(rows)
+
+
+async def load_due_stats(conn, bdl: BdlNflClient, now: datetime, limit: int = 6) -> int:
+    """Box scores for final games settled >= 2 h, oldest first, at most `limit` games per call.
+
+    Serves both the hourly step and the backfill: anything final without stats is due.
+    """
+    with conn.cursor() as cur:
+        cur.execute("""SELECT bdl_game_id FROM edge_nfl_games
+                       WHERE status_state = 'final' AND stats_loaded_at IS NULL AND final_seen_at <= %s
+                       ORDER BY game_date LIMIT %s""", (now - STATS_SETTLE, limit))
+        ids = [r[0] for r in cur.fetchall()]
+    if not ids:
+        return 0
+    rows = [r for r in (stat_row(s) for s in await bdl.stats(ids)) if r and r["bdl_game_id"] in ids]
+    cols = ["bdl_player_id", "bdl_game_id", "season", "week", "game_date", "team", "opponent", "is_home", *STAT_COLS]
+    with conn.cursor() as cur:
+        if rows:
+            execute_values(cur, f"""INSERT INTO edge_nfl_player_games ({", ".join(cols)}) VALUES %s
+                ON CONFLICT (bdl_player_id, bdl_game_id) DO UPDATE SET
+                {", ".join(f"{c} = EXCLUDED.{c}" for c in cols[2:])}""",
+                           [tuple(r[c] for c in cols) for r in rows])
+        cur.execute("UPDATE edge_nfl_games SET stats_loaded_at = %s WHERE bdl_game_id = ANY(%s)", (now, ids))
+    conn.commit()
+    return len(rows)
+
+
+def load_snaps(conn, season: int, now: datetime, frame=None) -> int:
+    if frame is None:
+        import nfl_data_py as nfl_data  # heavy import, only in the worker
+        frame = nfl_data.import_snap_counts([season])
+    rows: dict[tuple, int] = {}
+    for r in frame.itertuples(index=False):
+        team = NFLVERSE_TO_BDL.get(r.team, r.team)
+        snaps = int((r.offense_snaps or 0) + (r.defense_snaps or 0) + (r.st_snaps or 0))
+        if snaps > 0:
+            key = (int(r.season), int(r.week), team, normalize_name(r.player))
+            rows[key] = rows.get(key, 0) + snaps
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        execute_values(cur, """INSERT INTO edge_nfl_snaps (season, week, team, player_norm, snaps, loaded_at)
+                               VALUES %s ON CONFLICT (season, week, team, player_norm)
+                               DO UPDATE SET snaps = EXCLUDED.snaps, loaded_at = EXCLUDED.loaded_at""",
+                       [(*k, v, now) for k, v in rows.items()])
+        cur.execute("""UPDATE edge_nfl_games g SET snaps_loaded_at = %s
+                       WHERE g.snaps_loaded_at IS NULL AND g.season = %s
+                         AND EXISTS (SELECT 1 FROM edge_nfl_snaps s
+                                     WHERE s.season = g.season AND s.week = g.week AND s.team = g.home)
+                         AND EXISTS (SELECT 1 FROM edge_nfl_snaps s
+                                     WHERE s.season = g.season AND s.week = g.week AND s.team = g.away)""",
+                    (now, season))
+    conn.commit()
+    return len(rows)

@@ -21,7 +21,7 @@ from src.edge.config import LINE_MARKETS, SportConfig, enabled_sports, state_key
 from src.edge.engine import price_quotes
 from src.edge.ingest import event_row, parse_event
 from src.utils.redact import install_redaction, redact
-from src.utils.season import current_nba_season
+from src.utils.season import current_nba_season, current_nfl_season
 
 log = logging.getLogger("edge.worker")
 TICK_SECONDS = 30
@@ -115,7 +115,60 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
         except Exception as e:  # noqa: BLE001
             store.set_state(conn, "bdl_error", redact(f"{step.__name__}: {type(e).__name__}: {e}")[:300], now)
 
+    if settings.edge_nfl_players and nfl_bdl is not None and any(s.slug == "nfl" for s in sports):
+        for name, step in (("nfl_stats_step", nfl_stats_step), ("nfl_backfill_step", nfl_backfill_step)):
+            try:
+                await step(conn, nfl_bdl, now)
+            except Exception as e:  # noqa: BLE001 - BallDontLie never blocks odds
+                conn.rollback()
+                store.set_state(conn, "bdl_error", redact(f"{name}: {type(e).__name__}: {e}")[:300], now)
+        nfl_snaps_step(conn, now)
+
     return out
+
+
+async def nfl_stats_step(conn, nfl_bdl, now: datetime) -> int:
+    """Hourly: refresh this season's NFL schedule, then load settled box scores."""
+    last = _parse(store.get_state(conn).get("nfl:last_stats_step"))
+    if last is not None and now - last < timedelta(minutes=60):
+        return 0
+    store.set_state(conn, "nfl:last_stats_step", _iso(now), now)
+    await nfl_players.refresh_schedule(conn, nfl_bdl, current_nfl_season(now.date()), now)
+    return await nfl_players.load_due_stats(conn, nfl_bdl, now)
+
+
+def nfl_snaps_step(conn, now: datetime, frame=None) -> int:
+    """Every 6 h: nflverse snap counts. Errors land in snaps_error, never block."""
+    last = _parse(store.get_state(conn).get("nfl:last_snaps_step"))
+    if last is not None and now - last < timedelta(hours=6):
+        return 0
+    store.set_state(conn, "nfl:last_snaps_step", _iso(now), now)
+    try:
+        n = nfl_players.load_snaps(conn, current_nfl_season(now.date()), now, frame)
+        store.set_state(conn, "snaps_error", "", now)
+        return n
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        store.set_state(conn, "snaps_error", redact(f"{type(e).__name__}: {e}")[:300], now)
+        return 0
+
+
+async def nfl_backfill_step(conn, nfl_bdl, now: datetime) -> int:
+    """Until done: last season's schedule + snaps once, then settled box scores a few games per tick."""
+    season = current_nfl_season(now.date())
+    state = store.get_state(conn)
+    try:
+        if state.get("backfill_nfl_schedule") != str(season - 1):
+            await nfl_players.refresh_schedule(conn, nfl_bdl, season - 1, now)
+            nfl_players.load_snaps(conn, season - 1, now)
+            store.set_state(conn, "backfill_nfl_schedule", str(season - 1), now)
+        n = await nfl_players.load_due_stats(conn, nfl_bdl, now, limit=6)
+        store.set_state(conn, "backfill_nfl_next", "done" if n == 0 else _iso(now), now)
+        return n
+    except Exception as e:  # noqa: BLE001 - nothing is marked loaded; next tick retries
+        conn.rollback()
+        store.set_state(conn, "bdl_error", redact(f"nfl backfill: {type(e).__name__}: {e}")[:300], now)
+        return 0
 
 
 async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor: int, now: datetime,
