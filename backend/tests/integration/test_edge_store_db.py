@@ -85,3 +85,46 @@ def test_state_and_credit_log(conn):
     store.log_api_call(conn, "odds", 6, 4_999_994, NOW - timedelta(hours=1))
     store.log_api_call(conn, "event_odds", 16, 4_999_978, NOW - timedelta(hours=30))
     assert store.cost_last_24h(conn, NOW) == 6
+
+
+def test_run_grading_closes_and_grades(conn):
+    from src.edge import grading
+
+    tip = NOW
+    store.upsert_events(conn, [{**_event(), "commence_time": tip}])
+    at = tip - timedelta(minutes=3)
+    closing = []  # the frozen pre-tip snapshot: 3 books incl. a sharp one, both markets
+    for b in ("pinnacle", "fanduel", "draftkings"):
+        closing += [Quote("e1", "player_points", "Jayson Tatum", "over", 27.5, b, -120, None, at),
+                    Quote("e1", "player_points", "Jayson Tatum", "under", 27.5, b, 100, None, at),
+                    Quote("e1", "h2h", "", "home", 0.0, b, -130, None, at),
+                    Quote("e1", "h2h", "", "away", 0.0, b, 110, None, at)]
+    store.write_quotes(conn, closing)
+    early = tip - timedelta(hours=3)
+    opportunities.record(conn, [
+        Priced(Quote("e1", "player_points", "Jayson Tatum", "over", 27.5, "betmgm", 120, None, early),
+               Fair(0.5, 3, True), 0.10, True, False),
+        Priced(Quote("e1", "player_points", "Ghost Player", "over", 10.5, "betmgm", 120, None, early),
+               Fair(0.5, 3, True), 0.10, True, False),
+        Priced(Quote("e1", "h2h", "", "away", 0.0, "betmgm", 150, None, early),
+               Fair(0.45, 3, True), 0.125, True, False),
+    ], early)
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_players (odds_name, bdl_player_id, team, match_method, confidence, updated_at)
+                       VALUES ('Jayson Tatum', 434, 'BOS', 'exact', 1, now()),
+                              ('Ghost Player', 999, 'BOS', 'exact', 1, now())""")
+        cur.execute("""INSERT INTO edge_player_games (bdl_player_id, bdl_game_id, season, game_date, team, opponent,
+                       is_home, minutes, pts, reb, ast, fg3m, stl, blk, tov)
+                       VALUES (434, 1, 2026, '2026-10-20', 'BOS', 'DET', false, 36, 31, 8, 6, 4, 1, 0, 3)""")
+        cur.execute("UPDATE edge_events SET completed = TRUE, home_score = 110, away_score = 104")
+    conn.commit()
+
+    out = grading.run_grading(conn, tip + timedelta(hours=4))
+    assert out == {"closed": 3, "graded": 3}
+    with conn.cursor() as cur:
+        cur.execute("SELECT player, market, result, profit_units, clv, clv_note FROM edge_opportunities ORDER BY id")
+        rows = cur.fetchall()
+    tatum, ghost, ml = rows
+    assert tatum[2] == "win" and float(tatum[3]) == pytest.approx(1.2) and tatum[4] is not None
+    assert ghost[2] == "void" and ghost[4] is None and ghost[5].startswith("thin close")
+    assert ml[2] == "loss" and float(ml[3]) == -1.0 and ml[4] is not None
