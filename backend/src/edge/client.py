@@ -67,3 +67,16 @@ class EdgeOddsClient:
 
     async def get_scores(self, days_from: int = 1, sport: SportConfig = NBA):
         return await self._get(f"/sports/{sport.key}/scores", {"daysFrom": days_from})
+
+    async def get_historical_events(self, sport: SportConfig, date: str):
+        return await self._get(f"/historical/sports/{sport.key}/events", {"date": date})
+
+    async def get_historical_game_odds(self, sport: SportConfig, date: str):
+        return await self._get(f"/historical/sports/{sport.key}/odds", {
+            "date": date, "bookmakers": ",".join(BOOKS), "markets": ",".join(LINE_MARKETS),
+            "oddsFormat": "american"})
+
+    async def get_historical_event_odds(self, event_id: str, sport: SportConfig, date: str):
+        return await self._get(f"/historical/sports/{sport.key}/events/{event_id}/odds", {
+            "date": date, "bookmakers": ",".join(BOOKS), "markets": ",".join(sport.prop_markets),
+            "oddsFormat": "american"})
