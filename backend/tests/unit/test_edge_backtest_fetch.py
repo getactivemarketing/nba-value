@@ -153,3 +153,41 @@ def test_fetch_never_writes_live_worker_state(monkeypatch):
     monkeypatch.setattr(store, "set_state", boom)
     s = run(FakeRepo(), FakeClient())
     assert s.stopped is None
+
+
+class MalformedClient(FakeClient):
+    async def get_historical_event_odds(self, event_id, sport, date):
+        self.calls.append(("props", date))
+        if date == "2023-11-12T12:03:00Z":
+            return {"timestamp": date, "data": None}, self._usage(200)
+        return await super().get_historical_event_odds(event_id, sport, date)
+
+
+def test_malformed_paid_response_is_stored_as_a_stub_and_never_rebought():
+    repo = FakeRepo()
+    s = run(repo, MalformedClient())
+    assert s.stopped is None and s.errors == 1
+    stub = next(r for r in repo.rows if r["kind"] == "props" and r["label"] == "t6h")
+    assert stub["credits"] == 200 and stub["payload"]["bookmakers"] == [] and stub["snapshot_at"] is None
+    assert len([r for r in repo.rows if r["kind"] == "props"]) == 4
+    client = FakeClient()
+    run(repo, client)
+    assert client.calls == []
+
+
+def test_kickoff_comes_from_the_games_own_day_list_not_an_earlier_stale_one():
+    thu = Game("2023_10_PIT_CIN", 2023, 10, "CIN", "PIT", datetime(2023, 11, 10, 1, 15, tzinfo=UTC), 1, 2)
+    stale = {**EVENT, "commence_time": "2023-11-12T20:25:00Z"}  # Thursday's list: before a move to 18:03
+    other = {**EVENT, "id": "t1", "home_team": "Cincinnati Bengals", "away_team": "Pittsburgh Steelers",
+             "commence_time": "2023-11-10T01:15:00Z"}
+
+    class DayClient(FakeClient):
+        async def get_historical_events(self, sport, date):
+            self.calls.append(("events", date))
+            data = [other, stale] if date.startswith("2023-11-09") else [EVENT]
+            return {"timestamp": date, "data": data}, self._usage(1)
+
+    repo = FakeRepo()
+    asyncio.run(fetch.run_fetch(repo, DayClient(), [thu, GAME], cap=800_000, min_remaining=0, sleep=_nosleep))
+    close = next(r for r in repo.rows if r["event_id"] == "e1" and r["kind"] == "props" and r["label"] == "close")
+    assert close["kickoff"] == datetime(2023, 11, 12, 18, 3, tzinfo=UTC)

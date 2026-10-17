@@ -60,10 +60,14 @@ class Repo:
         return row[0] if row else None
 
     def insert(self, rows: list[dict]) -> None:
-        with self.conn.cursor() as cur:
-            execute_values(cur, f"INSERT INTO edge_bt_snapshots ({', '.join(COLS)}) VALUES %s "
-                                "ON CONFLICT (event_id, kind, label) DO NOTHING",
-                           [tuple(Json(r[c]) if c == "payload" else r[c] for c in COLS) for r in rows])
+        try:
+            with self.conn.cursor() as cur:
+                execute_values(cur, f"INSERT INTO edge_bt_snapshots ({', '.join(COLS)}) VALUES %s "
+                                    "ON CONFLICT (event_id, kind, label) DO NOTHING",
+                               [tuple(Json(r[c]) if c == "payload" else r[c] for c in COLS) for r in rows])
+        except Exception:
+            self.conn.rollback()
+            raise
         self.conn.commit()
 
 
@@ -117,6 +121,7 @@ async def run_fetch(repo, client, games: list[Game], *, cap: int, min_remaining:
 
     try:
         events: list[dict] = []
+        day_lists: list[tuple[plan.Job, list[dict]]] = []
         for job in plan.day_jobs(games):
             day_key = job.event_ids[0]
             payload = repo.events_payload(day_key) if job.keys[0] in done else None
@@ -124,9 +129,17 @@ async def run_fetch(repo, client, games: list[Game], *, cap: int, min_remaining:
                 data, cost = await call(job, partial(client.get_historical_events, NFL, plan.iso(job.requested_at)))
                 payload = data
                 repo.insert([_row(job, None, day_key, data, _ts(data["timestamp"]), cost)])
-            events += payload.get("data") or []
+            day_lists.append((job, payload.get("data") or []))
+            events += day_lists[-1][1]
 
-        pairs, s.unmatched = plan.match_events(games, events)
+        # A game's own ET-day list carries its latest kickoff; an earlier day's list may predate a move.
+        pairs, leftover = [], []
+        for job, day_events in day_lists:
+            got, missed = plan.match_events(list(job.games), day_events)
+            pairs += got
+            leftover += [gm for gm in job.games if gm.game_id in set(missed)]
+        got, s.unmatched = plan.match_events(leftover, events)
+        pairs += got
         for gid in s.unmatched:
             log.warning("backtest: no Odds API event matched %s", gid)
 
@@ -151,12 +164,22 @@ async def run_fetch(repo, client, games: list[Game], *, cap: int, min_remaining:
                 s.errors += 1
                 log.warning("backtest %s %s %s skipped: %s", job.kind, job.label, job.event_ids, e)
                 continue
-            at = _ts(data["timestamp"])
-            if job.kind == "props":
-                rows = [_row(job, job.games[0], job.event_ids[0], data["data"], at, cost)]
-            else:
-                by_id = {e["id"]: e for e in data.get("data") or []}
-                rows = [_row(job, gm, eid, by_id.get(eid) or _stub(eid), at, cost if i == 0 else 0)
+            try:
+                at = _ts(data["timestamp"])
+                if job.kind == "props":
+                    if not isinstance(data["data"], dict):
+                        raise TypeError(f"props data is {type(data['data']).__name__}")
+                    rows = [_row(job, job.games[0], job.event_ids[0], data["data"], at, cost)]
+                else:
+                    by_id = {e["id"]: e for e in data.get("data") or []}
+                    rows = [_row(job, gm, eid, by_id.get(eid) or _stub(eid), at, cost if i == 0 else 0)
+                            for i, (gm, eid) in enumerate(zip(job.games, job.event_ids))]
+            except (KeyError, TypeError, ValueError, AttributeError) as e:
+                # Paid for but unusable: keep the spend on record and never buy it again.
+                s.errors += 1
+                log.warning("backtest %s %s %s malformed response stored as stub: %s",
+                            job.kind, job.label, job.event_ids, e)
+                rows = [_row(job, gm, eid, {**_stub(eid), "malformed": str(e)[:200]}, None, cost if i == 0 else 0)
                         for i, (gm, eid) in enumerate(zip(job.games, job.event_ids))]
             repo.insert(rows)
     except Stop as e:

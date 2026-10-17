@@ -128,3 +128,12 @@ def test_void_and_ungradable_picks_have_no_profit():
     picks = replay.replay_game(GAME, snaps(event(SOFT)), [], {"someone else"}, 0.02, 0.15)
     p = fd_over(picks)
     assert p["result"] == "void" and p["profit"] is None
+
+
+def test_name_unknown_all_season_is_ungradable_not_void():
+    # Odds API nickname that neither nflverse source uses: never a silent void (final review #1).
+    assert replay.grade("player_reception_yds", "Hollywood Brown", "over", 55.5, GAME, [STAT],
+                        {"amari cooper"}, known={"amari cooper", "marquise brown"}) is None
+    # Known that season but absent from this game's snaps: inactive, so void.
+    assert replay.grade("player_reception_yds", "Marquise Brown", "over", 55.5, GAME, [STAT],
+                        {"amari cooper"}, known={"amari cooper", "marquise brown"}) == "void"
