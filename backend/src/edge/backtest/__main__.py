@@ -10,8 +10,11 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+import psycopg2
 
 from src.config import get_sync_database_url, settings
 from src.edge import store
@@ -19,6 +22,9 @@ from src.edge.backtest import SEASONS, fetch, nflverse, plan, replay, report
 from src.edge.client import EdgeOddsClient
 from src.utils.redact import install_redaction
 
+RETRIES = 5        # a dropped DB connection (e.g. the laptop slept) reconnects and resumes
+RETRY_WAIT = 30    # seconds between attempts
+log = logging.getLogger("edge.backtest")
 DEFAULT_OUT = Path(__file__).resolve().parents[3] / "docs" / "backtests" / "nfl-2023-2025.md"
 
 
@@ -50,14 +56,26 @@ def main(argv=None) -> int:
                 print(f"{k}: {v:,}")
             return 0
         fetch.ensure_tables(get_sync_database_url())
-        conn = store.connect()
-        try:
-            s = asyncio.run(fetch.run_fetch(
-                fetch.Repo(conn), EdgeOddsClient(), games,
-                cap=int(os.environ.get("BT_CREDIT_CAP", "800000")),
-                min_remaining=int(os.environ.get("BT_MIN_REMAINING", "3600000"))))
-        finally:
-            conn.close()
+        for attempt in range(1, RETRIES + 1):
+            conn = store.connect()
+            try:
+                s = asyncio.run(fetch.run_fetch(
+                    fetch.Repo(conn), EdgeOddsClient(), games,
+                    cap=int(os.environ.get("BT_CREDIT_CAP", "800000")),
+                    min_remaining=int(os.environ.get("BT_MIN_REMAINING", "3600000"))))
+                break
+            except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+                # Stored snapshots are never re-bought, so a fresh run resumes where this one stopped.
+                if attempt == RETRIES:
+                    raise
+                log.warning("backtest fetch: database connection lost (%s); resuming in %ds (attempt %d/%d)",
+                            str(e).strip().splitlines()[0], RETRY_WAIT, attempt + 1, RETRIES)
+                time.sleep(RETRY_WAIT)
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
         print(f"calls: {s.calls:,}  credits: {s.credits:,}  errors: {s.errors}  remaining: {s.remaining}")
         print(f"unmatched games: {len(s.unmatched)} {s.unmatched[:10]}")
         if s.stopped:
