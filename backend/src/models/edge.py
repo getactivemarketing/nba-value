@@ -8,7 +8,8 @@ what makes line movement and closing-line value possible.
 from datetime import date, datetime
 
 from sqlalchemy import (BigInteger, Boolean, Date, DateTime, Float, Index, Integer,
-                        Numeric, String, Text, UniqueConstraint)
+                        Numeric, String, Text, UniqueConstraint, func)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.database import Base
@@ -197,3 +198,53 @@ class EdgeNflSnap(Base):
     player_norm: Mapped[str] = mapped_column(String(80), nullable=False)
     snaps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EdgeBtSnapshot(Base):
+    """Phase C backtest: one raw Odds API historical response per (event, kind, label). Never read by live code."""
+    __tablename__ = "edge_bt_snapshots"
+    __table_args__ = (UniqueConstraint("event_id", "kind", "label", name="uq_edge_bt_snapshots"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    week: Mapped[int] = mapped_column(Integer, nullable=False)
+    game_id: Mapped[str | None] = mapped_column(String(32), index=True)   # nflverse id; NULL for events rows
+    event_id: Mapped[str] = mapped_column(String(64), nullable=False)    # Odds API id, or 'day:YYYY-MM-DD'
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)         # events | props | lines
+    label: Mapped[str] = mapped_column(String(8), nullable=False)        # t24h | t6h | t1h | close | list
+    kickoff: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    snapshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    home: Mapped[str] = mapped_column(String(4), nullable=False, default="")
+    away: Mapped[str] = mapped_column(String(4), nullable=False, default="")
+    credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EdgeBtPick(Base):
+    """Phase C backtest: one +EV pick found by a replay run."""
+    __tablename__ = "edge_bt_picks"
+    __table_args__ = (UniqueConstraint("run_id", "event_id", "label", "market", "player", "side", "line", "book",
+                                       name="uq_edge_bt_picks"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    week: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    label: Mapped[str] = mapped_column(String(8), nullable=False)
+    market: Mapped[str] = mapped_column(String(40), nullable=False)
+    player: Mapped[str] = mapped_column(String(80), nullable=False, default="")  # '' for game lines
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    line: Mapped[float] = mapped_column(Numeric(7, 2), nullable=False)
+    book: Mapped[str] = mapped_column(String(24), nullable=False)
+    price: Mapped[int] = mapped_column(Integer, nullable=False)
+    fair_prob: Mapped[float] = mapped_column(Float, nullable=False)
+    ev: Mapped[float] = mapped_column(Float, nullable=False)
+    verify: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    pin_ev: Mapped[float | None] = mapped_column(Float)          # EV with Novig/ProphetX left out of the consensus
+    n_books: Mapped[int] = mapped_column(Integer, nullable=False)
+    sharps: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    closing_prob: Mapped[float | None] = mapped_column(Float)
+    clv: Mapped[float | None] = mapped_column(Float)
+    result: Mapped[str | None] = mapped_column(String(8))
+    profit: Mapped[float | None] = mapped_column(Float)

@@ -19,3 +19,10 @@ def test_quote_and_opportunity_keys():
     assert ("event_id", "market", "player", "side", "line", "book") in _uniques(t["edge_quotes"])
     assert ("event_id", "market", "player", "side", "line", "book", "price") in _uniques(t["edge_opportunities"])
     assert ("bdl_player_id", "game_date") in _uniques(t["edge_player_games"])
+
+
+def test_backtest_tables_registered_with_keys():
+    t = Base.metadata.tables
+    assert ("event_id", "kind", "label") in _uniques(t["edge_bt_snapshots"])
+    assert ("run_id", "event_id", "label", "market", "player", "side", "line", "book") in _uniques(t["edge_bt_picks"])
+    assert t["edge_bt_snapshots"].c.payload.type.__class__.__name__ == "JSONB"
