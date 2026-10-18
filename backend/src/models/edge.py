@@ -317,3 +317,4 @@ class EdgeBtPick(Base):
     clv: Mapped[float | None] = mapped_column(Float)
     result: Mapped[str | None] = mapped_column(String(8))
     profit: Mapped[float | None] = mapped_column(Float)
+    tags: Mapped[list | None] = mapped_column(JSONB)  # [{key, direction}] point-in-time matchup tags

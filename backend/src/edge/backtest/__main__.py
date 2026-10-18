@@ -17,7 +17,7 @@ from pathlib import Path
 import psycopg2
 
 from src.config import get_sync_database_url, settings
-from src.edge import store
+from src.edge import matchups, nfl_injuries, store
 from src.edge.backtest import SEASONS, fetch, nflverse, plan, replay, report
 from src.edge.client import EdgeOddsClient
 from src.utils.redact import install_redaction
@@ -31,6 +31,14 @@ DEFAULT_OUT = Path(__file__).resolve().parents[3] / "docs" / "backtests" / "nfl-
 def _games(seasons, week):
     games = nflverse.load_schedule(seasons)
     return [g for g in games if week is None or g.week == week]
+
+
+def _contexts(seasons):
+    """Aggregates for [min - 1, *seasons] (week 1 fills from last season), built once."""
+    span = [min(seasons) - 1, *seasons]
+    team_games, player_games = matchups.aggregate(matchups.load_pbp(span), matchups.load_rosters(span))
+    index = nfl_injuries.history_index(nfl_injuries.load_history(span))
+    return replay.make_contexts(team_games, player_games, index)
 
 
 def main(argv=None) -> int:
@@ -92,7 +100,7 @@ def main(argv=None) -> int:
             games = {g.game_id: g for g in nflverse.load_schedule(seasons)}
             run_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             n = replay.run_replay(conn, run_id, games, nflverse.load_stats(seasons), nflverse.load_snaps(seasons),
-                                  settings.edge_min_ev, settings.edge_verify_ev)
+                                  settings.edge_min_ev, settings.edge_verify_ev, contexts=_contexts(seasons))
             print(f"run {run_id}: {n:,} picks")
         else:
             run_id = report.run_report(conn, a.run, a.out)

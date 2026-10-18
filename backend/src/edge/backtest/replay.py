@@ -9,8 +9,9 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime
+from typing import Callable
 
-from psycopg2.extras import execute_values
+from psycopg2.extras import Json, execute_values
 
 from src.edge.backtest.nflverse import Game
 from src.edge.backtest.plan import FLAG_LABELS
@@ -19,6 +20,7 @@ from src.edge.engine import american_to_decimal, fair_prob, group, price_quotes
 from src.edge.engine import clv as clv_of
 from src.edge.grading import grade_game, profit_units
 from src.edge.ingest import parse_event
+from src.edge.matchups import Tag, TagContext, build_context, tags_for
 from src.edge.nfl_players import nfl_prop_result
 from src.edge.players import normalize_name
 from src.edge.quotes import Quote, sides_for
@@ -27,7 +29,7 @@ log = logging.getLogger("edge.backtest.replay")
 PIN_EXCLUDE = frozenset({"novig", "prophetx"})
 PICK_COLS = ("run_id", "season", "week", "event_id", "label", "market", "player", "side", "line", "book",
              "price", "fair_prob", "ev", "verify", "pin_ev", "n_books", "sharps", "closing_prob", "clv",
-             "result", "profit")
+             "result", "profit", "tags")
 
 
 @dataclass(frozen=True)
@@ -74,7 +76,8 @@ def grade(market: str, player: str, side: str, line: float, game: Game, stats: l
 
 
 def replay_game(game: Game, snaps: dict[str, dict[str, Snap]], stats: list[dict], snap_names: set[str] | None,
-                min_ev: float, verify_ev: float, known: set[str] | None = None) -> list[dict]:
+                min_ev: float, verify_ev: float, known: set[str] | None = None,
+                tagger: Callable[[str, str, str], list[Tag]] | None = None) -> list[dict]:
     # The close may sit at kickoff; a snapshot after kickoff holds in-game prices and is never the close.
     closing = group(_quotes(snaps.get("close", {}), game.kickoff, inclusive=True))
     picks = []
@@ -103,12 +106,29 @@ def replay_game(game: Game, snaps: dict[str, dict[str, Snap]], stats: list[dict]
                 "clv": None if closing_prob is None else clv_of(closing_prob, q.price),
                 "result": result,
                 "profit": profit_units(result, q.price) if result in ("win", "loss", "push") else None,
+                # Additive only: tags never touch the price, EV or grade above.
+                "tags": [{"key": t.key, "direction": t.direction} for t in tagger(q.player, q.market, q.side)]
+                        if tagger and q.player else [],
             })
     return picks
 
 
+def make_contexts(team_games, player_games, injury_index) -> Callable[[Game], TagContext]:
+    """One TagContext per (season, week), built from rows strictly before it. Injuries are that week's
+    own pre-game report only; another week's report is never used."""
+    cache: dict[tuple[int, int], TagContext] = {}
+
+    def contexts(game: Game) -> TagContext:
+        k = (game.season, game.week)
+        if k not in cache:
+            cache[k] = build_context(team_games, player_games, injury_index.get(k, {}), *k)
+        return cache[k]
+    return contexts
+
+
 def run_replay(conn, run_id: str, games: dict[str, Game], stats: dict[str, list[dict]],
-               snaps_idx: dict[str, set[str]], min_ev: float, verify_ev: float) -> int:
+               snaps_idx: dict[str, set[str]], min_ev: float, verify_ev: float,
+               contexts: Callable[[Game], TagContext] | None = None) -> int:
     with conn.cursor() as cur:
         cur.execute("""SELECT DISTINCT event_id, game_id, kickoff FROM edge_bt_snapshots
                        WHERE kind IN ('props', 'lines', 'td') AND game_id = ANY(%s) ORDER BY game_id""",
@@ -126,10 +146,16 @@ def run_replay(conn, run_id: str, games: dict[str, Game], stats: dict[str, list[
             by_label: dict[str, dict[str, Snap]] = defaultdict(dict)
             for kind, label, payload, at in cur.fetchall():
                 by_label[label][kind] = Snap(payload, at)
+        tagger = None
+        if contexts is not None:
+            ctx = contexts(game)
+            teams = (game.home, game.away)
+            tagger = lambda player, market, side: tags_for(ctx, player, teams, market, side)  # noqa: E731
         picks = replay_game(game, by_label, stats.get(game_id, []), snaps_idx.get(game_id), min_ev, verify_ev,
-                             known[game.season])
-        rows = [tuple({**p, "run_id": run_id, "season": game.season, "week": game.week}[c] for c in PICK_COLS)
-                for p in picks]
+                             known[game.season], tagger=tagger)
+        rows = [tuple(Json(v) if c == "tags" else v
+                      for c, v in ((c, {**p, "run_id": run_id, "season": game.season, "week": game.week}[c])
+                                   for c in PICK_COLS)) for p in picks]
         if rows:
             with conn.cursor() as cur:
                 execute_values(cur, f"INSERT INTO edge_bt_picks ({', '.join(PICK_COLS)}) VALUES %s "

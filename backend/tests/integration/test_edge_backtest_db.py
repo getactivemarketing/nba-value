@@ -126,3 +126,40 @@ def test_replay_reads_a_td_snapshot_row(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT market, side, line, result FROM edge_bt_picks WHERE book = 'fanduel'")
         assert cur.fetchall() == [("player_anytime_td", "over", 0.5, "win")]
+
+
+def test_bt_pick_tags_round_trip_jsonb(conn):
+    asked = []
+
+    class Ctx:
+        pass
+
+    def contexts(game):
+        asked.append((game.season, game.week))
+        return Ctx()
+
+    import src.edge.backtest.replay as rp
+    seen = []
+
+    def fake_tags_for(ctx, player, teams, market, side):
+        seen.append((type(ctx).__name__, teams))
+        return [rp.Tag("def_soft", "tailwind", "d")]
+
+    orig = rp.tags_for
+    rp.tags_for = fake_tags_for
+    try:
+        fetch.Repo(conn).insert([_row("props", "e1", "t6h", 200, {**EVENT, "bookmakers": [
+            {"key": b, "markets": [{"key": "player_reception_yds", "outcomes": [
+                {"name": "Over", "description": "Amari Cooper", "price": o, "point": 55.5},
+                {"name": "Under", "description": "Amari Cooper", "price": u, "point": 55.5}]}]}
+            for b, (o, u) in SOFT.items()]}) | {"snapshot_at": datetime(2023, 11, 12, 12, 3, tzinfo=UTC)}])
+        assert replay.run_replay(conn, "r3", {GAME.game_id: GAME}, {GAME.game_id: [STAT]},
+                                 {GAME.game_id: {"amari cooper"}}, 0.02, 0.15, contexts=contexts) > 0
+    finally:
+        rp.tags_for = orig
+    assert asked == [(2023, 10)] and seen and all(t == ("Ctx", ("BAL", "CLE")) for t in seen)
+    with conn.cursor() as cur:
+        cur.execute("SELECT tags FROM edge_bt_picks WHERE book = 'fanduel' AND side = 'over'")
+        assert cur.fetchall()[0][0] == [{"key": "def_soft", "direction": "tailwind"}]
+        cur.execute("SELECT COUNT(*) FROM edge_bt_picks WHERE tags IS NULL")
+        assert cur.fetchone()[0] == 0
