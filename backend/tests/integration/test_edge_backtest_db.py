@@ -54,7 +54,7 @@ class PropsClient:
     async def get_historical_game_odds(self, sport, date):
         return {"timestamp": date, "data": [{**EVENT, "bookmakers": []}]}, Usage(4_000_000, None, 60)
 
-    async def get_historical_event_odds(self, event_id, sport, date):
+    async def get_historical_event_odds(self, event_id, sport, date, markets=None):
         return {"timestamp": date, "data": props_event()}, Usage(4_000_000, None, 200)
 
 

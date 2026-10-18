@@ -6,7 +6,9 @@ import pytest
 from src.edge import store
 from src.edge.backtest import fetch
 from src.edge.backtest.nflverse import Game
+from src.edge.backtest import plan
 from src.edge.client import OddsApiError, Usage
+from src.edge.config import TD_MARKET
 
 UTC = timezone.utc
 GAME = Game("2023_10_CLE_BAL", 2023, 10, "BAL", "CLE", datetime(2023, 11, 12, 18, 0, tzinfo=UTC), 31, 33)
@@ -36,6 +38,7 @@ class FakeClient:
     def __init__(self, events=(EVENT,), fail=None, remaining=4_000_000, lines_events=("e1",)):
         self.events, self.fail, self.remaining, self.lines_events = list(events), fail or {}, remaining, lines_events
         self.calls = []
+        self.markets = []
 
     def _usage(self, cost):
         self.remaining -= cost
@@ -52,21 +55,23 @@ class FakeClient:
         data = [{**EVENT, "id": e, "bookmakers": [{"key": "pinnacle", "markets": []}]} for e in self.lines_events]
         return {"timestamp": date, "data": data}, self._usage(60)
 
-    async def get_historical_event_odds(self, event_id, sport, date):
-        self.calls.append(("props", date))
-        if ("props", date) in self.fail:
-            raise self.fail[("props", date)]
+    async def get_historical_event_odds(self, event_id, sport, date, markets=None):
+        self.markets.append(markets)
+        kind = "td" if markets == (TD_MARKET,) else "props"
+        self.calls.append((kind, date))
+        if (kind, date) in self.fail:
+            raise self.fail[(kind, date)]
         return {"timestamp": date, "data": {**EVENT, "bookmakers": [{"key": "pinnacle", "markets": []}]}}, \
-            self._usage(200)
+            self._usage(20 if kind == "td" else 200)
 
 
 async def _nosleep(_):
     return None
 
 
-def run(repo, client, cap=800_000, min_remaining=3_600_000):
+def run(repo, client, cap=800_000, min_remaining=3_600_000, **kw):
     return asyncio.run(fetch.run_fetch(repo, client, [GAME], cap=cap, min_remaining=min_remaining,
-                                       sleep=_nosleep))
+                                       sleep=_nosleep, **kw))
 
 
 def test_fetch_stores_every_snapshot_once_and_resume_spends_nothing():
@@ -156,11 +161,11 @@ def test_fetch_never_writes_live_worker_state(monkeypatch):
 
 
 class MalformedClient(FakeClient):
-    async def get_historical_event_odds(self, event_id, sport, date):
-        self.calls.append(("props", date))
+    async def get_historical_event_odds(self, event_id, sport, date, markets=None):
         if date == "2023-11-12T12:03:00Z":
+            self.calls.append(("props", date))
             return {"timestamp": date, "data": None}, self._usage(200)
-        return await super().get_historical_event_odds(event_id, sport, date)
+        return await super().get_historical_event_odds(event_id, sport, date, markets)
 
 
 def test_malformed_paid_response_is_stored_as_a_stub_and_never_rebought():
@@ -191,3 +196,31 @@ def test_kickoff_comes_from_the_games_own_day_list_not_an_earlier_stale_one():
     asyncio.run(fetch.run_fetch(repo, DayClient(), [thu, GAME], cap=800_000, min_remaining=0, sleep=_nosleep))
     close = next(r for r in repo.rows if r["event_id"] == "e1" and r["kind"] == "props" and r["label"] == "close")
     assert close["kickoff"] == datetime(2023, 11, 12, 18, 3, tzinfo=UTC)
+
+
+def test_fetch_td_kind_requests_only_the_td_market_and_never_rebuys_props():
+    repo, client = FakeRepo(), FakeClient()
+    run(repo, client)
+    assert set(client.markets) == {plan.BT_PROP_MARKETS}  # props never buy TD
+    props_before = [r for r in repo.rows if r["kind"] == "props"]
+    client2 = FakeClient()
+    s = run(repo, client2, kinds=("td",))
+    assert client2.markets == [(TD_MARKET,)] * 4 and [c[0] for c in client2.calls if c[0] != "events"] == ["td"] * 4
+    td = [r for r in repo.rows if r["kind"] == "td"]
+    assert sorted(r["label"] for r in td) == ["close", "t1h", "t24h", "t6h"]
+    assert all(r["credits"] == plan.TD_COST and r["game_id"] == GAME.game_id for r in td)
+    assert [r for r in repo.rows if r["kind"] == "props"] == props_before
+    assert s.credits == 4 * plan.TD_COST
+    client3 = FakeClient()
+    assert run(repo, client3, kinds=("td",)).credits == 0 and client3.calls == []
+
+
+def test_stored_td_rows_do_not_block_props_and_a_td_404_is_a_stub():
+    repo = FakeRepo()
+    client = FakeClient(fail={("td", "2023-11-12T17:58:00Z"): OddsApiError(404, "gone")})
+    run(repo, client, kinds=("td",))
+    stub = next(r for r in repo.rows if r["kind"] == "td" and r["label"] == "close")
+    assert stub["payload"]["missing"] == 404
+    client2 = FakeClient()
+    run(repo, client2)
+    assert sum(1 for c in client2.calls if c[0] == "props") == 4

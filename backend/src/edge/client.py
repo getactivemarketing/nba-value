@@ -76,7 +76,8 @@ class EdgeOddsClient:
             "date": date, "bookmakers": ",".join(BOOKS), "markets": ",".join(LINE_MARKETS),
             "oddsFormat": "american"})
 
-    async def get_historical_event_odds(self, event_id: str, sport: SportConfig, date: str):
+    async def get_historical_event_odds(self, event_id: str, sport: SportConfig, date: str,
+                                        markets: tuple[str, ...] | None = None):
         return await self._get(f"/historical/sports/{sport.key}/events/{event_id}/odds", {
-            "date": date, "bookmakers": ",".join(BOOKS), "markets": ",".join(sport.prop_markets),
+            "date": date, "bookmakers": ",".join(BOOKS), "markets": ",".join(markets or sport.prop_markets),
             "oddsFormat": "american"})

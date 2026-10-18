@@ -41,6 +41,7 @@ def main(argv=None) -> int:
     f.add_argument("--season", type=int, action="append")
     f.add_argument("--week", type=int)
     f.add_argument("--dry-run", action="store_true")
+    f.add_argument("--kind", choices=("all", "td"), default="all")
     r = sub.add_parser("replay")
     r.add_argument("--season", type=int, action="append")
     rp = sub.add_parser("report")
@@ -51,8 +52,9 @@ def main(argv=None) -> int:
 
     if a.cmd == "fetch":
         games = _games(seasons, a.week)
+        kinds = ("td",) if a.kind == "td" else ("props", "lines")
         if a.dry_run:
-            for k, v in plan.dry_run(games).items():
+            for k, v in plan.dry_run(games, kinds).items():
                 print(f"{k}: {v:,}")
             return 0
         fetch.ensure_tables(get_sync_database_url())
@@ -62,7 +64,8 @@ def main(argv=None) -> int:
                 s = asyncio.run(fetch.run_fetch(
                     fetch.Repo(conn), EdgeOddsClient(), games,
                     cap=int(os.environ.get("BT_CREDIT_CAP", "800000")),
-                    min_remaining=int(os.environ.get("BT_MIN_REMAINING", "3600000"))))
+                    min_remaining=int(os.environ.get("BT_MIN_REMAINING", "3600000")),
+                    kinds=kinds))
                 break
             except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
                 # Stored snapshots are never re-bought, so a fresh run resumes where this one stopped.

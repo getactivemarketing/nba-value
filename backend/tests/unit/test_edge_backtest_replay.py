@@ -6,6 +6,7 @@ import pytest
 
 from src.edge.backtest import replay
 from src.edge.backtest.nflverse import Game
+from src.edge.config import TD_MARKET
 from src.edge.engine import american_to_decimal, price_quotes
 from src.edge.ingest import parse_event
 
@@ -137,3 +138,24 @@ def test_name_unknown_all_season_is_ungradable_not_void():
     # Known that season but absent from this game's snaps: inactive, so void.
     assert replay.grade("player_reception_yds", "Marquise Brown", "over", 55.5, GAME, [STAT],
                         {"amari cooper"}, known={"amari cooper", "marquise brown"}) == "void"
+
+
+def td_event(prices, player="Amari Cooper"):
+    """prices: {book: (yes, no or None)}"""
+    outs = lambda y, n: [{"name": "Yes", "description": player, "price": y}] + \
+        ([{"name": "No", "description": player, "price": n}] if n is not None else [])
+    return {"id": "e1", "home_team": "Baltimore Ravens", "away_team": "Cleveland Browns",
+            "commence_time": "2023-11-12T18:03:00Z",
+            "bookmakers": [{"key": b, "markets": [{"key": TD_MARKET, "outcomes": outs(y, n)}]}
+                           for b, (y, n) in prices.items()]}
+
+
+def test_replay_merges_td_snapshot_quotes():
+    td = td_event({"pinnacle": (150, -170), "novig": (150, -170), "fanduel": (190, None)})
+    s = {"t6h": {"props": replay.Snap(event(EVEN), KICK - timedelta(hours=6)),
+                 "td": replay.Snap(td, KICK - timedelta(hours=6))}}
+    stat = {**STAT, "rec_tds": 1, "rush_tds": 0, "ret_tds": 0}
+    picks = replay.replay_game(GAME, s, [stat], {"amari cooper"}, 0.02, 0.15)
+    p = next(p for p in picks if p["market"] == TD_MARKET)
+    assert (p["book"], p["side"], p["line"], p["price"]) == ("fanduel", "over", 0.5, 190)
+    assert p["ev"] > 0.02 and p["result"] == "win" and p["sharps"] == "novig,pinnacle"

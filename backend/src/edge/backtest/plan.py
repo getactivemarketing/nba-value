@@ -17,6 +17,7 @@ EVENTS_COST = 1
 BT_PROP_MARKETS = tuple(m for m in NFL_PROP_MARKETS if m != TD_MARKET)
 PROPS_COST = 10 * REGION_EQUIVALENTS * len(BT_PROP_MARKETS)
 LINES_COST = 10 * REGION_EQUIVALENTS * len(LINE_MARKETS)
+TD_COST = 10 * REGION_EQUIVALENTS * 1
 SLATE_GAP = timedelta(minutes=15)
 MATCH_TOLERANCE = timedelta(hours=3)
 EVENTS_AT = time(10, 0, tzinfo=timezone.utc)
@@ -24,7 +25,7 @@ EVENTS_AT = time(10, 0, tzinfo=timezone.utc)
 
 @dataclass(frozen=True)
 class Job:
-    kind: str                       # events | props | lines
+    kind: str                       # events | props | lines | td
     label: str                      # LABELS key, or 'list' for events
     requested_at: datetime
     games: tuple[Game, ...]
@@ -32,7 +33,8 @@ class Job:
 
     @property
     def cost(self) -> int:
-        return {"events": EVENTS_COST, "props": PROPS_COST, "lines": LINES_COST}[self.kind]
+        return {"events": EVENTS_COST, "props": PROPS_COST, "lines": LINES_COST,
+                "td": TD_COST}[self.kind]
 
     @property
     def keys(self) -> list[tuple[str, str, str]]:
@@ -78,20 +80,24 @@ def _slates(pairs: list[tuple[Game, str]]) -> list[list[tuple[Game, str]]]:
     return out
 
 
-def snapshot_jobs(pairs: list[tuple[Game, str]]) -> list[Job]:
-    jobs = [Job("props", label, gm.kickoff - off, (gm,), (eid,))
+def snapshot_jobs(pairs: list[tuple[Game, str]], kinds: tuple[str, ...] = ("props", "lines")) -> list[Job]:
+    jobs = [Job(kind, label, gm.kickoff - off, (gm,), (eid,))
+            for kind in ("props", "td") if kind in kinds
             for gm, eid in pairs for label, off in LABELS.items()]
-    for slate in _slates(pairs):
-        first = slate[0][0].kickoff
-        jobs += [Job("lines", label, first - off, tuple(p[0] for p in slate), tuple(p[1] for p in slate))
-                 for label, off in LABELS.items()]
+    if "lines" in kinds:
+        for slate in _slates(pairs):
+            first = slate[0][0].kickoff
+            jobs += [Job("lines", label, first - off, tuple(p[0] for p in slate), tuple(p[1] for p in slate))
+                     for label, off in LABELS.items()]
     return sorted(jobs, key=lambda j: (j.requested_at, j.kind, j.event_ids))
 
 
-def dry_run(games: list[Game]) -> dict:
+def dry_run(games: list[Game], kinds: tuple[str, ...] = ("props", "lines")) -> dict:
     days = day_jobs(games)
-    snaps = snapshot_jobs([(gm, gm.game_id) for gm in games])
-    props = sum(1 for j in snaps if j.kind == "props")
-    lines = sum(1 for j in snaps if j.kind == "lines")
-    return {"games": len(games), "events_calls": len(days), "props_calls": props, "lines_calls": lines,
-            "credits": sum(j.cost for j in days) + sum(j.cost for j in snaps)}
+    snaps = snapshot_jobs([(gm, gm.game_id) for gm in games], kinds)
+    out = {"games": len(games), "events_calls": len(days)}
+    for kind in ("props", "lines", "td"):
+        if kind in kinds:
+            out[f"{kind}_calls"] = sum(1 for j in snaps if j.kind == kind)
+    out["credits"] = sum(j.cost for j in days) + sum(j.cost for j in snaps)
+    return out

@@ -111,7 +111,7 @@ def run_replay(conn, run_id: str, games: dict[str, Game], stats: dict[str, list[
                snaps_idx: dict[str, set[str]], min_ev: float, verify_ev: float) -> int:
     with conn.cursor() as cur:
         cur.execute("""SELECT DISTINCT event_id, game_id, kickoff FROM edge_bt_snapshots
-                       WHERE kind IN ('props', 'lines') AND game_id = ANY(%s) ORDER BY game_id""",
+                       WHERE kind IN ('props', 'lines', 'td') AND game_id = ANY(%s) ORDER BY game_id""",
                     (sorted(games),))
         targets = cur.fetchall()
     known: dict[int, set[str]] = defaultdict(set)
@@ -122,7 +122,7 @@ def run_replay(conn, run_id: str, games: dict[str, Game], stats: dict[str, list[
         game = replace(games[game_id], kickoff=kickoff)
         with conn.cursor() as cur:
             cur.execute("""SELECT kind, label, payload, snapshot_at FROM edge_bt_snapshots
-                           WHERE event_id = %s AND kind IN ('props', 'lines')""", (event_id,))
+                           WHERE event_id = %s AND kind IN ('props', 'lines', 'td')""", (event_id,))
             by_label: dict[str, dict[str, Snap]] = defaultdict(dict)
             for kind, label, payload, at in cur.fetchall():
                 by_label[label][kind] = Snap(payload, at)
