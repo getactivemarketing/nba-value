@@ -534,3 +534,15 @@ def test_def_rz_and_def_td_copy_shows_one_decimal():
     by = {t.key: t.detail for t in tags_for(ctx, "Rudy Runner", ("KC", "JAX"), TD_MARKET, "over")}
     assert by == {"def_rz": "JAX allows 4.4 RB red-zone looks per game (2nd most)",
                   "def_td": "JAX allows 1.4 RB TDs per game (2nd most)"}
+
+
+def test_drop_ambiguous_removes_every_row_of_a_same_team_namesake_key():
+    from src.edge.matchups import drop_ambiguous
+    a1, a2 = pg(5, name="Josh Allen", team="JAX"), pg(5, name="Josh Allen", team="JAX", carries=9)
+    early = pg(4, name="Josh Allen", team="JAX")
+    other_team = pg(5, name="Josh Allen", team="BUF")
+    mate = pg(5, name="Travis Etienne", team="JAX")
+    kept, dropped = drop_ambiguous([early, a1, mate, a2, other_team])
+    assert kept == [mate, other_team]
+    assert dropped == {("JAX", "josh allen")}
+    assert drop_ambiguous([mate, other_team]) == ([mate, other_team], set())

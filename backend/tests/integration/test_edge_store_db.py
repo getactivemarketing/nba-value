@@ -1006,6 +1006,23 @@ def test_matchups_upsert_round_trip_and_update_in_place(conn):
         assert cur.fetchone() == (1, later)
 
 
+def test_matchups_upsert_drops_same_team_namesakes_instead_of_failing(conn):
+    # Two "Josh Allen"s on one team in one game share (season, week, team, player_key):
+    # one multi-row upsert would raise CardinalityViolation and fail the daily refresh.
+    from src.edge import matchups_store
+    from src.edge.matchups import PlayerGame
+    def p(week, team="JAX", key="josh allen", carries=5):
+        return PlayerGame(2026, week, team, key, key.title(), "RB", carries, 0, 0, 0, 25, 30, 8, 20, 6)
+    keep = [p(5, key="travis etienne"), p(5, team="BUF")]
+    # Earlier refresh: only one of them had played, so a JAX row is already stored.
+    assert matchups_store.upsert(conn, [], [p(4)], NOW) == 1
+    batch = [p(4), p(5, carries=5), p(5, carries=9)] + keep
+    assert matchups_store.upsert(conn, [], batch, NOW) == 2
+    _, players = matchups_store.load(conn, [2026])
+    # Every JAX "josh allen" row is gone (never guess which one), the rest are kept.
+    assert sorted(players, key=lambda r: r.team) == sorted(keep, key=lambda r: r.team)
+
+
 def test_edge_tag_status_unique_per_tag_direction(conn):
     with conn.cursor() as cur:
         cur.execute("""INSERT INTO edge_tag_status (tag, direction, verdict, clv_lift, n, run_id, updated_at)

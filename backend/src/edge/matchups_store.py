@@ -6,7 +6,7 @@ from datetime import datetime
 
 from psycopg2.extras import execute_values
 
-from src.edge.matchups import PlayerGame, TeamGame
+from src.edge.matchups import PlayerGame, TeamGame, drop_ambiguous
 
 _TEAM = [f.name for f in fields(TeamGame)]
 _PLAYER = [f.name for f in fields(PlayerGame)]
@@ -21,7 +21,15 @@ def _sql(table: str, cols: list[str], key: list[str]) -> str:
 
 
 def upsert(conn, team_games: list[TeamGame], player_games: list[PlayerGame], now: datetime) -> int:
+    # Same-team namesakes would repeat the unique key in one batch (CardinalityViolation)
+    # and fail the whole refresh; their earlier stored rows would let a guess through.
+    seasons = sorted({p.season for p in player_games})
+    player_games, dropped = drop_ambiguous(player_games)
     with conn.cursor() as cur:
+        if dropped:
+            for team, key in sorted(dropped):
+                cur.execute("DELETE FROM edge_nfl_player_weeks WHERE team = %s AND player_key = %s "
+                            "AND season = ANY(%s)", (team, key, seasons))
         if team_games:
             execute_values(cur, _sql("edge_nfl_team_weeks", _TEAM, _TEAM_KEY),
                            [astuple(t) + (now,) for t in team_games])

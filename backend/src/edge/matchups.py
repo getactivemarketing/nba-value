@@ -151,6 +151,24 @@ def aggregate(pbp: pd.DataFrame, rosters: pd.DataFrame) -> tuple[list[TeamGame],
     return tg, pg
 
 
+def drop_ambiguous(player_games: list[PlayerGame]) -> tuple[list[PlayerGame], set[tuple[str, str]]]:
+    """Drop every row of a (team, player_key) that appears twice in one game.
+
+    Two same-name players on one team can't be told apart, and the live table is
+    unique on (season, week, team, player_key). Dropping only the clashing games
+    would leave the other games to guess an identity from, so the key goes entirely:
+    no rows, no tags. Returns (kept rows in order, dropped (team, player_key)s).
+    """
+    seen: set = set()
+    dropped: set = set()
+    for r in player_games:
+        k = (r.season, r.week, r.team, r.player_key)
+        if k in seen:
+            dropped.add((r.team, r.player_key))
+        seen.add(k)
+    return [r for r in player_games if (r.team, r.player_key) not in dropped], dropped
+
+
 def window_games(rows: list, season: int, week: int, n: int, key) -> list:
     """Last `n` rows matching `key` strictly before (season, week), oldest first.
 
