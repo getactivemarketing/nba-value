@@ -74,6 +74,9 @@ def state_key(sport: SportConfig, name: str) -> str:
 
 
 MIN_BOOKS = 3
+# A two-way pair whose overround exceeds this is a placeholder quote (exchanges post
+# -120/-245 style ~25% holds), not a price: it never feeds the consensus.
+MAX_HOLD = 0.10
 DEVIG_METHOD = "power"
 # The close is read from edge_quotes, which freezes at tip because polling
 # stops there. A key whose last sighting is older than this window was pulled

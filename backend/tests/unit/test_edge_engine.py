@@ -82,6 +82,27 @@ class TestFairPrice:
         assert ("ev1", "player_points", "Jayson Tatum", 25.5) in groups
         assert "betmgm" not in groups[("ev1", "player_points", "Jayson Tatum", 27.5)]
 
+    def test_wide_hold_pairs_are_not_consensus_inputs(self):
+        # Exchanges post placeholder two-way quotes (-120/-245 is ~25% hold); devigged and
+        # weighted as sharps they invented +20% EV rows on the live NFL board.
+        quotes = market(("pinnacle", -110, -110), ("fanduel", -110, -110),
+                        ("draftkings", -110, -110), ("novig", -120, -245))
+        books = engine.group(quotes)[("ev1", "player_points", "Jayson Tatum", 27.5)]
+        f = engine.fair_prob(books, "player_points", "over", exclude_book=None)
+        assert f.n_books == 3 and f.prob == pytest.approx(0.5, abs=1e-6)
+
+    def test_ordinary_retail_hold_still_counts(self):
+        quotes = market(("pinnacle", -110, -110), ("fanduel", -130, -110), ("draftkings", -110, -110))
+        books = engine.group(quotes)[("ev1", "player_points", "Jayson Tatum", 27.5)]
+        assert engine.fair_prob(books, "player_points", "over", exclude_book=None).n_books == 3
+
+    def test_a_wide_sharp_quote_does_not_satisfy_the_sharp_rule(self):
+        quotes = market(("fanduel", -110, -110), ("draftkings", -110, -110),
+                        ("betmgm", -110, -110), ("prophetx", -112, -325))
+        books = engine.group(quotes)[("ev1", "player_points", "Jayson Tatum", 27.5)]
+        f = engine.fair_prob(books, "player_points", "over", exclude_book=None)
+        assert f.thin and not f.has_sharp
+
     def test_weights_pull_toward_pinnacle(self):
         quotes = market(("pinnacle", -150, 130), ("fanduel", -110, -110), ("draftkings", -110, -110))
         books = engine.group(quotes)[("ev1", "player_points", "Jayson Tatum", 27.5)]

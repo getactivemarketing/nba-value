@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterable, Mapping
 
-from src.edge.config import BOOK_WEIGHTS, DFS_BOOKS, MIN_BOOKS, SHARP_BOOKS
+from src.edge.config import BOOK_WEIGHTS, DFS_BOOKS, MAX_HOLD, MIN_BOOKS, SHARP_BOOKS
 from src.edge.quotes import Quote, sides_for
 
 MarketKey = tuple[str, str, str, float]
@@ -75,7 +75,10 @@ def fair_prob(book_sides: BookSides, market: str, side: str, exclude_book: str |
     for book, sides in book_sides.items():
         if book == exclude_book or book in DFS_BOOKS or a not in sides or b not in sides:
             continue
-        pa, pb = devig_power(implied_prob(sides[a].price), implied_prob(sides[b].price))
+        ia, ib = implied_prob(sides[a].price), implied_prob(sides[b].price)
+        if ia + ib - 1 > MAX_HOLD:
+            continue
+        pa, pb = devig_power(ia, ib)
         w = BOOK_WEIGHTS.get(book, 1.0)
         weighted += (pa if side == a else pb) * w
         weights += w
