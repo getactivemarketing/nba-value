@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from src.edge.config import TD_MARKET
 from src.edge.quotes import Quote
 
 
@@ -27,6 +28,11 @@ def _outcome_quote(event: dict, book: str, market: str, o: dict, observed_at: da
     if market == "h2h":
         side = "home" if o.get("name") == home else "away" if o.get("name") == away else None
         return Quote(eid, market, "", side, 0.0, book, price, link, observed_at) if side else None
+
+    if market == TD_MARKET:
+        side = {"Yes": "over", "No": "under"}.get(o.get("name"))
+        player = (o.get("description") or "").strip()
+        return Quote(eid, market, player, side, 0.5, book, price, link, observed_at) if side and player else None
 
     point = o.get("point")
     if not isinstance(point, (int, float)):

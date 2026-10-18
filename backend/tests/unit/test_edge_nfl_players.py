@@ -12,7 +12,8 @@ FIX = "tests/fixtures/edge"
 
 
 def test_every_nfl_market_has_stat_parts():
-    assert set(nfl.NFL_STAT_PARTS) == set(NFL_PROP_MARKETS)
+    # anytime TD is graded from rush/rec/return TD counts, not a stat-part sum (later task)
+    assert set(nfl.NFL_STAT_PARTS) == set(NFL_PROP_MARKETS) - {"player_anytime_td"}
     g = {"pass_att": 30, "pass_cmp": 20, "pass_yds": 250, "pass_tds": 2, "pass_int": 1,
          "rush_att": 5, "rush_yds": 22, "receptions": 0, "rec_yds": 0}
     assert nfl.stat_for("player_rush_reception_yds", {**g, "rec_yds": 8}) == 30

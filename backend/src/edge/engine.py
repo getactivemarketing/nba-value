@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterable, Mapping
 
-from src.edge.config import BOOK_WEIGHTS, DFS_BOOKS, MAX_HOLD, MIN_BOOKS, SHARP_BOOKS
+from src.edge.config import BOOK_WEIGHTS, DEFAULT_RULE, DFS_BOOKS, MARKET_RULES, MAX_HOLD, SHARP_BOOKS
 from src.edge.quotes import Quote, sides_for
 
 MarketKey = tuple[str, str, str, float]
@@ -65,15 +65,21 @@ class Fair:
 def group(quotes: Iterable[Quote]) -> dict[MarketKey, dict[str, dict[str, Quote]]]:
     out: dict[MarketKey, dict[str, dict[str, Quote]]] = defaultdict(lambda: defaultdict(dict))
     for q in quotes:
-        out[q.market_key][q.book][q.side] = q
+        cur = out[q.market_key][q.book].get(q.side)
+        # Exchanges post a ladder per side: keep the price a bettor can actually take.
+        if cur is None or american_to_decimal(q.price) > american_to_decimal(cur.price):
+            out[q.market_key][q.book][q.side] = q
     return {k: {b: dict(s) for b, s in v.items()} for k, v in out.items()}
 
 
 def fair_prob(book_sides: BookSides, market: str, side: str, exclude_book: str | None) -> Fair:
     a, b = sides_for(market)
+    rule = MARKET_RULES.get(market, DEFAULT_RULE)
     weighted, weights, n, sharp = 0.0, 0.0, 0, False
     for book, sides in book_sides.items():
         if book == exclude_book or book in DFS_BOOKS or a not in sides or b not in sides:
+            continue
+        if rule.inputs is not None and book not in rule.inputs:
             continue
         ia, ib = implied_prob(sides[a].price), implied_prob(sides[b].price)
         if ia + ib - 1 > MAX_HOLD:
@@ -84,7 +90,7 @@ def fair_prob(book_sides: BookSides, market: str, side: str, exclude_book: str |
         weights += w
         n += 1
         sharp = sharp or book in SHARP_BOOKS
-    if n < MIN_BOOKS or not sharp:
+    if n < rule.min_books or (rule.require_sharp and not sharp):
         return Fair(None, n, sharp)
     return Fair(weighted / weights, n, sharp)
 

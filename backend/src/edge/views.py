@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from psycopg2.extras import RealDictCursor
 
 from src.config import settings
-from src.edge.config import NBA, NFL, SportConfig
+from src.edge.config import NBA, NFL, TD_MARKET, SportConfig
 from src.edge import nfl_players, players, schedule, store
 from src.edge.engine import fair_prob, group, prob_to_american, price_quotes
 from src.edge.quotes import Quote, sides_for
@@ -26,7 +26,7 @@ MARKET_LABEL = {
     "player_pass_yds": "Pass Yds", "player_pass_tds": "Pass TDs", "player_pass_completions": "Completions",
     "player_pass_attempts": "Pass Att", "player_pass_interceptions": "INTs", "player_rush_yds": "Rush Yds",
     "player_rush_attempts": "Rush Att", "player_receptions": "Receptions", "player_reception_yds": "Rec Yds",
-    "player_rush_reception_yds": "Rush+Rec Yds",
+    "player_rush_reception_yds": "Rush+Rec Yds", TD_MARKET: "Anytime TD",
 }
 
 
@@ -35,6 +35,8 @@ def _signed(x: float) -> str:
 
 
 def describe(market: str, player: str, side: str, line: float, home_team: str, away_team: str) -> str:
+    if market == TD_MARKET:
+        return f"{player} Anytime TD — {'Yes' if side == 'over' else 'No'}"
     if market.startswith("player_"):
         return f"{player} {side.title()} {line:g} {MARKET_LABEL[market]}"
     if market == "totals":

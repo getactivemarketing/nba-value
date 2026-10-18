@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta, timezone
 
 from src.edge.backtest.nflverse import ET, Game
-from src.edge.config import LINE_MARKETS, NFL_PROP_MARKETS
+from src.edge.config import LINE_MARKETS, NFL_PROP_MARKETS, TD_MARKET
 from src.edge.ingest import _ts
 from src.edge.teams import NFL_ABBR_BY_NAME
 
@@ -14,7 +14,8 @@ LABELS = {"t24h": timedelta(hours=24), "t6h": timedelta(hours=6),
 FLAG_LABELS = ("t24h", "t6h", "t1h")
 REGION_EQUIVALENTS = 2          # 16 bookmakers; every 10 count as one region
 EVENTS_COST = 1
-PROPS_COST = 10 * REGION_EQUIVALENTS * len(NFL_PROP_MARKETS)
+BT_PROP_MARKETS = tuple(m for m in NFL_PROP_MARKETS if m != TD_MARKET)
+PROPS_COST = 10 * REGION_EQUIVALENTS * len(BT_PROP_MARKETS)
 LINES_COST = 10 * REGION_EQUIVALENTS * len(LINE_MARKETS)
 SLATE_GAP = timedelta(minutes=15)
 MATCH_TOLERANCE = timedelta(hours=3)

@@ -95,3 +95,23 @@ async def test_client_uses_the_sports_key_and_prop_markets():
                      "/v4/sports/americanfootball_nfl/events/e9/odds", "/v4/sports/americanfootball_nfl/scores"]
     assert seen[2].params["markets"] == ",".join(NFL_PROP_MARKETS)
     assert seen[3].params["daysFrom"] == "2"
+
+
+def _td_event(outcomes, market="player_anytime_td", book="novig"):
+    return {"id": "e1", "home_team": "H", "away_team": "A",
+            "bookmakers": [{"key": book, "markets": [{"key": market, "outcomes": outcomes}]}]}
+
+
+def test_anytime_td_yes_no_map_to_over_under_half():
+    ev = _td_event([{"name": "Yes", "description": "Woody Marks", "price": 141},
+                    {"name": "No", "description": "Woody Marks", "price": -144}])
+    qs = parse_event(ev, NOW)
+    assert {(q.side, q.line, q.price) for q in qs} == {("over", 0.5, 141), ("under", 0.5, -144)}
+    assert {q.player for q in qs} == {"Woody Marks"} and {q.market for q in qs} == {"player_anytime_td"}
+
+
+def test_anytime_td_yes_without_point_is_kept_but_other_props_still_need_a_point():
+    td = _td_event([{"name": "Yes", "description": "Woody Marks", "price": 141}])
+    assert [(q.side, q.line) for q in parse_event(td, NOW)] == [("over", 0.5)]
+    rush = _td_event([{"name": "Over", "description": "Woody Marks", "price": -110}], market="player_rush_yds")
+    assert parse_event(rush, NOW) == []
