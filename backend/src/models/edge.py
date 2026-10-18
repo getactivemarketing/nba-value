@@ -185,6 +185,9 @@ class EdgeNflPlayerGame(Base):
     rush_yds: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     receptions: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     rec_yds: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    rush_tds: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    rec_tds: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    ret_tds: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
 class EdgeNflSnap(Base):

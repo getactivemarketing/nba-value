@@ -918,6 +918,26 @@ async def test_a_failing_nflverse_download_does_not_refetch_the_schedule_every_t
     assert "nflverse down" in store.get_state(conn)["snaps_error"]
 
 
+def test_td_reload_clears_stats_loaded_once(conn):
+    from src.edge import worker
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_nfl_games (bdl_game_id, season, week, game_date, home, away, postseason,
+                       status_state, final_seen_at, stats_loaded_at)
+                       VALUES (7101, 2026, 5, '2026-10-11', 'ATL', 'CHI', FALSE, 'final', %s, %s)""", (NOW, NOW))
+    conn.commit()
+    assert worker.nfl_td_reload_step(conn, NOW) is True
+    with conn.cursor() as cur:
+        cur.execute("SELECT stats_loaded_at FROM edge_nfl_games WHERE bdl_game_id = 7101")
+        assert cur.fetchone()[0] is None
+        cur.execute("UPDATE edge_nfl_games SET stats_loaded_at = %s", (NOW,))   # reloaded since
+    conn.commit()
+    assert store.get_state(conn)["nfl:td_reload"] == "1"
+    assert worker.nfl_td_reload_step(conn, NOW + timedelta(hours=1)) is False   # never again
+    with conn.cursor() as cur:
+        cur.execute("SELECT stats_loaded_at IS NOT NULL FROM edge_nfl_games WHERE bdl_game_id = 7101")
+        assert cur.fetchone()[0] is True
+
+
 def test_grading_skips_props_older_than_the_window(conn):
     from src.edge import grading
     kickoff = _seed_graded_nfl_game(conn)

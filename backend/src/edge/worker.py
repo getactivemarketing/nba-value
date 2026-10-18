@@ -123,6 +123,11 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
                 conn.rollback()
                 store.set_state(conn, "bdl_error", redact(f"{name}: {type(e).__name__}: {e}")[:300], now)
         nfl_snaps_step(conn, now)
+        try:
+            nfl_td_reload_step(conn, now)
+        except Exception as e:  # noqa: BLE001 - never blocks odds
+            conn.rollback()
+            store.set_state(conn, "bdl_error", redact(f"nfl_td_reload_step: {type(e).__name__}: {e}")[:300], now)
 
     return out
 
@@ -180,6 +185,18 @@ async def nfl_backfill_step(conn, nfl_bdl, now: datetime) -> int:
         conn.rollback()
         store.set_state(conn, "bdl_error", redact(f"nfl backfill: {type(e).__name__}: {e}")[:300], now)
         return 0
+
+
+def nfl_td_reload_step(conn, now: datetime) -> bool:
+    """Once: box scores loaded before the TD columns existed hold zeros. Clear stats_loaded_at so
+    load_due_stats (6 games a tick) re-pulls them. Gated by the state key nfl:td_reload."""
+    if store.get_state(conn).get("nfl:td_reload") == "1":
+        return False
+    with conn.cursor() as cur:
+        cur.execute("UPDATE edge_nfl_games SET stats_loaded_at = NULL")
+    conn.commit()
+    store.set_state(conn, "nfl:td_reload", "1", now)
+    return True
 
 
 async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor: int, now: datetime,

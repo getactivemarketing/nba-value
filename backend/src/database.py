@@ -104,6 +104,10 @@ async def init_db() -> None:
         ("mlb_prediction_snapshots", "clv", "NUMERIC(7,5)"),
         ("mlb_prediction_snapshots", "clv_books", "INTEGER"),
         ("prediction_snapshots", "celebration_tweet_posted", "BOOLEAN DEFAULT FALSE"),
+        # Edge NFL anytime TD: touchdown counts on box scores that predate the columns.
+        ("edge_nfl_player_games", "rush_tds", "INTEGER NOT NULL DEFAULT 0"),
+        ("edge_nfl_player_games", "rec_tds", "INTEGER NOT NULL DEFAULT 0"),
+        ("edge_nfl_player_games", "ret_tds", "INTEGER NOT NULL DEFAULT 0"),
     ]
 
     added, skipped = await add_missing_columns(engine, column_migrations)
