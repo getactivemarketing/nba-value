@@ -32,6 +32,7 @@ function verdictCopy(t: EvTag): string {
 
 const CUE: Record<EvTag['verdict'], string> = { proven: ' ✓', negative: ' !', neutral: '' };
 const titleOf = (t: EvTag) => `${t.detail} · ${verdictCopy(t)}`;
+const chipText = (t: EvTag) => `${t.label} ${t.direction === 'tailwind' ? '↑' : '↓'}${CUE[t.verdict]}`;
 
 export function TagChips({ tags }: { tags: EvTag[] }) {
   const [open, setOpen] = useState<string | null>(null);
@@ -43,11 +44,11 @@ export function TagChips({ tags }: { tags: EvTag[] }) {
     <div className="mt-1">
       <div className="flex flex-wrap gap-1">
         {tags.map((t) => (
-          <span key={id(t)} title={titleOf(t)} aria-label={titleOf(t)} tabIndex={0} role="button"
+          <span key={id(t)} title={titleOf(t)} aria-label={`${chipText(t)} — ${titleOf(t)}`} tabIndex={0} role="button"
                 aria-expanded={open === id(t)} onClick={() => toggle(t)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(t); } }}
                 className={`cursor-pointer rounded border px-1.5 py-0.5 text-[10px] font-mono ${CLASS[t.verdict]}`}>
-            {`${t.label} ${t.direction === 'tailwind' ? '↑' : '↓'}${CUE[t.verdict]}`}
+            {chipText(t)}
           </span>
         ))}
       </div>

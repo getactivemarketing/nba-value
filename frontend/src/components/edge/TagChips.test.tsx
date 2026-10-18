@@ -52,11 +52,14 @@ describe('TagChips', () => {
     expect(screen.getAllByText('Soft matchup ↑')).toHaveLength(1);
   });
 
-  it('is focusable with aria-label equal to the title', () => {
+  it('is focusable with an aria-label that starts with the visible label, then the title', () => {
     render(<TagChips tags={[tag({ verdict: 'proven', lift: 0.006 })]} />);
     const chip = screen.getByText('Soft matchup ↑ ✓');
     expect(chip.getAttribute('tabindex')).toBe('0');
-    expect(chip.getAttribute('aria-label')).toBe(chip.getAttribute('title'));
+    // WCAG 2.5.3: the accessible name contains the visible text.
+    expect(chip.getAttribute('aria-label')).toBe(
+      'Soft matchup ↑ ✓ — detail text · Proven in 2023–25 backtest: +0.6% CLV');
+    expect(chip.getAttribute('title')).toBe('detail text · Proven in 2023–25 backtest: +0.6% CLV');
   });
 
   it('click and Enter toggle an inline detail line, one at a time', () => {
