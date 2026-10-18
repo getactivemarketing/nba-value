@@ -202,6 +202,9 @@ def nfl_td_reload_step(conn, now: datetime) -> bool:
     return True
 
 
+MATCHUPS_TIMEOUT_S = 300
+
+
 async def nfl_matchups_step(conn, now: datetime, frames=None) -> int:
     """Daily: nflverse pbp + rosters for this and last season, aggregated and upserted. Errors land
     in matchups_error and never raise. `frames` = (pbp, rosters) skips the download (test seam)."""
@@ -220,7 +223,7 @@ async def nfl_matchups_step(conn, now: datetime, frames=None) -> int:
                 pbp, rosters = matchups.load_pbp(seasons), matchups.load_rosters(seasons)
             return matchups.aggregate(pbp, rosters)
 
-        team_games, player_games = await asyncio.to_thread(build)
+        team_games, player_games = await asyncio.wait_for(asyncio.to_thread(build), MATCHUPS_TIMEOUT_S)
         n = matchups_store.upsert(conn, team_games, player_games, now)
         store.set_state(conn, "nfl:matchups_ok_at", _iso(now), now)
         store.set_state(conn, "matchups_error", "", now)
@@ -228,6 +231,7 @@ async def nfl_matchups_step(conn, now: datetime, frames=None) -> int:
     except Exception as e:  # noqa: BLE001
         conn.rollback()
         store.set_state(conn, "matchups_error", redact(f"{type(e).__name__}: {e}")[:300], now)
+        store.set_state(conn, "nfl:last_matchups_step", _iso(now - timedelta(hours=23)), now)  # retry in ~1 h
         return 0
 
 

@@ -88,3 +88,35 @@ async def test_injuries_step_error_sets_state_and_does_not_raise(state, stored):
     assert await worker.nfl_injuries_step(conn, _Bdl(fail=True), NOW) == 0
     assert "bdl down" in state["injuries_error"] and conn.rolled == 1
     assert "nfl:injuries_ok_at" not in state
+
+
+async def test_matchups_step_timeout_sets_error_and_does_not_raise(monkeypatch, state):
+    import time
+    monkeypatch.setattr(worker, "MATCHUPS_TIMEOUT_S", 0.05, raising=False)
+    monkeypatch.setattr(matchups, "aggregate", lambda pbp, rosters: time.sleep(0.5) or ([], []))
+    conn = _Conn()
+    assert await worker.nfl_matchups_step(conn, NOW, frames=(None, None)) == 0
+    assert state["matchups_error"] and "nfl:matchups_ok_at" not in state
+
+
+async def test_matchups_failure_retries_after_an_hour_not_a_day(monkeypatch, state):
+    calls = []
+
+    def boom(pbp, rosters):
+        calls.append(1)
+        raise RuntimeError("x")
+    monkeypatch.setattr(matchups, "aggregate", boom)
+    await worker.nfl_matchups_step(_Conn(), NOW, frames=(None, None))
+    await worker.nfl_matchups_step(_Conn(), NOW + timedelta(minutes=30), frames=(None, None))
+    assert len(calls) == 1
+    await worker.nfl_matchups_step(_Conn(), NOW + timedelta(minutes=61), frames=(None, None))
+    assert len(calls) == 2
+
+
+async def test_success_clears_previous_errors(monkeypatch, state, stored):
+    state["matchups_error"] = state["injuries_error"] = "x"
+    monkeypatch.setattr(matchups, "aggregate", lambda pbp, rosters: ([], []))
+    monkeypatch.setattr(worker.matchups_store, "upsert", lambda c, t, p, now: 0)
+    await worker.nfl_matchups_step(_Conn(), NOW, frames=(None, None))
+    await worker.nfl_injuries_step(_Conn(), _Bdl(), NOW)
+    assert state["matchups_error"] == "" and state["injuries_error"] == ""
