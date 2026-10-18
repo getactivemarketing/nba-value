@@ -71,3 +71,39 @@ def test_rows_sort_by_ev_plus_signed_lift_of_proven_and_negative_tags_only():
     # 3.6% > 3.5% > 3.0% > 2.0%: the proven row passes the plain 3.5% one; the neutral +5% lift is ignored.
     assert rows == [boosted, plain, hurt, ignored]
     assert tagging.sort_key(ignored) == 0.020
+
+
+class _BadConn:
+    def __init__(self):
+        self.rolled_back = 0
+
+    def rollback(self):
+        self.rolled_back += 1
+
+
+def test_db_error_rolls_back_and_returns_none(monkeypatch):
+    _patch(monkeypatch, NOW.isoformat())
+    monkeypatch.setattr(tagging.matchups_store, "load", lambda conn, seasons: 1 / 0)
+    c = _BadConn()
+    assert tagging.live_tagger(c, NOW) is None
+    assert c.rolled_back == 1
+
+
+def test_rollback_failure_is_swallowed(monkeypatch):
+    _patch(monkeypatch, NOW.isoformat(), boom=True)
+    c = _BadConn()
+    c.rollback = lambda: 1 / 0
+    assert tagging.live_tagger(c, NOW) is None
+
+
+def test_unknown_tag_key_does_not_raise(monkeypatch):
+    _patch(monkeypatch, NOW.isoformat(), tags=[matchups.Tag("brand_new", "tailwind", "d")])
+    out = tagging.live_tagger(object(), NOW)("A B", ("JAX", "KC"), "player_rush_yds", "over")
+    assert out[0]["label"] == "brand_new"
+
+
+def test_naive_matchups_timestamp_is_treated_as_utc(monkeypatch):
+    _patch(monkeypatch, "2026-10-17T12:00:00")
+    assert tagging.live_tagger(object(), NOW) is not None
+    _patch(monkeypatch, "2026-10-01T12:00:00")
+    assert tagging.live_tagger(object(), NOW) is None

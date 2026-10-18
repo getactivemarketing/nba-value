@@ -8,7 +8,7 @@ No tags never means no board: every failure here degrades to `tags: []`.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from src.edge import matchups, matchups_store, nfl_injuries, store
@@ -40,7 +40,12 @@ def _statuses(conn) -> dict[tuple[str, str], tuple[str, float]]:
 def live_tagger(conn, now: datetime) -> Tagger | None:
     try:
         ok = store.get_state(conn).get("nfl:matchups_ok_at")
-        if not ok or now - datetime.fromisoformat(ok) > STALE_AFTER:
+        if not ok:
+            return None
+        at = datetime.fromisoformat(ok)
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        if now - at > STALE_AFTER:
             return None
         season = current_nfl_season(now.date())
         team_games, player_games = matchups_store.load(conn, [season - 1, season])
@@ -49,6 +54,10 @@ def live_tagger(conn, now: datetime) -> Tagger | None:
         status = _statuses(conn)
     except Exception as e:  # noqa: BLE001 - the board must serve without tags
         log.error("edge live tags unavailable: %s", e)
+        try:
+            conn.rollback()  # a failed query must not poison the caller's transaction
+        except Exception:  # noqa: BLE001
+            pass
         return None
 
     def tagger(player: str, event_teams: tuple[str, str], market: str, side: str) -> list[dict]:
@@ -60,7 +69,7 @@ def live_tagger(conn, now: datetime) -> Tagger | None:
         out = []
         for t in tags:
             verdict, lift = status.get((t.key, t.direction), ("neutral", 0.0))
-            out.append({"key": t.key, "label": TAG_LABEL[t.key], "direction": t.direction,
+            out.append({"key": t.key, "label": TAG_LABEL.get(t.key, t.key), "direction": t.direction,
                         "verdict": verdict, "lift": lift, "detail": t.detail})
         return out
 

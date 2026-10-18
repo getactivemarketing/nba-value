@@ -120,3 +120,13 @@ async def test_success_clears_previous_errors(monkeypatch, state, stored):
     await worker.nfl_matchups_step(_Conn(), NOW, frames=(None, None))
     await worker.nfl_injuries_step(_Conn(), _Bdl(), NOW)
     assert state["matchups_error"] == "" and state["injuries_error"] == ""
+
+
+def test_no_touched_events_never_builds_the_tagger(monkeypatch):
+    from src.edge import worker
+    called = []
+    monkeypatch.setattr(worker.tagging, "live_tagger", lambda *a: called.append(1))
+    assert worker._tagger_for(object(), NOW, [], __import__('src.edge.config',fromlist=['NFL']).NFL) is None
+    assert not called
+    worker._tagger_for(object(), NOW, ["e1"], __import__('src.edge.config',fromlist=['NFL']).NFL)
+    assert called == [1]

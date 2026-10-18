@@ -72,6 +72,11 @@ def _reprice(conn, event_ids: list[str], events: list[dict], now: datetime, fact
     return opportunities.record(conn, priced, now, tagger=tagger, events=events)
 
 
+def _tagger_for(conn, now: datetime, touched: list[str], sport: SportConfig):
+    """Build the live tagger only when there is something to record."""
+    return tagging.live_tagger(conn, now) if touched and sport.slug == "nfl" and sport.has_players else None
+
+
 async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
                sports: list[SportConfig] | None = None, nfl_bdl=None) -> dict:
     sports = enabled_sports(settings.edge_sports) if sports is None else sports
@@ -314,7 +319,7 @@ async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor
                 await nfl_players.resolve_new_players(conn, nfl_bdl, quotes, by_id[eid], now)
         touched.append(eid)
 
-    tagger = tagging.live_tagger(conn, now) if sport.slug == "nfl" and sport.has_players else None
+    tagger = _tagger_for(conn, now, touched, sport)
     out["opportunities"] = _reprice(conn, sorted(set(touched)), events, now, factor, window, tagger)
 
     # Scores while this sport's games are live.

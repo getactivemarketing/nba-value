@@ -1001,3 +1001,15 @@ def test_edge_tag_status_unique_per_tag_direction(conn):
         with pytest.raises(psycopg2.errors.UniqueViolation):
             cur.execute("""INSERT INTO edge_tag_status (tag, direction, verdict, n, updated_at)
                            VALUES ('def_rz', 'tailwind', 'proven', 3, %s)""", (NOW,))
+
+
+def test_live_tagger_reads_tag_status_end_to_end(conn):
+    from src.edge import tagging
+
+    store.set_state(conn, "nfl:matchups_ok_at", NOW.isoformat(), NOW)
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO edge_tag_status (tag, direction, verdict, clv_lift, n, updated_at) "
+                    "VALUES ('def_soft', 'tailwind', 'proven', 0.006, 300, %s)", (NOW,))
+    conn.commit()
+    assert tagging._statuses(conn) == {("def_soft", "tailwind"): ("proven", 0.006)}
+    assert tagging.live_tagger(conn, NOW) is not None
