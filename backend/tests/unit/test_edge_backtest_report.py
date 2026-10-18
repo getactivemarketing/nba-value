@@ -71,15 +71,16 @@ MKT = "player_reception_yds"
 _seq = iter(range(10 ** 9))
 
 
-def tp(clv, tags=(), season=2023, market=MKT, result="win", profit=0.9):
-    p = pick(clv=clv, season=season, market=market, result=result, profit=profit, player=f"P{next(_seq)}")
+def tp(clv, tags=(), season=2023, market=MKT, result="win", profit=0.9, side="over"):
+    p = pick(clv=clv, season=season, market=market, result=result, profit=profit, player=f"P{next(_seq)}",
+             side=side)
     p["tags"] = [{"key": k, "direction": d} for k, d in tags]
     return p
 
 
-def spread(base, n, tags=(), season=2023, amp=0.01):
+def spread(base, n, tags=(), season=2023, amp=0.01, side="over"):
     """n picks whose clv alternates base +/- amp (mean base, nonzero variance)."""
-    return [tp(base + (amp if i % 2 else -amp), tags, season) for i in range(n)]
+    return [tp(base + (amp if i % 2 else -amp), tags, season, side=side) for i in range(n)]
 
 
 def by(verdicts, tag="def_soft", direction="tailwind"):
@@ -160,6 +161,19 @@ def test_control_excludes_picks_carrying_the_same_key_in_either_direction():
     v = by(report.tag_verdicts(rows))
     # control = usage_up-tagged + untagged on def_soft markets (mean 0): not the headwind or off-market picks
     assert v.lift == pytest.approx(0.02)
+
+
+def test_control_is_the_tagged_side_only_so_an_over_under_clv_gap_is_neutral():
+    # Overs beat the close by 2% whether tagged or not; unders by 0%. The tag adds nothing.
+    rows = []
+    for s in (2023, 2024, 2025):
+        rows += (spread(0.02, 100, [("def_soft", "tailwind")], s)
+                 + spread(0.02, 300, (), s) + spread(0.0, 300, (), s, side="under")
+                 + spread(0.0, 100, [("def_tough", "tailwind")], s, side="under"))
+    v = by(report.tag_verdicts(rows))
+    assert v.lift == pytest.approx(0.0) and v.verdict == "neutral"
+    v = by(report.tag_verdicts(rows), "def_tough", "tailwind")  # tailwind on an under
+    assert v.lift == pytest.approx(0.0) and v.verdict == "neutral"
 
 
 def test_null_tags_missing_tags_and_empty_control_do_not_crash():

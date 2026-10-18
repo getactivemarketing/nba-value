@@ -134,15 +134,20 @@ def _lift(tagged: list[float], control: list[float]):
 
 
 def tag_verdicts(picks: list[dict]) -> list[TagVerdict]:
-    """Grade every (tag, direction) on CLV lift vs. same-market picks without that tag (spec §6)."""
+    """Grade every (tag, direction) on CLV lift vs. same-market picks without that tag (spec §6).
+
+    The control is also restricted to the side(s) the tagged picks are on: each
+    (tag, direction) is one side, so a plain over/under CLV gap must not read as lift.
+    """
     groups = []
     for key in TAG_KEYS:
-        control = [p for p in picks if p["market"] in MARKETS_FOR[key]
-                   and not any(t["key"] == key for t in _keys(p)) and p["clv"] is not None]
+        untagged = [p for p in picks if p["market"] in MARKETS_FOR[key]
+                    and not any(t["key"] == key for t in _keys(p)) and p["clv"] is not None]
         for direction in DIRECTIONS:
             tagged = [p for p in picks if any(t["key"] == key and t["direction"] == direction for t in _keys(p))]
             if tagged:
-                groups.append((key, direction, tagged, control))
+                sides = {p["side"] for p in tagged}
+                groups.append((key, direction, tagged, [p for p in untagged if p["side"] in sides]))
     m = sum(len(_clvs(t)) >= MIN_TAG_N for _, _, t, _ in groups)
     z = NormalDist().inv_cdf(1 - 0.05 / (2 * m)) if m else None
     out = []
