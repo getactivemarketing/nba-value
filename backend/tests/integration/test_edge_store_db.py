@@ -53,6 +53,19 @@ def test_events_upsert_and_upcoming(conn):
     assert store.upcoming_events(conn, NOW)[0]["last_props_poll"] == NOW
 
 
+def test_write_quotes_collapses_a_same_key_ladder_to_the_best_price(conn):
+    # An exchange "Yes" ladder: three prices, one key. One multi-row upsert with a
+    # repeated key would raise CardinalityViolation and stall the poll.
+    store.upsert_events(conn, [_event()])
+    ladder = [q(book="prophetx", price=p) for p in (130, 132, 129)]
+    assert store.write_quotes(conn, ladder) == 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT price FROM edge_quotes WHERE book = 'prophetx'")
+        assert cur.fetchall() == [(132,)]
+        cur.execute("SELECT price FROM edge_quote_history WHERE book = 'prophetx'")
+        assert cur.fetchall() == [(132,)]
+
+
 def test_history_only_on_change(conn):
     store.upsert_events(conn, [_event()])
     assert store.write_quotes(conn, [q(), q(side="under", price=-110)]) == 2

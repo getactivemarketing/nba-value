@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from src.edge.config import TD_MARKET
+from src.edge.engine import american_to_decimal
 from src.edge.quotes import Quote
 
 
@@ -56,6 +57,21 @@ def _outcome_quote(event: dict, book: str, market: str, o: dict, observed_at: da
     return Quote(eid, market, player, side, float(point), book, price, link, observed_at)
 
 
+def best_per_key(quotes: list[Quote]) -> list[Quote]:
+    """One quote per `Quote.key`, keeping the best (highest decimal) price.
+
+    Exchanges post ladders: several prices for one book, player and side. Anytime
+    TD outcomes all carry line 0.5, so ladder rungs share a key, and one multi-row
+    upsert with a repeated key fails. First-seen order is kept.
+    """
+    best: dict[tuple, Quote] = {}
+    for q in quotes:
+        cur = best.get(q.key)
+        if cur is None or american_to_decimal(q.price) > american_to_decimal(cur.price):
+            best[q.key] = q
+    return list(best.values())
+
+
 def parse_event(event: dict, observed_at: datetime) -> list[Quote]:
     out: list[Quote] = []
     for bm in event.get("bookmakers") or []:
@@ -64,4 +80,4 @@ def parse_event(event: dict, observed_at: datetime) -> list[Quote]:
                 q = _outcome_quote(event, bm["key"], m["key"], o, observed_at)
                 if q is not None:
                     out.append(q)
-    return out
+    return best_per_key(out)

@@ -115,3 +115,15 @@ def test_anytime_td_yes_without_point_is_kept_but_other_props_still_need_a_point
     assert [(q.side, q.line) for q in parse_event(td, NOW)] == [("over", 0.5)]
     rush = _td_event([{"name": "Over", "description": "Woody Marks", "price": -110}], market="player_rush_yds")
     assert parse_event(rush, NOW) == []
+
+
+def test_anytime_td_exchange_ladder_collapses_to_one_quote_per_key_at_the_best_price():
+    # ProphetX posts several "Yes" prices for one player; all share line 0.5, so they share a key.
+    ev = _td_event([{"name": "Yes", "description": "Woody Marks", "price": 130},
+                    {"name": "Yes", "description": "Woody Marks", "price": 132},
+                    {"name": "Yes", "description": "Woody Marks", "price": 129},
+                    {"name": "No", "description": "Woody Marks", "price": -160},
+                    {"name": "No", "description": "Woody Marks", "price": -150}], book="prophetx")
+    qs = parse_event(ev, NOW)
+    assert len(qs) == len({q.key for q in qs}) == 2
+    assert {(q.side, q.price) for q in qs} == {("over", 132), ("under", -150)}
