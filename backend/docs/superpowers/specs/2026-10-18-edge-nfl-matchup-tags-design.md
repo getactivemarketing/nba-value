@@ -98,7 +98,7 @@ Player identity uses the existing name-key matching (`normalize_name`). An unmat
   - **Main measure:** average CLV difference and beat-close rate. ROI and win % are reported too.
   - **Proven:** all three of the following.
     1. At least 200 tagged picks.
-    2. The CLV difference is above 0 with a Bonferroni-corrected confidence interval across all tag-and-direction tests (with 14 tests at α = 0.05, z ≈ 2.91).
+    2. The CLV difference is above 0 with a Bonferroni-corrected confidence interval at α = 0.05 / m, where m is the number of tag-and-direction tests actually run (m = 14 gives z ≈ 2.91).
     3. The difference has the same sign in at least 2 of the 3 seasons.
   - **Negative:** the same three conditions, with the difference below 0.
   - **Neutral:** everything else.
