@@ -107,3 +107,27 @@ def test_naive_matchups_timestamp_is_treated_as_utc(monkeypatch):
     assert tagging.live_tagger(object(), NOW) is not None
     _patch(monkeypatch, "2026-10-01T12:00:00")
     assert tagging.live_tagger(object(), NOW) is None
+
+
+def _injuries_seen(monkeypatch, injuries_ok_at):
+    """The injuries dict live_tagger hands build_context for a given nfl:injuries_ok_at."""
+    _patch(monkeypatch, NOW.isoformat())
+    state = {"nfl:matchups_ok_at": NOW.isoformat()}
+    if injuries_ok_at is not None:
+        state["nfl:injuries_ok_at"] = injuries_ok_at
+    monkeypatch.setattr(tagging.store, "get_state", lambda conn: state)
+    monkeypatch.setattr(tagging.nfl_injuries, "live_index", lambda conn: {"KC": {"rudy runner": "questionable"}})
+    seen = []
+    monkeypatch.setattr(tagging.matchups, "build_context", lambda tg, pg, inj, s, w: seen.append(inj) or "ctx")
+    assert tagging.live_tagger(object(), NOW) is not None  # matchup tags still serve
+    return seen[0]
+
+
+def test_live_injuries_used_only_when_refreshed_within_24_hours(monkeypatch):
+    fresh = {"KC": {"rudy runner": "questionable"}}
+    assert _injuries_seen(monkeypatch, (NOW - timedelta(hours=23, minutes=59)).isoformat()) == fresh
+    assert _injuries_seen(monkeypatch, "2026-10-18T00:00:00") == fresh  # naive = UTC, 12 h old
+    assert _injuries_seen(monkeypatch, (NOW - timedelta(hours=24, minutes=1)).isoformat()) == {}
+    assert _injuries_seen(monkeypatch, "2026-10-17T11:00:00") == {}  # naive = UTC, 25 h old
+    assert _injuries_seen(monkeypatch, None) == {}
+    assert _injuries_seen(monkeypatch, "not-a-date") == {}

@@ -24,6 +24,7 @@ TAG_LABEL = {
     "teammate_out": "Teammate out", "questionable": "Questionable",
 }
 STALE_AFTER = timedelta(days=8)
+INJURIES_STALE_AFTER = timedelta(hours=24)  # older snapshot: tags 6 and 7 don't fire (spec §8)
 ALL_STORED_WEEKS = 99  # every stored row of the current season counts
 
 Tagger = Callable[[str, tuple[str, str], str, str], list[dict]]
@@ -37,9 +38,19 @@ def _statuses(conn) -> dict[tuple[str, str], tuple[str, float]]:
     return {(t, d): (v, float(lift or 0.0)) for t, d, v, lift in rows}
 
 
+def _parse_at(value) -> datetime | None:
+    """ISO timestamp from edge state; naive means UTC; garbage means None."""
+    try:
+        at = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at
+
+
 def live_tagger(conn, now: datetime) -> Tagger | None:
     try:
-        ok = store.get_state(conn).get("nfl:matchups_ok_at")
+        state = store.get_state(conn)
+        ok = state.get("nfl:matchups_ok_at")
         if not ok:
             return None
         at = datetime.fromisoformat(ok)
@@ -49,8 +60,11 @@ def live_tagger(conn, now: datetime) -> Tagger | None:
             return None
         season = current_nfl_season(now.date())
         team_games, player_games = matchups_store.load(conn, [season - 1, season])
-        ctx = matchups.build_context(team_games, player_games, nfl_injuries.live_index(conn),
-                                     season, ALL_STORED_WEEKS)
+        # A frozen snapshot (the BDL fetch keeps failing) must not keep firing old statuses.
+        inj_at = _parse_at(state.get("nfl:injuries_ok_at"))
+        fresh = inj_at is not None and now - inj_at <= INJURIES_STALE_AFTER
+        injuries = nfl_injuries.live_index(conn) if fresh else {}
+        ctx = matchups.build_context(team_games, player_games, injuries, season, ALL_STORED_WEEKS)
         status = _statuses(conn)
     except Exception as e:  # noqa: BLE001 - the board must serve without tags
         log.error("edge live tags unavailable: %s", e)
