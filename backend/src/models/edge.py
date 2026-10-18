@@ -203,6 +203,20 @@ class EdgeNflSnap(Base):
     loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class EdgeNflInjury(Base):
+    """Current BallDontLie injury snapshot, replaced wholesale on each load."""
+    __tablename__ = "edge_nfl_injuries"
+    __table_args__ = (UniqueConstraint("team", "player_norm", name="uq_edge_nfl_injuries"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team: Mapped[str] = mapped_column(String(4), nullable=False)
+    player_norm: Mapped[str] = mapped_column(String(80), nullable=False)
+    player_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    pos: Mapped[str | None] = mapped_column(String(4))
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class EdgeBtSnapshot(Base):
     """Phase C backtest: one raw Odds API historical response per (event, kind, label). Never read by live code."""
     __tablename__ = "edge_bt_snapshots"

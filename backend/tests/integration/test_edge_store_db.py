@@ -943,3 +943,15 @@ def test_grading_skips_props_older_than_the_window(conn):
     kickoff = _seed_graded_nfl_game(conn)
     grading.run_grading(conn, kickoff + timedelta(days=20))
     assert set(_results(conn).values()) == {None}   # outside 14 days: reported as stale, not rescanned
+
+
+def test_store_live_replaces_the_snapshot(conn):
+    from src.edge import nfl_injuries as inj
+
+    def r(name, status):
+        return {"team": "KC", "player_norm": name.lower(), "player_name": name, "pos": "TE",
+                "status": status, "reported_at": NOW, "loaded_at": NOW}
+    assert inj.store_live(conn, [r("Travis Kelce", "out"), r("Rashee Rice", "questionable")], NOW) == 2
+    assert inj.live_index(conn) == {"KC": {"travis kelce": "out", "rashee rice": "questionable"}}
+    assert inj.store_live(conn, [r("Travis Kelce", "doubtful")], NOW + timedelta(days=1)) == 1
+    assert inj.live_index(conn) == {"KC": {"travis kelce": "doubtful"}}

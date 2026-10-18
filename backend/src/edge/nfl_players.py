@@ -127,6 +127,9 @@ class BdlNflClient:
             params.append(("weeks[]", week))
         return await self._paged("games", params)
 
+    async def player_injuries(self) -> list[dict]:
+        return await self._paged("player_injuries", [])
+
     async def stats(self, game_ids: list[int]) -> list[dict]:
         return await self._paged("stats", [("game_ids[]", g) for g in game_ids])
 
