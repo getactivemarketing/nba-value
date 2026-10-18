@@ -80,3 +80,19 @@ def test_dry_run_counts_calls_and_credits():
 
 def test_iso():
     assert plan.iso(datetime(2023, 11, 12, 17, 55, tzinfo=UTC)) == "2023-11-12T17:55:00Z"
+
+
+def test_td_jobs_cost_20_and_one_per_event_label():
+    pairs = [(g(), "e1"), (g("b", "NE", "IND"), "e2")]
+    jobs = [j for j in plan.snapshot_jobs(pairs, kinds=("td",))]
+    assert len(jobs) == 8 and {j.kind for j in jobs} == {"td"} and all(j.cost == 20 for j in jobs)
+    assert plan.TD_COST == 20 and plan.PROPS_COST == 200
+    assert jobs[0].keys == [(jobs[0].event_ids[0], "td", jobs[0].label)]
+    assert {j.kind for j in plan.snapshot_jobs(pairs)} == {"props", "lines"}
+
+
+def test_dry_run_reports_td_calls_and_credits_only_when_asked():
+    a = g("a")
+    assert plan.dry_run([a], kinds=("td",)) == {"games": 1, "events_calls": 1, "td_calls": 4, "credits": 1 + 4 * 20}
+    d = plan.dry_run([a], kinds=("props", "lines", "td"))
+    assert d["td_calls"] == 4 and d["credits"] == 1 + 4 * 200 + 4 * 60 + 4 * 20

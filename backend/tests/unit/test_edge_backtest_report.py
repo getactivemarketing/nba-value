@@ -60,3 +60,136 @@ def test_build_report_has_every_section_and_flags_small_samples():
                     "## Recommendations"):
         assert heading in md, heading
     assert "small sample" in md and "r1" in md and "2,000" in md
+
+
+# ---- matchup tag verdicts ----
+from statistics import NormalDist  # noqa: E402
+
+MKT = "player_reception_yds"
+
+
+_seq = iter(range(10 ** 9))
+
+
+def tp(clv, tags=(), season=2023, market=MKT, result="win", profit=0.9, side="over"):
+    p = pick(clv=clv, season=season, market=market, result=result, profit=profit, player=f"P{next(_seq)}",
+             side=side)
+    p["tags"] = [{"key": k, "direction": d} for k, d in tags]
+    return p
+
+
+def spread(base, n, tags=(), season=2023, amp=0.01, side="over"):
+    """n picks whose clv alternates base +/- amp (mean base, nonzero variance)."""
+    return [tp(base + (amp if i % 2 else -amp), tags, season, side=side) for i in range(n)]
+
+
+def by(verdicts, tag="def_soft", direction="tailwind"):
+    return next(v for v in verdicts if v.tag == tag and v.direction == direction)
+
+
+def test_verdict_proven_needs_200_and_lower_bound_above_zero_and_two_seasons():
+    T = [("def_soft", "tailwind")]
+    rows = []
+    for s in (2023, 2024, 2025):
+        rows += spread(0.03, 70, T, s) + spread(0.0, 70, (), s)
+    v = by(report.tag_verdicts(rows))
+    assert v.n == 210 and v.verdict == "proven" and v.lo > 0 and v.seasons_positive == 3
+    assert v.lift == pytest.approx(0.03)
+
+
+def test_199_tagged_is_neutral_even_with_a_big_lift():
+    T = [("def_soft", "tailwind")]
+    rows = spread(0.10, 199, T) + spread(0.0, 300)
+    v = by(report.tag_verdicts(rows))
+    assert v.n == 199 and v.lift > 0.09 and v.verdict == "neutral"
+
+
+def test_lift_positive_in_one_season_only_is_neutral():
+    T = [("def_soft", "tailwind")]
+    rows = (spread(0.20, 100, T, 2023) + spread(0.0, 100, (), 2023)
+            + spread(-0.001, 60, T, 2024) + spread(0.0, 60, (), 2024)
+            + spread(-0.001, 60, T, 2025) + spread(0.0, 60, (), 2025))
+    v = by(report.tag_verdicts(rows))
+    assert v.n == 220 and v.lo > 0 and v.seasons_positive == 1 and v.verdict == "neutral"
+
+
+def test_negative_mirror():
+    T = [("def_soft", "headwind")]
+    rows = []
+    for s in (2023, 2024, 2025):
+        rows += spread(-0.03, 70, T, s) + spread(0.0, 70, (), s)
+    v = by(report.tag_verdicts(rows), direction="headwind")
+    assert v.verdict == "negative" and v.hi < 0 and v.seasons_positive == 0 and v.seasons_negative == 3
+
+
+def test_m_counts_only_pairs_with_200_plus():
+    keys = report.TAG_KEYS
+    a = [(k, "tailwind") for k in keys]
+    b = [(k, "headwind") for k in keys[2:]]
+    rows = spread(0.01, 200, a) + spread(0.0, 200, b) + spread(0.0, 150, ()) 
+    # a pair with n < 200 must not count toward m
+    rows += spread(0.0, 50, [("def_soft", "headwind")])
+    vs = report.tag_verdicts(rows)
+    v = by(vs)
+    ctrl = [r["clv"] for r in rows if not any(t["key"] == "def_soft" for t in r["tags"])]
+    tagged = [r["clv"] for r in rows if {"key": "def_soft", "direction": "tailwind"} in r["tags"]]
+    from statistics import mean, pvariance
+    from math import sqrt
+    se = sqrt(pvariance(tagged) / len(tagged) + pvariance(ctrl) / len(ctrl))
+    z = (v.hi - v.lo) / 2 / se
+    assert round(z, 2) == 2.91 == round(NormalDist().inv_cdf(1 - 0.05 / 28), 2)
+    assert by(vs, "def_soft", "headwind").verdict == "neutral"
+
+
+def test_single_qualifying_pair_uses_z_196_and_no_pairs_is_all_neutral():
+    T = [("def_soft", "tailwind")]
+    rows = spread(0.01, 200, T) + spread(0.0, 200)
+    v = by(report.tag_verdicts(rows))
+    se = (0.01 ** 2 / 200 + 0.01 ** 2 / 200) ** 0.5
+    assert (v.hi - v.lo) / 2 / se == pytest.approx(NormalDist().inv_cdf(0.975), rel=1e-6)
+    few = report.tag_verdicts(spread(0.5, 10, T) + spread(0.0, 10))
+    assert few and all(x.verdict == "neutral" for x in few)
+    assert report.tag_verdicts([tp(0.1)]) == []
+
+
+def test_control_excludes_picks_carrying_the_same_key_in_either_direction():
+    off = spread(9.0, 4)
+    for r in off:
+        r["market"] = "player_anytime_td"  # not a def_soft market
+    rows = (spread(0.02, 4, [("def_soft", "tailwind")]) + spread(0.5, 4, [("def_soft", "headwind")])
+            + spread(0.0, 4, [("usage_up", "tailwind")]) + spread(0.0, 4) + off)
+    v = by(report.tag_verdicts(rows))
+    # control = usage_up-tagged + untagged on def_soft markets (mean 0): not the headwind or off-market picks
+    assert v.lift == pytest.approx(0.02)
+
+
+def test_control_is_the_tagged_side_only_so_an_over_under_clv_gap_is_neutral():
+    # Overs beat the close by 2% whether tagged or not; unders by 0%. The tag adds nothing.
+    rows = []
+    for s in (2023, 2024, 2025):
+        rows += (spread(0.02, 100, [("def_soft", "tailwind")], s)
+                 + spread(0.02, 300, (), s) + spread(0.0, 300, (), s, side="under")
+                 + spread(0.0, 100, [("def_tough", "tailwind")], s, side="under"))
+    v = by(report.tag_verdicts(rows))
+    assert v.lift == pytest.approx(0.0) and v.verdict == "neutral"
+    v = by(report.tag_verdicts(rows), "def_tough", "tailwind")  # tailwind on an under
+    assert v.lift == pytest.approx(0.0) and v.verdict == "neutral"
+
+
+def test_null_tags_missing_tags_and_empty_control_do_not_crash():
+    legacy = pick()  # no "tags" key at all
+    nulled = pick()
+    nulled["tags"] = None
+    only = tp(0.01, [("def_soft", "tailwind")])
+    v = by(report.tag_verdicts([legacy, nulled, only]))
+    assert v.n == 1 and v.verdict == "neutral"
+    v = by(report.tag_verdicts([only]))
+    assert v.lift is None and v.lo is None and v.verdict == "neutral"
+
+
+def test_report_has_matchup_tags_table():
+    rows = spread(0.03, 4, [("def_soft", "tailwind")]) + spread(0.0, 4)
+    md = report.build_report(rows, {"run_id": "r1", "snapshots": 1, "credits": 1})
+    assert "## Matchup tags" in md
+    assert "| Tag | Direction | Picks | CLV lift (CI) | Beat close | ROI | Seasons + | Verdict |" in md
+    assert "def_soft" in md

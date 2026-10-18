@@ -17,7 +17,7 @@ from psycopg2.extras import Json, execute_values
 from src.edge.backtest import plan
 from src.edge.backtest.nflverse import Game
 from src.edge.client import OddsApiError
-from src.edge.config import NFL
+from src.edge.config import NFL, TD_MARKET
 from src.edge.ingest import _ts
 
 log = logging.getLogger("edge.backtest.fetch")
@@ -48,9 +48,14 @@ class Repo:
             cur.execute("SELECT event_id, kind, label FROM edge_bt_snapshots")
             return set(cur.fetchall())
 
-    def spent(self) -> int:
+    def spent(self, kinds: tuple[str, ...] | None = None) -> int:
+        """Credits stored for `kinds` (plus the day lists every run needs); None = the whole table."""
         with self.conn.cursor() as cur:
-            cur.execute("SELECT COALESCE(SUM(credits), 0) FROM edge_bt_snapshots")
+            if kinds is None:
+                cur.execute("SELECT COALESCE(SUM(credits), 0) FROM edge_bt_snapshots")
+            else:
+                cur.execute("SELECT COALESCE(SUM(credits), 0) FROM edge_bt_snapshots WHERE kind = ANY(%s)",
+                            (list(kinds) + ["events"],))
             return int(cur.fetchone()[0])
 
     def events_payload(self, day_key: str) -> dict | None:
@@ -96,10 +101,11 @@ def _stub(event_id: str, status: int | None = None) -> dict:
 
 
 async def run_fetch(repo, client, games: list[Game], *, cap: int, min_remaining: int,
-                    sleep=asyncio.sleep, min_interval: float = 0.5) -> Summary:
+                    sleep=asyncio.sleep, min_interval: float = 0.5,
+                    kinds: tuple[str, ...] = ("props", "lines")) -> Summary:
     s = Summary()
     done = repo.done_keys()
-    spent = repo.spent()
+    spent = repo.spent(kinds)
 
     async def call(job: plan.Job, request):
         nonlocal spent
@@ -143,13 +149,15 @@ async def run_fetch(repo, client, games: list[Game], *, cap: int, min_remaining:
         for gid in s.unmatched:
             log.warning("backtest: no Odds API event matched %s", gid)
 
-        for job in plan.snapshot_jobs(pairs):
+        for job in plan.snapshot_jobs(pairs, kinds):
             if all(k in done for k in job.keys):
                 continue
             date = plan.iso(job.requested_at)
             try:
-                if job.kind == "props":
-                    request = partial(client.get_historical_event_odds, job.event_ids[0], NFL, date)
+                if job.kind in ("props", "td"):
+                    markets = (TD_MARKET,) if job.kind == "td" else plan.BT_PROP_MARKETS
+                    request = partial(client.get_historical_event_odds, job.event_ids[0], NFL, date,
+                                      markets=markets)
                 else:
                     request = partial(client.get_historical_game_odds, NFL, date)
                 data, cost = await call(job, request)
@@ -166,9 +174,9 @@ async def run_fetch(repo, client, games: list[Game], *, cap: int, min_remaining:
                 continue
             try:
                 at = _ts(data["timestamp"])
-                if job.kind == "props":
+                if job.kind in ("props", "td"):
                     if not isinstance(data["data"], dict):
-                        raise TypeError(f"props data is {type(data['data']).__name__}")
+                        raise TypeError(f"{job.kind} data is {type(data['data']).__name__}")
                     rows = [_row(job, job.games[0], job.event_ids[0], data["data"], at, cost)]
                 else:
                     by_id = {e["id"]: e for e in data.get("data") or []}

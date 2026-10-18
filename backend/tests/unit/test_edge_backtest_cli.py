@@ -47,3 +47,35 @@ def test_fetch_reconnects_and_resumes_after_a_dropped_db_connection(monkeypatch)
     monkeypatch.setattr(cli, "RETRY_WAIT", 0)
     assert cli.main(["fetch", "--season", "2023"]) == 0
     assert len(calls) == 2
+
+
+def test_cli_kind_td_passes_td_kinds(monkeypatch):
+    from src.edge.backtest import fetch
+    from src.edge.backtest.fetch import Summary
+
+    class Conn:
+        def close(self):
+            pass
+
+    seen = []
+
+    async def fake(repo, client, games, **kw):
+        seen.append(kw["kinds"])
+        return Summary()
+
+    monkeypatch.setattr(nflverse, "load_schedule", lambda seasons: GAMES)
+    monkeypatch.setattr(cli, "get_sync_database_url", lambda: "postgresql://x")
+    monkeypatch.setattr(fetch, "ensure_tables", lambda url: None)
+    monkeypatch.setattr(fetch, "run_fetch", fake)
+    monkeypatch.setattr(cli.store, "connect", lambda: Conn())
+    monkeypatch.setattr(cli, "EdgeOddsClient", lambda: object())
+    assert cli.main(["fetch", "--season", "2023", "--kind", "td"]) == 0
+    assert cli.main(["fetch", "--season", "2023"]) == 0
+    assert seen == [("td",), ("props", "lines")]
+
+
+def test_cli_kind_td_dry_run_prints_td_counts(monkeypatch, capsys):
+    monkeypatch.setattr(nflverse, "load_schedule", lambda seasons: GAMES)
+    assert cli.main(["fetch", "--season", "2023", "--week", "10", "--kind", "td", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "td_calls: 4" in out and "credits: 81" in out and "props_calls" not in out

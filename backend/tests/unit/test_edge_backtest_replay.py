@@ -6,6 +6,7 @@ import pytest
 
 from src.edge.backtest import replay
 from src.edge.backtest.nflverse import Game
+from src.edge.config import TD_MARKET
 from src.edge.engine import american_to_decimal, price_quotes
 from src.edge.ingest import parse_event
 
@@ -137,3 +138,78 @@ def test_name_unknown_all_season_is_ungradable_not_void():
     # Known that season but absent from this game's snaps: inactive, so void.
     assert replay.grade("player_reception_yds", "Marquise Brown", "over", 55.5, GAME, [STAT],
                         {"amari cooper"}, known={"amari cooper", "marquise brown"}) == "void"
+
+
+def td_event(prices, player="Amari Cooper"):
+    """prices: {book: (yes, no or None)}"""
+    outs = lambda y, n: [{"name": "Yes", "description": player, "price": y}] + \
+        ([{"name": "No", "description": player, "price": n}] if n is not None else [])
+    return {"id": "e1", "home_team": "Baltimore Ravens", "away_team": "Cleveland Browns",
+            "commence_time": "2023-11-12T18:03:00Z",
+            "bookmakers": [{"key": b, "markets": [{"key": TD_MARKET, "outcomes": outs(y, n)}]}
+                           for b, (y, n) in prices.items()]}
+
+
+def test_replay_merges_td_snapshot_quotes():
+    td = td_event({"pinnacle": (150, -170), "novig": (150, -170), "fanduel": (190, None)})
+    s = {"t6h": {"props": replay.Snap(event(EVEN), KICK - timedelta(hours=6)),
+                 "td": replay.Snap(td, KICK - timedelta(hours=6))}}
+    stat = {**STAT, "rec_tds": 1, "rush_tds": 0, "ret_tds": 0}
+    picks = replay.replay_game(GAME, s, [stat], {"amari cooper"}, 0.02, 0.15)
+    p = next(p for p in picks if p["market"] == TD_MARKET)
+    assert (p["book"], p["side"], p["line"], p["price"]) == ("fanduel", "over", 0.5, 190)
+    assert p["ev"] > 0.02 and p["result"] == "win" and p["sharps"] == "novig,pinnacle"
+
+
+class FakeTag:
+    def __init__(self, key, direction):
+        self.key, self.direction, self.detail = key, direction, "x"
+
+
+def test_replay_attaches_tags_from_the_tagger_for_player_picks_only():
+    calls = []
+
+    def tagger(player, market, side):
+        calls.append((player, market, side))
+        return [FakeTag("def_soft", "tailwind")]
+
+    lines = {"id": "e1", "home_team": "Baltimore Ravens", "away_team": "Cleveland Browns",
+             "commence_time": "2023-11-12T18:03:00Z",
+             "bookmakers": [{"key": b, "markets": [{"key": "totals", "outcomes": [
+                 {"name": "Over", "price": o, "point": 44.5}, {"name": "Under", "price": u, "point": 44.5}]}]}
+                 for b, (o, u) in SOFT.items()]}
+    s = {"t6h": {"props": replay.Snap(event(SOFT), KICK - timedelta(hours=6)),
+                 "lines": replay.Snap(lines, KICK - timedelta(hours=6))}}
+    base = replay.replay_game(GAME, s, [STAT], {"amari cooper"}, 0.02, 0.15)
+    picks = replay.replay_game(GAME, s, [STAT], {"amari cooper"}, 0.02, 0.15, tagger=tagger)
+    assert any(p["player"] for p in picks) and any(not p["player"] for p in picks)
+    for p in picks:
+        assert p["tags"] == ([{"key": "def_soft", "direction": "tailwind"}] if p["player"] else [])
+    assert calls and all(c[0] == "Amari Cooper" for c in calls)
+    # tags are additive: pricing, EV and grading are untouched
+    assert [{k: v for k, v in p.items() if k != "tags"} for p in picks] == base_without_tags(base)
+
+
+def base_without_tags(rows):
+    return [{k: v for k, v in p.items() if k != "tags"} for p in rows]
+
+
+def test_replay_without_tagger_writes_empty_tags():
+    picks = replay.replay_game(GAME, snaps(event(SOFT), event(SOFT)), [STAT], {"amari cooper"}, 0.02, 0.15)
+    assert picks and all(p["tags"] == [] for p in picks)
+
+
+def test_make_contexts_builds_once_per_season_week_and_passes_that_weeks_injuries(monkeypatch):
+    built = []
+
+    def fake_build(tg, pg, injuries, season, week):
+        built.append((season, week, injuries))
+        return ("ctx", season, week)
+
+    monkeypatch.setattr(replay, "build_context", fake_build)
+    idx = {(2023, 10): {"CLE": {"amari cooper": "Out"}}, (2023, 9): {"CLE": {"x": "Out"}}}
+    contexts = replay.make_contexts([], [], idx)
+    g2 = Game("g2", 2023, 11, "BAL", "CLE", KICK, 1, 2)
+    assert contexts(GAME) == ("ctx", 2023, 10) and contexts(GAME) == ("ctx", 2023, 10)
+    assert contexts(g2) == ("ctx", 2023, 11)
+    assert built == [(2023, 10, {"CLE": {"amari cooper": "Out"}}), (2023, 11, {})]

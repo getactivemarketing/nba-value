@@ -44,11 +44,13 @@ describe('sports', () => {
   it('labels NFL markets', () => {
     expect(marketLabel('player_rush_reception_yds')).toBe('Rush+Rec Yds');
     expect(marketLabel('player_pass_interceptions')).toBe('INTs');
+    expect(marketLabel('player_anytime_td')).toBe('Anytime TD');
   });
   it('lists each sport\'s own markets, lines first', () => {
     expect(marketKeysFor('nfl')).toEqual(['h2h', 'spreads', 'totals', 'player_pass_yds', 'player_pass_tds',
       'player_pass_completions', 'player_pass_attempts', 'player_pass_interceptions', 'player_rush_yds',
-      'player_rush_attempts', 'player_receptions', 'player_reception_yds', 'player_rush_reception_yds']);
+      'player_rush_attempts', 'player_receptions', 'player_reception_yds', 'player_rush_reception_yds',
+      'player_anytime_td']);
     expect(marketKeysFor('nba')).toContain('player_points');
     expect(marketKeysFor('nba')).not.toContain('player_pass_yds');
   });
@@ -61,7 +63,7 @@ describe('sports', () => {
 import { propMarketsFor } from './edgeFormat';
 describe('prop markets', () => {
   it('lists only player markets per sport', () => {
-    expect(propMarketsFor('nfl')).toHaveLength(10);
+    expect(propMarketsFor('nfl')).toHaveLength(11); // incl. player_anytime_td
     expect(propMarketsFor('nfl').every((m) => m.startsWith('player_'))).toBe(true);
     expect(propMarketsFor('nba')).toContain('player_points');
   });

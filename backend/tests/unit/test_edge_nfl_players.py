@@ -75,3 +75,39 @@ def test_nfl_hit_rates_count_zero_games():
     hr = nfl.hit_rates(rows, "player_reception_yds", 50.5, "TB", True, 2026)
     assert hr["l5"] == {"hits": 2, "misses": 2, "pushes": 0, "games": 4, "rate": 0.5}  # the 0 counts
     assert hr["vs_opponent"]["games"] == 1 and hr["home_away"]["games"] == 2
+
+
+def _bdl_stat(**extra):
+    return {"player": {"id": 7}, "team": {"abbreviation": "KC"},
+            "game": {"id": 99, "season": 2026, "week": 6, "date": "2026-10-18T17:00:00.000Z",
+                     "home_team": {"abbreviation": "KC"}, "visitor_team": {"abbreviation": "LV"}}, **extra}
+
+
+def test_stat_row_reads_td_fields_and_sums_return_tds():
+    r = nfl.stat_row(_bdl_stat(rushing_touchdowns=2, receiving_touchdowns=1,
+                               kick_return_touchdowns=1, punt_return_touchdowns=1))
+    assert (r["rush_tds"], r["rec_tds"], r["ret_tds"]) == (2, 1, 2)
+    r = nfl.stat_row(_bdl_stat(kick_return_touchdowns=None))
+    assert (r["rush_tds"], r["rec_tds"], r["ret_tds"]) == (0, 0, 0)
+
+
+def test_anytime_td_grades_rush_rec_return_and_ignores_passing():
+    base = {c: 0 for c in nfl.STAT_COLS} | {"pass_tds": 3}
+    opp = {"market": "player_anytime_td", "line": 0.5, "side": "over"}
+    assert nfl.nfl_prop_result(opp, base, True, True) == "loss"
+    assert nfl.nfl_prop_result(opp, base | {"ret_tds": 1}, True, True) == "win"
+    assert nfl.nfl_prop_result(opp, base | {"rush_tds": 1}, True, True) == "win"
+    assert nfl.nfl_prop_result({**opp, "side": "under"}, base | {"rec_tds": 1}, True, True) == "loss"
+    assert nfl.nfl_prop_result({**opp, "side": "under"}, base, True, True) == "win"
+
+
+def test_anytime_td_inactive_is_void():
+    opp = {"market": "player_anytime_td", "line": 0.5, "side": "over"}
+    assert nfl.nfl_prop_result(opp, None, snaps_loaded=True, played=False) == "void"
+
+
+def test_anytime_td_hit_rate_and_zero_rows_use_td_columns():
+    games = [{"game_date": date(2026, 10, d), "season": 2026, "opponent": "LV", "is_home": True,
+              **{c: 0 for c in nfl.STAT_COLS}, "rec_tds": t} for d, t in ((1, 1), (8, 0), (15, 2))]
+    r = nfl.hit_rates(games, "player_anytime_td", 0.5, "LV", True, 2026)["l5"]
+    assert (r["hits"], r["misses"], r["games"]) == (2, 1, 3)

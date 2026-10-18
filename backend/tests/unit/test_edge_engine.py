@@ -4,6 +4,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.edge import engine
+from src.edge.backtest import plan
+from src.edge.config import TD_MARKET
+from src.edge.views import describe
 from src.edge.quotes import Quote
 from src.services.mlb.clv import clv_from_closing
 
@@ -154,3 +157,61 @@ class TestClosing:
         for price, p in ((120, 0.48), (-150, 0.62), (100, 0.5)):
             expected = clv_from_closing(engine.american_to_decimal(price), p)
             assert engine.clv(p, price) == pytest.approx(expected, abs=1e-12)
+
+
+def test_group_keeps_the_best_price_per_book_side():
+    qs = [q("prophetx", "over", 130, line=0.5, market="player_anytime_td"),
+          q("prophetx", "over", 132, line=0.5, market="player_anytime_td"),
+          q("prophetx", "over", 129, line=0.5, market="player_anytime_td")]
+    assert engine.group(qs)[("ev1", "player_anytime_td", "Jayson Tatum", 0.5)]["prophetx"]["over"].price == 132
+
+
+def test_group_best_price_handles_negative_american_odds():
+    qs = [q("novig", "under", -150), q("novig", "under", -120), q("novig", "under", -140)]
+    assert engine.group(qs)[("ev1", "player_points", "Jayson Tatum", 27.5)]["novig"]["under"].price == -120
+
+
+def _td(b, o, u):
+    return [q(b, "over", o, 0.5, "player_anytime_td"), q(b, "under", u, 0.5, "player_anytime_td")]
+
+
+def test_td_consensus_needs_two_two_sided_sharps_and_ignores_retail():
+    books = engine.group(_td("pinnacle", 125, -152) + _td("novig", 141, -144)
+                         + _td("draftkings", 125, -160) + [q("fanduel", "over", 130, 0.5, "player_anytime_td")])
+    f = engine.fair_prob(books[("ev1", "player_anytime_td", "Jayson Tatum", 0.5)], "player_anytime_td", "over", None)
+    assert f.n_books == 2 and not f.thin   # draftkings two-sided but not an input; fanduel yes-only
+
+
+def test_td_with_one_sharp_is_thin():
+    retail = [x for b in ("draftkings", "fanduel", "betmgm")
+              for x in [q(b, "over", 130, 0.5, "player_anytime_td")]]
+    books = engine.group(_td("pinnacle", 125, -152) + retail)
+    f = engine.fair_prob(books[("ev1", "player_anytime_td", "Jayson Tatum", 0.5)], "player_anytime_td", "over", None)
+    assert f.thin and f.n_books == 1
+
+
+def test_td_still_applies_the_max_hold_filter():
+    books = engine.group(_td("pinnacle", 125, -152) + _td("novig", -120, -245))  # novig ~25% hold
+    f = engine.fair_prob(books[("ev1", "player_anytime_td", "Jayson Tatum", 0.5)], "player_anytime_td", "over", None)
+    assert f.thin and f.n_books == 1
+
+
+def test_other_markets_keep_three_books_and_a_sharp():
+    qs = []
+    for b in ("pinnacle", "novig"):
+        qs += [q(b, "over", -110, 60.5, "player_rush_yds"), q(b, "under", -110, 60.5, "player_rush_yds")]
+    books = engine.group(qs)[("ev1", "player_rush_yds", "Jayson Tatum", 60.5)]
+    assert engine.fair_prob(books, "player_rush_yds", "over", None).thin
+    for b in ("draftkings",):
+        qs += [q(b, "over", -110, 60.5, "player_rush_yds"), q(b, "under", -110, 60.5, "player_rush_yds")]
+    books = engine.group(qs)[("ev1", "player_rush_yds", "Jayson Tatum", 60.5)]
+    assert not engine.fair_prob(books, "player_rush_yds", "over", None).thin
+
+
+def test_backtest_props_cost_stays_200_without_td():
+    assert plan.PROPS_COST == 200 and TD_MARKET not in plan.BT_PROP_MARKETS
+
+
+def test_describe_anytime_td_reads_yes_no():
+    assert describe("player_anytime_td", "Woody Marks", "over", 0.5, "H", "A") == "Woody Marks Anytime TD — Yes"
+    assert describe("player_anytime_td", "Woody Marks", "under", 0.5, "H", "A") == "Woody Marks Anytime TD — No"

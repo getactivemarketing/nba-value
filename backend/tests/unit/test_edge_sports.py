@@ -15,7 +15,7 @@ def test_sports_table():
     assert NBA.key == "basketball_nba" and NBA.lines_window_hours == 36 and NBA.has_players
     assert NFL.key == "americanfootball_nfl" and NFL.lines_window_hours == 168 and NFL.has_players
     assert PROP_MARKETS == NBA.prop_markets  # legacy alias unchanged
-    assert len(NFL_PROP_MARKETS) == 10 and "player_anytime_td" not in NFL_PROP_MARKETS
+    assert len(NFL_PROP_MARKETS) == 11 and NFL_PROP_MARKETS[-1] == "player_anytime_td"
     assert sport_by_key("americanfootball_nfl") is NFL and sport_by_key("icehockey_nhl") is None
 
 

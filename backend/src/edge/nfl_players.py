@@ -24,18 +24,21 @@ log = logging.getLogger("edge.nfl_players")
 ROSTER_TTL = 6 * 3600
 
 STAT_COLS = ("pass_att", "pass_cmp", "pass_yds", "pass_tds", "pass_int",
-             "rush_att", "rush_yds", "receptions", "rec_yds")
+             "rush_att", "rush_yds", "receptions", "rec_yds", "rush_tds", "rec_tds", "ret_tds")
 NFL_STAT_PARTS = {
     "player_pass_yds": ("pass_yds",), "player_pass_tds": ("pass_tds",),
     "player_pass_completions": ("pass_cmp",), "player_pass_attempts": ("pass_att",),
     "player_pass_interceptions": ("pass_int",), "player_rush_yds": ("rush_yds",),
     "player_rush_attempts": ("rush_att",), "player_receptions": ("receptions",),
     "player_reception_yds": ("rec_yds",), "player_rush_reception_yds": ("rush_yds", "rec_yds"),
+    # Anytime TD: rush + rec + return TDs vs the 0.5 line; passing TDs never count.
+    "player_anytime_td": ("rush_tds", "rec_tds", "ret_tds"),
 }
 _BDL_FIELDS = {"pass_att": "passing_attempts", "pass_cmp": "passing_completions", "pass_yds": "passing_yards",
                "pass_tds": "passing_touchdowns", "pass_int": "passing_interceptions",
                "rush_att": "rushing_attempts", "rush_yds": "rushing_yards",
-               "receptions": "receptions", "rec_yds": "receiving_yards"}
+               "receptions": "receptions", "rec_yds": "receiving_yards",
+               "rush_tds": "rushing_touchdowns", "rec_tds": "receiving_touchdowns"}
 
 
 def stat_for(market: str, g: dict) -> float:
@@ -57,6 +60,7 @@ def stat_row(s: dict) -> dict | None:
                "week": game["week"], "game_date": date.fromisoformat(game["date"][:10]), "team": team,
                "opponent": away if team == home else home, "is_home": team == home}
         row.update({c: int(s.get(f) or 0) for c, f in _BDL_FIELDS.items()})
+        row["ret_tds"] = int(s.get("kick_return_touchdowns") or 0) + int(s.get("punt_return_touchdowns") or 0)
         return row
     except (KeyError, TypeError, ValueError):
         return None
@@ -122,6 +126,9 @@ class BdlNflClient:
         if week is not None:
             params.append(("weeks[]", week))
         return await self._paged("games", params)
+
+    async def player_injuries(self) -> list[dict]:
+        return await self._paged("player_injuries", [])
 
     async def stats(self, game_ids: list[int]) -> list[dict]:
         return await self._paged("stats", [("game_ids[]", g) for g in game_ids])

@@ -119,6 +119,7 @@ class EdgeOpportunity(Base):
     clv_note: Mapped[str | None] = mapped_column(String(80))
     result: Mapped[str | None] = mapped_column(String(8))  # win|loss|push|void
     profit_units: Mapped[float | None] = mapped_column(Numeric(7, 4))
+    tags: Mapped[list | None] = mapped_column(JSONB)  # [{key, direction}] shown when first seen (NFL)
 
 
 class EdgeApiCall(Base):
@@ -185,6 +186,9 @@ class EdgeNflPlayerGame(Base):
     rush_yds: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     receptions: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     rec_yds: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    rush_tds: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    rec_tds: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    ret_tds: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
 class EdgeNflSnap(Base):
@@ -198,6 +202,72 @@ class EdgeNflSnap(Base):
     player_norm: Mapped[str] = mapped_column(String(80), nullable=False)
     snaps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EdgeNflInjury(Base):
+    """Current BallDontLie injury snapshot, replaced wholesale on each load."""
+    __tablename__ = "edge_nfl_injuries"
+    __table_args__ = (UniqueConstraint("team", "player_norm", name="uq_edge_nfl_injuries"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team: Mapped[str] = mapped_column(String(4), nullable=False)
+    player_norm: Mapped[str] = mapped_column(String(80), nullable=False)
+    player_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    pos: Mapped[str | None] = mapped_column(String(4))
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EdgeNflTeamWeek(Base):
+    """Per (season, week, team, pos) allowed/produced aggregates from nflverse pbp."""
+    __tablename__ = "edge_nfl_team_weeks"
+    __table_args__ = (UniqueConstraint("season", "week", "team", "pos", name="uq_edge_nfl_team_weeks"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    week: Mapped[int] = mapped_column(Integer, nullable=False)
+    team: Mapped[str] = mapped_column(String(4), nullable=False)
+    pos: Mapped[str] = mapped_column(String(4), nullable=False)
+    yds: Mapped[float] = mapped_column(Float, nullable=False)
+    rz_opps: Mapped[int] = mapped_column(Integer, nullable=False)
+    tds: Mapped[int] = mapped_column(Integer, nullable=False)
+    loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EdgeNflPlayerWeek(Base):
+    """Per (season, week, team, player) usage and team/position denominators."""
+    __tablename__ = "edge_nfl_player_weeks"
+    __table_args__ = (UniqueConstraint("season", "week", "team", "player_key", name="uq_edge_nfl_player_weeks"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    week: Mapped[int] = mapped_column(Integer, nullable=False)
+    team: Mapped[str] = mapped_column(String(4), nullable=False)
+    player_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    player_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    pos: Mapped[str] = mapped_column(String(4), nullable=False)
+    carries: Mapped[int] = mapped_column(Integer, nullable=False)
+    targets: Mapped[int] = mapped_column(Integer, nullable=False)
+    rz_carries: Mapped[int] = mapped_column(Integer, nullable=False)
+    rz_targets: Mapped[int] = mapped_column(Integer, nullable=False)
+    team_carries: Mapped[int] = mapped_column(Integer, nullable=False)
+    team_targets: Mapped[int] = mapped_column(Integer, nullable=False)
+    team_rz_opps: Mapped[int] = mapped_column(Integer, nullable=False)
+    pos_carries: Mapped[int] = mapped_column(Integer, nullable=False)
+    pos_targets: Mapped[int] = mapped_column(Integer, nullable=False)
+    loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EdgeTagStatus(Base):
+    """Backtest verdict per (tag, direction); written by the verdict job, read at serve time."""
+    __tablename__ = "edge_tag_status"
+    __table_args__ = (UniqueConstraint("tag", "direction", name="uq_edge_tag_status"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tag: Mapped[str] = mapped_column(String(24), nullable=False)
+    direction: Mapped[str] = mapped_column(String(12), nullable=False)
+    verdict: Mapped[str] = mapped_column(String(12), nullable=False)
+    clv_lift: Mapped[float | None] = mapped_column(Float)
+    n: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    run_id: Mapped[str | None] = mapped_column(String(40))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class EdgeBtSnapshot(Base):
@@ -248,3 +318,4 @@ class EdgeBtPick(Base):
     clv: Mapped[float | None] = mapped_column(Float)
     result: Mapped[str | None] = mapped_column(String(8))
     profit: Mapped[float | None] = mapped_column(Float)
+    tags: Mapped[list | None] = mapped_column(JSONB)  # [{key, direction}] point-in-time matchup tags

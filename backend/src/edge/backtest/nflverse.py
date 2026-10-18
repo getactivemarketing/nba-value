@@ -20,7 +20,8 @@ STATS_URL = ("https://github.com/nflverse/nflverse-data/releases/download/"
              "stats_player/stats_player_week_{season}.parquet")
 STAT_MAP = {"attempts": "pass_att", "completions": "pass_cmp", "passing_yards": "pass_yds",
             "passing_tds": "pass_tds", "passing_interceptions": "pass_int", "carries": "rush_att",
-            "rushing_yards": "rush_yds", "receptions": "receptions", "receiving_yards": "rec_yds"}
+            "rushing_yards": "rush_yds", "receptions": "receptions", "receiving_yards": "rec_yds",
+            "rushing_tds": "rush_tds", "receiving_tds": "rec_tds", "special_teams_tds": "ret_tds"}
 
 
 @dataclass(frozen=True)

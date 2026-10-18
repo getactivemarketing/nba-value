@@ -8,6 +8,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
 
 from src.config import get_sync_database_url
+from src.edge.ingest import best_per_key
 from src.edge.quotes import Quote
 
 _QCOLS = "event_id, market, player, side, line, book, price, link, observed_at"
@@ -102,6 +103,7 @@ def upcoming_events(conn, now: datetime, hours: int = 36, sport: str | None = No
 
 
 def write_quotes(conn, quotes: list[Quote]) -> int:
+    quotes = best_per_key(quotes)  # one upsert can't touch a key twice (exchange ladders)
     if not quotes:
         return 0
     event_ids = sorted({q.event_id for q in quotes})

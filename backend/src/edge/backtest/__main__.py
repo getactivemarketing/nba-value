@@ -17,7 +17,7 @@ from pathlib import Path
 import psycopg2
 
 from src.config import get_sync_database_url, settings
-from src.edge import store
+from src.edge import matchups, nfl_injuries, store
 from src.edge.backtest import SEASONS, fetch, nflverse, plan, replay, report
 from src.edge.client import EdgeOddsClient
 from src.utils.redact import install_redaction
@@ -33,6 +33,14 @@ def _games(seasons, week):
     return [g for g in games if week is None or g.week == week]
 
 
+def _contexts(seasons):
+    """Aggregates for [min - 1, *seasons] (week 1 fills from last season), built once."""
+    span = [min(seasons) - 1, *seasons]
+    team_games, player_games = matchups.aggregate(matchups.load_pbp(span), matchups.load_rosters(span))
+    index = nfl_injuries.history_index(nfl_injuries.load_history(span))
+    return replay.make_contexts(team_games, player_games, index)
+
+
 def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     p = argparse.ArgumentParser(prog="python -m src.edge.backtest")
@@ -41,6 +49,7 @@ def main(argv=None) -> int:
     f.add_argument("--season", type=int, action="append")
     f.add_argument("--week", type=int)
     f.add_argument("--dry-run", action="store_true")
+    f.add_argument("--kind", choices=("all", "td"), default="all")
     r = sub.add_parser("replay")
     r.add_argument("--season", type=int, action="append")
     rp = sub.add_parser("report")
@@ -51,8 +60,9 @@ def main(argv=None) -> int:
 
     if a.cmd == "fetch":
         games = _games(seasons, a.week)
+        kinds = ("td",) if a.kind == "td" else ("props", "lines")
         if a.dry_run:
-            for k, v in plan.dry_run(games).items():
+            for k, v in plan.dry_run(games, kinds).items():
                 print(f"{k}: {v:,}")
             return 0
         fetch.ensure_tables(get_sync_database_url())
@@ -62,7 +72,8 @@ def main(argv=None) -> int:
                 s = asyncio.run(fetch.run_fetch(
                     fetch.Repo(conn), EdgeOddsClient(), games,
                     cap=int(os.environ.get("BT_CREDIT_CAP", "800000")),
-                    min_remaining=int(os.environ.get("BT_MIN_REMAINING", "3600000"))))
+                    min_remaining=int(os.environ.get("BT_MIN_REMAINING", "3600000")),
+                    kinds=kinds))
                 break
             except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
                 # Stored snapshots are never re-bought, so a fresh run resumes where this one stopped.
@@ -89,7 +100,7 @@ def main(argv=None) -> int:
             games = {g.game_id: g for g in nflverse.load_schedule(seasons)}
             run_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             n = replay.run_replay(conn, run_id, games, nflverse.load_stats(seasons), nflverse.load_snaps(seasons),
-                                  settings.edge_min_ev, settings.edge_verify_ev)
+                                  settings.edge_min_ev, settings.edge_verify_ev, contexts=_contexts(seasons))
             print(f"run {run_id}: {n:,} picks")
         else:
             run_id = report.run_report(conn, a.run, a.out)

@@ -53,6 +53,19 @@ def test_events_upsert_and_upcoming(conn):
     assert store.upcoming_events(conn, NOW)[0]["last_props_poll"] == NOW
 
 
+def test_write_quotes_collapses_a_same_key_ladder_to_the_best_price(conn):
+    # An exchange "Yes" ladder: three prices, one key. One multi-row upsert with a
+    # repeated key would raise CardinalityViolation and stall the poll.
+    store.upsert_events(conn, [_event()])
+    ladder = [q(book="prophetx", price=p) for p in (130, 132, 129)]
+    assert store.write_quotes(conn, ladder) == 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT price FROM edge_quotes WHERE book = 'prophetx'")
+        assert cur.fetchall() == [(132,)]
+        cur.execute("SELECT price FROM edge_quote_history WHERE book = 'prophetx'")
+        assert cur.fetchall() == [(132,)]
+
+
 def test_history_only_on_change(conn):
     store.upsert_events(conn, [_event()])
     assert store.write_quotes(conn, [q(), q(side="under", price=-110)]) == 2
@@ -77,6 +90,25 @@ def test_opportunities_upsert_keeps_first_seen_and_max_ev(conn):
     assert n == 1 and first == NOW and last == NOW + timedelta(minutes=5)
     assert float(max_ev) == pytest.approx(0.144) and float(ev) == pytest.approx(0.10)
     assert method == "power"
+
+
+def test_opportunity_tags_round_trip(conn):
+    seen = []
+
+    def tagger(player, teams, market, side):
+        seen.append((player, teams, market, side))
+        return [{"key": "def_soft", "label": "Soft matchup", "direction": "tailwind",
+                 "verdict": "proven", "lift": 0.006, "detail": "x"}]
+
+    events = [{"event_id": "e1", "home_team": "Kansas City Chiefs", "away_team": "Jacksonville Jaguars"}]
+    p = Priced(q(book="betmgm", price=120), Fair(0.5, 4, True), 0.10, True, False)
+    opportunities.record(conn, [p], NOW, tagger=tagger, events=events)
+    opportunities.record(conn, [Priced(q(book="caesars", price=125), Fair(0.5, 4, True), 0.12, True, False)], NOW)
+    assert seen == [("Jayson Tatum", ("KC", "JAX"), "player_points", "over")]
+    with conn.cursor() as cur:
+        cur.execute("SELECT book, tags FROM edge_opportunities ORDER BY id")
+        rows = cur.fetchall()
+    assert rows == [("betmgm", [{"key": "def_soft", "direction": "tailwind"}]), ("caesars", None)]
 
 
 def test_state_and_credit_log(conn):
@@ -918,8 +950,96 @@ async def test_a_failing_nflverse_download_does_not_refetch_the_schedule_every_t
     assert "nflverse down" in store.get_state(conn)["snaps_error"]
 
 
+def test_td_reload_clears_stats_loaded_once(conn):
+    from src.edge import worker
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_nfl_games (bdl_game_id, season, week, game_date, home, away, postseason,
+                       status_state, final_seen_at, stats_loaded_at)
+                       VALUES (7101, 2026, 5, '2026-10-11', 'ATL', 'CHI', FALSE, 'final', %s, %s)""", (NOW, NOW))
+    conn.commit()
+    assert worker.nfl_td_reload_step(conn, NOW) is True
+    with conn.cursor() as cur:
+        cur.execute("SELECT stats_loaded_at FROM edge_nfl_games WHERE bdl_game_id = 7101")
+        assert cur.fetchone()[0] is None
+        cur.execute("UPDATE edge_nfl_games SET stats_loaded_at = %s", (NOW,))   # reloaded since
+    conn.commit()
+    assert store.get_state(conn)["nfl:td_reload"] == "1"
+    assert worker.nfl_td_reload_step(conn, NOW + timedelta(hours=1)) is False   # never again
+    with conn.cursor() as cur:
+        cur.execute("SELECT stats_loaded_at IS NOT NULL FROM edge_nfl_games WHERE bdl_game_id = 7101")
+        assert cur.fetchone()[0] is True
+
+
 def test_grading_skips_props_older_than_the_window(conn):
     from src.edge import grading
     kickoff = _seed_graded_nfl_game(conn)
     grading.run_grading(conn, kickoff + timedelta(days=20))
     assert set(_results(conn).values()) == {None}   # outside 14 days: reported as stale, not rescanned
+
+
+def test_store_live_replaces_the_snapshot(conn):
+    from src.edge import nfl_injuries as inj
+
+    def r(name, status):
+        return {"team": "KC", "player_norm": name.lower(), "player_name": name, "pos": "TE",
+                "status": status, "reported_at": NOW, "loaded_at": NOW}
+    assert inj.store_live(conn, [r("Travis Kelce", "out"), r("Rashee Rice", "questionable")], NOW) == 2
+    assert inj.live_index(conn) == {"KC": {"travis kelce": "out", "rashee rice": "questionable"}}
+    assert inj.store_live(conn, [r("Travis Kelce", "doubtful")], NOW + timedelta(days=1)) == 1
+    assert inj.live_index(conn) == {"KC": {"travis kelce": "doubtful"}}
+
+
+def test_matchups_upsert_round_trip_and_update_in_place(conn):
+    from src.edge import matchups_store
+    from src.edge.matchups import PlayerGame, TeamGame
+    t = TeamGame(2026, 5, "KC", "RB", 101.5, 3, 1)
+    p = PlayerGame(2026, 5, "KC", "isiah pacheco", "Isiah Pacheco", "RB", 12, 3, 2, 0, 25, 30, 8, 20, 6)
+    assert matchups_store.upsert(conn, [t], [p], NOW) == 2
+    later = NOW + timedelta(days=1)
+    t2 = TeamGame(2026, 5, "KC", "RB", 120.0, 4, 2)
+    assert matchups_store.upsert(conn, [t2], [p], later) == 2
+    teams, players = matchups_store.load(conn, [2026])
+    assert teams == [t2] and players == [p]
+    assert matchups_store.load(conn, [2025]) == ([], [])
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*), MAX(loaded_at) FROM edge_nfl_team_weeks")
+        assert cur.fetchone() == (1, later)
+
+
+def test_matchups_upsert_drops_same_team_namesakes_instead_of_failing(conn):
+    # Two "Josh Allen"s on one team in one game share (season, week, team, player_key):
+    # one multi-row upsert would raise CardinalityViolation and fail the daily refresh.
+    from src.edge import matchups_store
+    from src.edge.matchups import PlayerGame
+    def p(week, team="JAX", key="josh allen", carries=5):
+        return PlayerGame(2026, week, team, key, key.title(), "RB", carries, 0, 0, 0, 25, 30, 8, 20, 6)
+    keep = [p(5, key="travis etienne"), p(5, team="BUF")]
+    # Earlier refresh: only one of them had played, so a JAX row is already stored.
+    assert matchups_store.upsert(conn, [], [p(4)], NOW) == 1
+    batch = [p(4), p(5, carries=5), p(5, carries=9)] + keep
+    assert matchups_store.upsert(conn, [], batch, NOW) == 2
+    _, players = matchups_store.load(conn, [2026])
+    # Every JAX "josh allen" row is gone (never guess which one), the rest are kept.
+    assert sorted(players, key=lambda r: r.team) == sorted(keep, key=lambda r: r.team)
+
+
+def test_edge_tag_status_unique_per_tag_direction(conn):
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_tag_status (tag, direction, verdict, clv_lift, n, run_id, updated_at)
+                       VALUES ('def_rz', 'tailwind', 'neutral', 0.01, 10, 'r1', %s)""", (NOW,))
+        conn.commit()
+        with pytest.raises(psycopg2.errors.UniqueViolation):
+            cur.execute("""INSERT INTO edge_tag_status (tag, direction, verdict, n, updated_at)
+                           VALUES ('def_rz', 'tailwind', 'proven', 3, %s)""", (NOW,))
+
+
+def test_live_tagger_reads_tag_status_end_to_end(conn):
+    from src.edge import tagging
+
+    store.set_state(conn, "nfl:matchups_ok_at", NOW.isoformat(), NOW)
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO edge_tag_status (tag, direction, verdict, clv_lift, n, updated_at) "
+                    "VALUES ('def_soft', 'tailwind', 'proven', 0.006, 300, %s)", (NOW,))
+    conn.commit()
+    assert tagging._statuses(conn) == {("def_soft", "tailwind"): ("proven", 0.006)}
+    assert tagging.live_tagger(conn, NOW) is not None

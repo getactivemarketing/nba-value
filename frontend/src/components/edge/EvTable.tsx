@@ -1,6 +1,7 @@
 // frontend/src/components/edge/EvTable.tsx
 import { Link } from 'react-router-dom';
 import type { EvRow } from '@/types/edge';
+import { TagChips } from './TagChips';
 import { bookLabel, edgeBase, fmtAge, fmtAmerican, fmtEv, type Sport } from '@/lib/edgeFormat';
 
 export function EvTable({ rows, playerIds = {}, sport = 'nba' }:
@@ -31,6 +32,7 @@ export function EvTable({ rows, playerIds = {}, sport = 'nba' }:
                     ? <Link to={`${edgeBase(sport)}/player/${playerIds[r.player]}?market=${r.market}`} className="hover:underline">{r.bet}</Link>
                     : r.bet}
                 </div>
+                <TagChips tags={r.tags ?? []} />
                 <Link to={`${edgeBase(sport)}/odds/${r.event_id}?market=${r.market}`} className="text-[10px] text-[#64748b] font-mono hover:underline">
                   {r.matchup}
                 </Link>

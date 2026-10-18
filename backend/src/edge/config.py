@@ -18,12 +18,12 @@ NBA_PROP_MARKETS = (
     "player_points_rebounds_assists", "player_points_rebounds",
     "player_points_assists", "player_rebounds_assists",
 )
-# Anytime TD is excluded: most books quote only "Yes", so there is no
-# two-sided market to devig (2026-10-16 sample: 319 Yes vs 55 No).
+TD_MARKET = "player_anytime_td"
 NFL_PROP_MARKETS = (
     "player_pass_yds", "player_pass_tds", "player_pass_completions", "player_pass_attempts",
     "player_pass_interceptions", "player_rush_yds", "player_rush_attempts",
     "player_receptions", "player_reception_yds", "player_rush_reception_yds",
+    TD_MARKET,
 )
 
 
@@ -74,6 +74,20 @@ def state_key(sport: SportConfig, name: str) -> str:
 
 
 MIN_BOOKS = 3
+
+
+@dataclass(frozen=True)
+class MarketRule:
+    """How a market's fair price is built. inputs=None means any non-DFS book."""
+    min_books: int
+    inputs: frozenset[str] | None
+    require_sharp: bool
+
+
+# Anytime TD: most books quote only "Yes", so only the sharp books that post both
+# sides feed the consensus; two of them are enough.
+MARKET_RULES: dict[str, MarketRule] = {TD_MARKET: MarketRule(2, SHARP_BOOKS, False)}
+DEFAULT_RULE = MarketRule(MIN_BOOKS, None, True)
 # A two-way pair whose overround exceeds this is a placeholder quote (exchanges post
 # -120/-245 style ~25% holds), not a price: it never feeds the consensus.
 MAX_HOLD = 0.10

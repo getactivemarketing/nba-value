@@ -12,10 +12,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from zoneinfo import ZoneInfo
 from datetime import date, datetime, timedelta, timezone
 
 from src.config import settings
-from src.edge import grading, nfl_players, opportunities, players, schedule, store
+from src.edge import grading, matchups, matchups_store, nfl_injuries, nfl_players, opportunities, players, schedule, store, tagging
 from src.edge.client import EdgeOddsClient, OddsApiError, Usage
 from src.edge.config import LINE_MARKETS, SportConfig, enabled_sports, state_key
 from src.edge.engine import price_quotes
@@ -62,13 +63,18 @@ def _record_usage(conn, endpoint: str, usage: Usage, now: datetime) -> None:
 
 
 def _reprice(conn, event_ids: list[str], events: list[dict], now: datetime, factor: int,
-             lines_window_hours: int = 36) -> int:
+             lines_window_hours: int = 36, tagger=None) -> int:
     if not event_ids:
         return 0
     commence = {e["event_id"]: e["commence_time"] for e in events}
     quotes = schedule.fresh(store.load_quotes(conn, event_ids), commence, now, factor, lines_window_hours)
     priced = price_quotes(quotes, settings.edge_min_ev, settings.edge_verify_ev)
-    return opportunities.record(conn, priced, now)
+    return opportunities.record(conn, priced, now, tagger=tagger, events=events)
+
+
+def _tagger_for(conn, now: datetime, touched: list[str], sport: SportConfig):
+    """Build the live tagger only when there is something to record."""
+    return tagging.live_tagger(conn, now) if touched and sport.slug == "nfl" and sport.has_players else None
 
 
 async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
@@ -123,6 +129,13 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
                 conn.rollback()
                 store.set_state(conn, "bdl_error", redact(f"{name}: {type(e).__name__}: {e}")[:300], now)
         nfl_snaps_step(conn, now)
+        try:
+            nfl_td_reload_step(conn, now)
+        except Exception as e:  # noqa: BLE001 - never blocks odds
+            conn.rollback()
+            store.set_state(conn, "bdl_error", redact(f"nfl_td_reload_step: {type(e).__name__}: {e}")[:300], now)
+        await nfl_matchups_step(conn, now)
+        await nfl_injuries_step(conn, nfl_bdl, now)
 
     return out
 
@@ -182,6 +195,77 @@ async def nfl_backfill_step(conn, nfl_bdl, now: datetime) -> int:
         return 0
 
 
+def nfl_td_reload_step(conn, now: datetime) -> bool:
+    """Once: box scores loaded before the TD columns existed hold zeros. Clear stats_loaded_at so
+    load_due_stats (6 games a tick) re-pulls them. Gated by the state key nfl:td_reload."""
+    if store.get_state(conn).get("nfl:td_reload") == "1":
+        return False
+    with conn.cursor() as cur:
+        cur.execute("UPDATE edge_nfl_games SET stats_loaded_at = NULL")
+    conn.commit()
+    store.set_state(conn, "nfl:td_reload", "1", now)
+    return True
+
+
+MATCHUPS_TIMEOUT_S = 300
+
+
+async def nfl_matchups_step(conn, now: datetime, frames=None) -> int:
+    """Daily: nflverse pbp + rosters for this and last season, aggregated and upserted. Errors land
+    in matchups_error and never raise. `frames` = (pbp, rosters) skips the download (test seam)."""
+    last = _parse(store.get_state(conn).get("nfl:last_matchups_step"))
+    if last is not None and now - last < timedelta(hours=24):
+        return 0
+    store.set_state(conn, "nfl:last_matchups_step", _iso(now), now)
+    try:
+        season = current_nfl_season(now.date())
+
+        def build():
+            if frames is not None:
+                pbp, rosters = frames
+            else:
+                seasons = [season - 1, season]
+                pbp, rosters = matchups.load_pbp(seasons), matchups.load_rosters(seasons)
+            return matchups.aggregate(pbp, rosters)
+
+        team_games, player_games = await asyncio.wait_for(asyncio.to_thread(build), MATCHUPS_TIMEOUT_S)
+        n = matchups_store.upsert(conn, team_games, player_games, now)
+        store.set_state(conn, "nfl:matchups_ok_at", _iso(now), now)
+        store.set_state(conn, "matchups_error", "", now)
+        return n
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        store.set_state(conn, "matchups_error", redact(f"{type(e).__name__}: {e}")[:300], now)
+        store.set_state(conn, "nfl:last_matchups_step", _iso(now - timedelta(hours=23)), now)  # retry in ~1 h
+        return 0
+
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _injuries_interval(now: datetime) -> timedelta:
+    """2 h from Thursday 00:00 through Monday 23:59 ET (game days), 6 h otherwise."""
+    return timedelta(hours=2) if now.astimezone(_ET).weekday() in (3, 4, 5, 6, 0) else timedelta(hours=6)
+
+
+async def nfl_injuries_step(conn, nfl_bdl, now: datetime) -> int:
+    """BallDontLie injury snapshot. Errors land in injuries_error and never raise."""
+    last = _parse(store.get_state(conn).get("nfl:last_injuries_step"))
+    if last is not None and now - last < _injuries_interval(now):
+        return 0
+    store.set_state(conn, "nfl:last_injuries_step", _iso(now), now)
+    try:
+        raw = await nfl_injuries.fetch_live(nfl_bdl)
+        n = nfl_injuries.store_live(conn, nfl_injuries.live_rows(raw, now), now)
+        store.set_state(conn, "nfl:injuries_ok_at", _iso(now), now)
+        store.set_state(conn, "injuries_error", "", now)
+        return n
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        store.set_state(conn, "injuries_error", redact(f"{type(e).__name__}: {e}")[:300], now)
+        return 0
+
+
 async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor: int, now: datetime,
                       nfl_bdl=None) -> dict:
     out: dict = {}
@@ -235,7 +319,8 @@ async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor
                 await nfl_players.resolve_new_players(conn, nfl_bdl, quotes, by_id[eid], now)
         touched.append(eid)
 
-    out["opportunities"] = _reprice(conn, sorted(set(touched)), events, now, factor, window)
+    tagger = _tagger_for(conn, now, touched, sport)
+    out["opportunities"] = _reprice(conn, sorted(set(touched)), events, now, factor, window, tagger)
 
     # Scores while this sport's games are live.
     last_scores = _parse(state.get(state_key(sport, "last_scores_poll")))

@@ -32,20 +32,35 @@ def test_stats_index_maps_columns_normalizes_names_and_keeps_regular_season():
     frame = pd.DataFrame([
         {"game_id": "g1", "season_type": "REG", "player_display_name": "Ja'Marr Chase", "team": "CIN",
          "attempts": 0, "completions": 0, "passing_yards": 0, "passing_tds": 0, "passing_interceptions": 0,
-         "carries": 1, "rushing_yards": 4.0, "receptions": 7, "receiving_yards": 81.0},
+         "carries": 1, "rushing_yards": 4.0, "receptions": 7, "receiving_yards": 81.0,
+         "rushing_tds": 0, "receiving_tds": 1, "special_teams_tds": 0},
         {"game_id": "g1", "season_type": "REG", "player_display_name": "Kenneth Walker III", "team": "SEA",
          "attempts": 0, "completions": 0, "passing_yards": 0, "passing_tds": 0, "passing_interceptions": 0,
-         "carries": float("nan"), "rushing_yards": 55, "receptions": 1, "receiving_yards": 6},
+         "carries": float("nan"), "rushing_yards": 55, "receptions": 1, "receiving_yards": 6,
+         "rushing_tds": 1, "receiving_tds": 0, "special_teams_tds": 0},
         {"game_id": "g2", "season_type": "POST", "player_display_name": "Joe Burrow", "team": "CIN",
          "attempts": 30, "completions": 20, "passing_yards": 250, "passing_tds": 2, "passing_interceptions": 1,
-         "carries": 2, "rushing_yards": 5, "receptions": 0, "receiving_yards": 0},
+         "carries": 2, "rushing_yards": 5, "receptions": 0, "receiving_yards": 0,
+         "rushing_tds": 0, "receiving_tds": 0, "special_teams_tds": 0},
     ])
     idx = nflverse.stats_index(frame)
     assert set(idx) == {"g1"}
     chase, walker = idx["g1"]
     assert chase == {"name": "jamarr chase", "team": "CIN", "pass_att": 0, "pass_cmp": 0, "pass_yds": 0,
-                     "pass_tds": 0, "pass_int": 0, "rush_att": 1, "rush_yds": 4, "receptions": 7, "rec_yds": 81}
+                     "pass_tds": 0, "pass_int": 0, "rush_att": 1, "rush_yds": 4, "receptions": 7, "rec_yds": 81,
+                     "rush_tds": 0, "rec_tds": 1, "ret_tds": 0}
     assert walker["name"] == "kenneth walker" and walker["rush_att"] == 0 and walker["rush_yds"] == 55
+
+
+def test_stats_index_maps_nflverse_td_columns():
+    frame = pd.DataFrame([
+        {"game_id": "g1", "season_type": "REG", "player_display_name": "Some Back", "team": "KC",
+         "attempts": 0, "completions": 0, "passing_yards": 0, "passing_tds": 3, "passing_interceptions": 0,
+         "carries": 1, "rushing_yards": 4, "receptions": 1, "receiving_yards": 6,
+         "rushing_tds": 2.0, "receiving_tds": 1, "special_teams_tds": float("nan")},
+    ])
+    row = nflverse.stats_index(frame)["g1"][0]
+    assert (row["rush_tds"], row["rec_tds"], row["ret_tds"], row["pass_tds"]) == (2, 1, 0, 3)
 
 
 def test_snaps_index_keeps_players_with_snaps_only():
