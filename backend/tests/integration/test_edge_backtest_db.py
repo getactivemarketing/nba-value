@@ -95,3 +95,34 @@ def test_fetch_replay_report_round_trip_leaves_live_tables_empty(conn, tmp_path)
             assert cur.fetchone()[0] == 0, t
     assert report.run_report(conn, None, tmp_path / "r.md") == "r1"
     assert "## Recommendations" in (tmp_path / "r.md").read_text()
+
+
+def _row(kind, event_id, label, credits, payload=None):
+    return {"season": 2023, "week": 10, "game_id": GAME.game_id, "event_id": event_id, "kind": kind,
+            "label": label, "kickoff": GAME.kickoff, "requested_at": GAME.kickoff, "snapshot_at": GAME.kickoff,
+            "home": "BAL", "away": "CLE", "credits": credits, "payload": payload or {"id": event_id, "bookmakers": []}}
+
+
+def test_spent_is_scoped_to_the_requested_kinds(conn):
+    repo = fetch.Repo(conn)
+    repo.insert([_row("props", "e1", "t6h", 200), _row("lines", "e1", "t6h", 60),
+                 _row("td", "e1", "t6h", 20), _row("events", "day:2023-11-12", "list", 1)])
+    assert repo.spent() == 281
+    assert repo.spent(("td",)) == 21
+    assert repo.spent(("props", "lines")) == 261
+
+
+def test_replay_reads_a_td_snapshot_row(conn):
+    td = {**EVENT, "bookmakers": [{"key": b, "markets": [{"key": "player_anytime_td", "outcomes": [
+        {"name": "Yes", "description": "Amari Cooper", "price": y},
+        *([{"name": "No", "description": "Amari Cooper", "price": n}] if n else [])]}]}
+        for b, (y, n) in {"pinnacle": (150, -170), "novig": (150, -170), "fanduel": (190, None)}.items()]}
+    at = datetime(2023, 11, 12, 12, 3, tzinfo=UTC)
+    r = _row("td", "e1", "t6h", 20, td)
+    fetch.Repo(conn).insert([{**r, "snapshot_at": at}])
+    stat = {**STAT, "rec_tds": 1, "rush_tds": 0, "ret_tds": 0}
+    assert replay.run_replay(conn, "r2", {GAME.game_id: GAME}, {GAME.game_id: [stat]},
+                             {GAME.game_id: {"amari cooper"}}, 0.02, 0.15) > 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT market, side, line, result FROM edge_bt_picks WHERE book = 'fanduel'")
+        assert cur.fetchall() == [("player_anytime_td", "over", 0.5, "win")]

@@ -23,8 +23,8 @@ class FakeRepo:
     def done_keys(self):
         return {(r["event_id"], r["kind"], r["label"]) for r in self.rows}
 
-    def spent(self):
-        return sum(r["credits"] for r in self.rows)
+    def spent(self, kinds=None):
+        return sum(r["credits"] for r in self.rows if kinds is None or r["kind"] in (*kinds, "events"))
 
     def events_payload(self, day_key):
         return next((r["payload"] for r in self.rows if r["event_id"] == day_key), None)
@@ -224,3 +224,25 @@ def test_stored_td_rows_do_not_block_props_and_a_td_404_is_a_stub():
     client2 = FakeClient()
     run(repo, client2)
     assert sum(1 for c in client2.calls if c[0] == "props") == 4
+
+
+def _stored(kind, credits):
+    return {"event_id": f"old-{kind}", "kind": kind, "label": "t6h", "credits": credits, "payload": {}}
+
+
+def test_cap_counts_only_the_kinds_of_this_run():
+    repo = FakeRepo()
+    repo.rows.append(_stored("props", 700_000))
+    s = run(repo, FakeClient(), cap=80_000, kinds=("td",))
+    assert s.stopped is None and s.credits == 1 + 4 * plan.TD_COST
+    # default run: stored td credits do not count against props+lines
+    repo2 = FakeRepo()
+    repo2.rows.append(_stored("td", 790_000))
+    assert run(repo2, FakeClient(), cap=800_000).stopped is None
+
+
+def test_stored_td_credits_count_toward_the_td_cap():
+    repo = FakeRepo()
+    repo.rows.append(_stored("td", 79_990))
+    s = run(repo, FakeClient(), cap=80_000, kinds=("td",))
+    assert s.stopped and "cap" in s.stopped and s.calls == 1  # the day list; the td call would exceed

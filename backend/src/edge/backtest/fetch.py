@@ -48,9 +48,14 @@ class Repo:
             cur.execute("SELECT event_id, kind, label FROM edge_bt_snapshots")
             return set(cur.fetchall())
 
-    def spent(self) -> int:
+    def spent(self, kinds: tuple[str, ...] | None = None) -> int:
+        """Credits stored for `kinds` (plus the day lists every run needs); None = the whole table."""
         with self.conn.cursor() as cur:
-            cur.execute("SELECT COALESCE(SUM(credits), 0) FROM edge_bt_snapshots")
+            if kinds is None:
+                cur.execute("SELECT COALESCE(SUM(credits), 0) FROM edge_bt_snapshots")
+            else:
+                cur.execute("SELECT COALESCE(SUM(credits), 0) FROM edge_bt_snapshots WHERE kind = ANY(%s)",
+                            (list(kinds) + ["events"],))
             return int(cur.fetchone()[0])
 
     def events_payload(self, day_key: str) -> dict | None:
@@ -100,7 +105,7 @@ async def run_fetch(repo, client, games: list[Game], *, cap: int, min_remaining:
                     kinds: tuple[str, ...] = ("props", "lines")) -> Summary:
     s = Summary()
     done = repo.done_keys()
-    spent = repo.spent()
+    spent = repo.spent(kinds)
 
     async def call(job: plan.Job, request):
         nonlocal spent
