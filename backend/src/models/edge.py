@@ -217,6 +217,58 @@ class EdgeNflInjury(Base):
     loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class EdgeNflTeamWeek(Base):
+    """Per (season, week, team, pos) allowed/produced aggregates from nflverse pbp."""
+    __tablename__ = "edge_nfl_team_weeks"
+    __table_args__ = (UniqueConstraint("season", "week", "team", "pos", name="uq_edge_nfl_team_weeks"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    week: Mapped[int] = mapped_column(Integer, nullable=False)
+    team: Mapped[str] = mapped_column(String(4), nullable=False)
+    pos: Mapped[str] = mapped_column(String(4), nullable=False)
+    yds: Mapped[float] = mapped_column(Float, nullable=False)
+    rz_opps: Mapped[int] = mapped_column(Integer, nullable=False)
+    tds: Mapped[int] = mapped_column(Integer, nullable=False)
+    loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EdgeNflPlayerWeek(Base):
+    """Per (season, week, team, player) usage and team/position denominators."""
+    __tablename__ = "edge_nfl_player_weeks"
+    __table_args__ = (UniqueConstraint("season", "week", "team", "player_key", name="uq_edge_nfl_player_weeks"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    season: Mapped[int] = mapped_column(Integer, nullable=False)
+    week: Mapped[int] = mapped_column(Integer, nullable=False)
+    team: Mapped[str] = mapped_column(String(4), nullable=False)
+    player_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    player_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    pos: Mapped[str] = mapped_column(String(4), nullable=False)
+    carries: Mapped[int] = mapped_column(Integer, nullable=False)
+    targets: Mapped[int] = mapped_column(Integer, nullable=False)
+    rz_carries: Mapped[int] = mapped_column(Integer, nullable=False)
+    rz_targets: Mapped[int] = mapped_column(Integer, nullable=False)
+    team_carries: Mapped[int] = mapped_column(Integer, nullable=False)
+    team_targets: Mapped[int] = mapped_column(Integer, nullable=False)
+    team_rz_opps: Mapped[int] = mapped_column(Integer, nullable=False)
+    pos_carries: Mapped[int] = mapped_column(Integer, nullable=False)
+    pos_targets: Mapped[int] = mapped_column(Integer, nullable=False)
+    loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EdgeTagStatus(Base):
+    """Backtest verdict per (tag, direction); written by the verdict job, read at serve time."""
+    __tablename__ = "edge_tag_status"
+    __table_args__ = (UniqueConstraint("tag", "direction", name="uq_edge_tag_status"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tag: Mapped[str] = mapped_column(String(24), nullable=False)
+    direction: Mapped[str] = mapped_column(String(12), nullable=False)
+    verdict: Mapped[str] = mapped_column(String(12), nullable=False)
+    clv_lift: Mapped[float | None] = mapped_column(Float)
+    n: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    run_id: Mapped[str | None] = mapped_column(String(40))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class EdgeBtSnapshot(Base):
     """Phase C backtest: one raw Odds API historical response per (event, kind, label). Never read by live code."""
     __tablename__ = "edge_bt_snapshots"

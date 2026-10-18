@@ -12,10 +12,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from zoneinfo import ZoneInfo
 from datetime import date, datetime, timedelta, timezone
 
 from src.config import settings
-from src.edge import grading, nfl_players, opportunities, players, schedule, store
+from src.edge import grading, matchups, matchups_store, nfl_injuries, nfl_players, opportunities, players, schedule, store
 from src.edge.client import EdgeOddsClient, OddsApiError, Usage
 from src.edge.config import LINE_MARKETS, SportConfig, enabled_sports, state_key
 from src.edge.engine import price_quotes
@@ -128,6 +129,8 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
         except Exception as e:  # noqa: BLE001 - never blocks odds
             conn.rollback()
             store.set_state(conn, "bdl_error", redact(f"nfl_td_reload_step: {type(e).__name__}: {e}")[:300], now)
+        await nfl_matchups_step(conn, now)
+        await nfl_injuries_step(conn, nfl_bdl, now)
 
     return out
 
@@ -197,6 +200,61 @@ def nfl_td_reload_step(conn, now: datetime) -> bool:
     conn.commit()
     store.set_state(conn, "nfl:td_reload", "1", now)
     return True
+
+
+async def nfl_matchups_step(conn, now: datetime, frames=None) -> int:
+    """Daily: nflverse pbp + rosters for this and last season, aggregated and upserted. Errors land
+    in matchups_error and never raise. `frames` = (pbp, rosters) skips the download (test seam)."""
+    last = _parse(store.get_state(conn).get("nfl:last_matchups_step"))
+    if last is not None and now - last < timedelta(hours=24):
+        return 0
+    store.set_state(conn, "nfl:last_matchups_step", _iso(now), now)
+    try:
+        season = current_nfl_season(now.date())
+
+        def build():
+            if frames is not None:
+                pbp, rosters = frames
+            else:
+                seasons = [season - 1, season]
+                pbp, rosters = matchups.load_pbp(seasons), matchups.load_rosters(seasons)
+            return matchups.aggregate(pbp, rosters)
+
+        team_games, player_games = await asyncio.to_thread(build)
+        n = matchups_store.upsert(conn, team_games, player_games, now)
+        store.set_state(conn, "nfl:matchups_ok_at", _iso(now), now)
+        store.set_state(conn, "matchups_error", "", now)
+        return n
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        store.set_state(conn, "matchups_error", redact(f"{type(e).__name__}: {e}")[:300], now)
+        return 0
+
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _injuries_interval(now: datetime) -> timedelta:
+    """2 h from Thursday 00:00 through Monday 23:59 ET (game days), 6 h otherwise."""
+    return timedelta(hours=2) if now.astimezone(_ET).weekday() in (3, 4, 5, 6, 0) else timedelta(hours=6)
+
+
+async def nfl_injuries_step(conn, nfl_bdl, now: datetime) -> int:
+    """BallDontLie injury snapshot. Errors land in injuries_error and never raise."""
+    last = _parse(store.get_state(conn).get("nfl:last_injuries_step"))
+    if last is not None and now - last < _injuries_interval(now):
+        return 0
+    store.set_state(conn, "nfl:last_injuries_step", _iso(now), now)
+    try:
+        raw = await nfl_injuries.fetch_live(nfl_bdl)
+        n = nfl_injuries.store_live(conn, nfl_injuries.live_rows(raw, now), now)
+        store.set_state(conn, "nfl:injuries_ok_at", _iso(now), now)
+        store.set_state(conn, "injuries_error", "", now)
+        return n
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        store.set_state(conn, "injuries_error", redact(f"{type(e).__name__}: {e}")[:300], now)
+        return 0
 
 
 async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor: int, now: datetime,

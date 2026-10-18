@@ -955,3 +955,30 @@ def test_store_live_replaces_the_snapshot(conn):
     assert inj.live_index(conn) == {"KC": {"travis kelce": "out", "rashee rice": "questionable"}}
     assert inj.store_live(conn, [r("Travis Kelce", "doubtful")], NOW + timedelta(days=1)) == 1
     assert inj.live_index(conn) == {"KC": {"travis kelce": "doubtful"}}
+
+
+def test_matchups_upsert_round_trip_and_update_in_place(conn):
+    from src.edge import matchups_store
+    from src.edge.matchups import PlayerGame, TeamGame
+    t = TeamGame(2026, 5, "KC", "RB", 101.5, 3, 1)
+    p = PlayerGame(2026, 5, "KC", "isiah pacheco", "Isiah Pacheco", "RB", 12, 3, 2, 0, 25, 30, 8, 20, 6)
+    assert matchups_store.upsert(conn, [t], [p], NOW) == 2
+    later = NOW + timedelta(days=1)
+    t2 = TeamGame(2026, 5, "KC", "RB", 120.0, 4, 2)
+    assert matchups_store.upsert(conn, [t2], [p], later) == 2
+    teams, players = matchups_store.load(conn, [2026])
+    assert teams == [t2] and players == [p]
+    assert matchups_store.load(conn, [2025]) == ([], [])
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*), MAX(loaded_at) FROM edge_nfl_team_weeks")
+        assert cur.fetchone() == (1, later)
+
+
+def test_edge_tag_status_unique_per_tag_direction(conn):
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_tag_status (tag, direction, verdict, clv_lift, n, run_id, updated_at)
+                       VALUES ('def_rz', 'tailwind', 'neutral', 0.01, 10, 'r1', %s)""", (NOW,))
+        conn.commit()
+        with pytest.raises(psycopg2.errors.UniqueViolation):
+            cur.execute("""INSERT INTO edge_tag_status (tag, direction, verdict, n, updated_at)
+                           VALUES ('def_rz', 'tailwind', 'proven', 3, %s)""", (NOW,))

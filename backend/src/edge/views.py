@@ -299,6 +299,10 @@ def status(conn, now: datetime) -> dict:
         "backfills": {k: v for k, v in state.items() if k.startswith("backfill_")},
         "nfl_unmatched_players": nfl_unmatched, "nfl_stale_ungraded": nfl_stale,
         "snaps_error": state.get("snaps_error") or None,
+        "matchups_error": state.get("matchups_error") or None,
+        "injuries_error": state.get("injuries_error") or None,
+        "matchups_ok_at": state.get("nfl:matchups_ok_at"),
+        "injuries_ok_at": state.get("nfl:injuries_ok_at"),
     }
 
 
