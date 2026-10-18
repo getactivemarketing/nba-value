@@ -1,5 +1,6 @@
 """Backtest SQL against a real Postgres (EDGE_TEST_DB_URL, disposable)."""
 import asyncio
+import json
 import os
 from datetime import datetime, timezone
 
@@ -163,3 +164,30 @@ def test_bt_pick_tags_round_trip_jsonb(conn):
         assert cur.fetchall()[0][0] == [{"key": "def_soft", "direction": "tailwind"}]
         cur.execute("SELECT COUNT(*) FROM edge_bt_picks WHERE tags IS NULL")
         assert cur.fetchone()[0] == 0
+
+
+def test_run_report_upserts_edge_tag_status(conn, tmp_path):
+    def ins(cur, i, tags, clv):
+        cur.execute(
+            "INSERT INTO edge_bt_picks (run_id, season, week, event_id, label, market, player, side, line, "
+            "book, price, fair_prob, ev, verify, sharps, n_books, clv, result, profit, tags) VALUES ('r9', 2023, 1, 'e1', 't6h', "
+            "'player_reception_yds', %s, 'over', 55.5, 'fanduel', -110, 0.5, 0.03, false, '', 4, %s, 'win', 0.9, %s)",
+            (f"P{i}", clv, None if tags is None else json.dumps(tags)))
+
+    with conn.cursor() as cur:
+        for i in range(210):
+            ins(cur, i, [{"key": "def_soft", "direction": "tailwind"}], 0.03 + (0.01 if i % 2 else -0.01))
+        for i in range(210, 420):
+            ins(cur, i, None, 0.0 + (0.01 if i % 2 else -0.01))  # legacy NULL tags count as untagged
+        cur.execute("INSERT INTO edge_tag_status (tag, direction, verdict, n, run_id, updated_at) VALUES "
+                    "('def_soft','tailwind','negative',1,'old',now()), ('usage_up','headwind','proven',1,'old',now())")
+    conn.commit()
+    assert report.run_report(conn, "r9", tmp_path / "r.md") == "r9"
+    with conn.cursor() as cur:
+        cur.execute("SELECT tag, direction, verdict, clv_lift, n, run_id FROM edge_tag_status")
+        rows = cur.fetchall()
+    assert len(rows) == 1  # stale pair removed, existing pair updated in place
+    tag, direction, verdict, lift, n, run = rows[0]
+    assert (tag, direction, verdict, n, run) == ("def_soft", "tailwind", "neutral", 210, "r9")
+    assert lift == pytest.approx(0.03)
+    assert "## Matchup tags" in (tmp_path / "r.md").read_text()
