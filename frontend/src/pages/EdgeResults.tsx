@@ -2,6 +2,7 @@
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useEdgeResults } from '@/hooks/useEdge';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
+import { tagGroupLabel } from '@/components/edge/TagChips';
 import { bookLabel, fmtPct, marketLabel, type Sport } from '@/lib/edgeFormat';
 import type { ResultsBlock } from '@/types/edge';
 
@@ -73,6 +74,11 @@ export function EdgeResults({ sport = 'nba' }: { sport?: Sport }) {
         <Breakdown title="By market" data={data.by_market} label={marketLabel} />
         <Breakdown title="By book" data={data.by_book} label={bookLabel} />
       </div>
+      {sport === 'nfl' && data.by_tag && Object.keys(data.by_tag).length > 0 && (
+        <div className="mt-3">
+          <Breakdown title="By tag" data={data.by_tag} label={tagGroupLabel} />
+        </div>
+      )}
       <EdgeFooter />
     </div>
   );

@@ -4,6 +4,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useEdgePlayer } from '@/hooks/useEdge';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
+import { TagChips } from '@/components/edge/TagChips';
 import { bookLabel, fmtAmerican, fmtPct, marketLabel, propMarketsFor, type Sport } from '@/lib/edgeFormat';
 
 const WINDOWS = [['l5', 'Last 5'], ['l10', 'Last 10'], ['l20', 'Last 20'], ['season', 'Season'],
@@ -77,7 +78,7 @@ export function EdgePlayer({ sport = 'nba' }: { sport?: Sport }) {
             {data.prices.map((p) => (
               <tr key={`${p.book}-${p.side}-${p.line}`} className="border-b border-[#1e293b]/50">
                 <td className="py-2 text-[#94a3b8] font-mono text-xs">{bookLabel(p.book)}</td>
-                <td className="py-2 text-[#f1f5f9] font-mono text-xs">{p.side} {p.line}</td>
+                <td className="py-2 text-[#f1f5f9] font-mono text-xs">{p.side} {p.line}<TagChips tags={p.tags ?? []} /></td>
                 <td className="py-2 text-right font-mono text-xs">
                   {p.link ? <a href={p.link} target="_blank" rel="noopener noreferrer sponsored" className="text-[#a4e6ff]">
                     {fmtAmerican(p.price)}</a> : fmtAmerican(p.price)}

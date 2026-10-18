@@ -1,9 +1,14 @@
 // frontend/src/types/edge.ts
+export interface EvTag {
+  key: string; label: string; direction: 'tailwind' | 'headwind';
+  verdict: 'proven' | 'neutral' | 'negative'; lift: number; detail: string;
+}
 export interface EvRow {
   event_id: string; matchup: string; commence_time: string; market: string; market_label: string;
   player: string; side: string; line: number; bet: string; book: string; price: number;
   link: string | null; fair_prob: number; fair_price: number; ev: number; n_books: number;
   observed_at: string; verify: boolean; bdl_player_id: number | null;
+  tags: EvTag[];
 }
 export interface EdgeGame {
   event_id: string; home_team: string; away_team: string; commence_time: string;
@@ -26,7 +31,7 @@ export interface PlayerResponse {
   bdl_player_id: number; name: string | null; team: string | null; market: string; line: number | null;
   opponent: string | null; is_home: boolean | null; position?: string | null;
   hit_rates: Record<'l5' | 'l10' | 'l20' | 'season' | 'vs_opponent' | 'home_away', HitRate> | null;
-  games: PlayerGame[]; prices: { book: string; side: string; line: number; price: number; link: string | null }[];
+  games: PlayerGame[]; prices: { book: string; side: string; line: number; price: number; link: string | null; tags?: EvTag[] }[];
 }
 export interface ClvBlock {
   measured: number; bets: number; mean_clv: number | null; median_clv: number | null; beat_close_rate: number | null;
@@ -39,5 +44,6 @@ export interface RecordBlock {
 export interface ResultsBlock { n: number; clv: ClvBlock; record: RecordBlock; }
 export interface ResultsResponse extends ResultsBlock {
   by_market: Record<string, ResultsBlock>; by_book: Record<string, ResultsBlock>;
+  by_tag?: Record<string, ResultsBlock>;
   daily_clv: { date: string; mean_clv: number; n: number }[];
 }
