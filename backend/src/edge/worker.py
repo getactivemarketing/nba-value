@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from datetime import date, datetime, timedelta, timezone
 
 from src.config import settings
-from src.edge import grading, matchups, matchups_store, nfl_injuries, nfl_players, opportunities, players, schedule, store
+from src.edge import grading, matchups, matchups_store, nfl_injuries, nfl_players, opportunities, players, schedule, store, tagging
 from src.edge.client import EdgeOddsClient, OddsApiError, Usage
 from src.edge.config import LINE_MARKETS, SportConfig, enabled_sports, state_key
 from src.edge.engine import price_quotes
@@ -63,13 +63,13 @@ def _record_usage(conn, endpoint: str, usage: Usage, now: datetime) -> None:
 
 
 def _reprice(conn, event_ids: list[str], events: list[dict], now: datetime, factor: int,
-             lines_window_hours: int = 36) -> int:
+             lines_window_hours: int = 36, tagger=None) -> int:
     if not event_ids:
         return 0
     commence = {e["event_id"]: e["commence_time"] for e in events}
     quotes = schedule.fresh(store.load_quotes(conn, event_ids), commence, now, factor, lines_window_hours)
     priced = price_quotes(quotes, settings.edge_min_ev, settings.edge_verify_ev)
-    return opportunities.record(conn, priced, now)
+    return opportunities.record(conn, priced, now, tagger=tagger, events=events)
 
 
 async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
@@ -314,7 +314,8 @@ async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor
                 await nfl_players.resolve_new_players(conn, nfl_bdl, quotes, by_id[eid], now)
         touched.append(eid)
 
-    out["opportunities"] = _reprice(conn, sorted(set(touched)), events, now, factor, window)
+    tagger = tagging.live_tagger(conn, now) if sport.slug == "nfl" and sport.has_players else None
+    out["opportunities"] = _reprice(conn, sorted(set(touched)), events, now, factor, window, tagger)
 
     # Scores while this sport's games are live.
     last_scores = _parse(state.get(state_key(sport, "last_scores_poll")))

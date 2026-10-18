@@ -9,7 +9,7 @@ from psycopg2.extras import RealDictCursor
 
 from src.config import settings
 from src.edge.config import NBA, NFL, TD_MARKET, SportConfig
-from src.edge import nfl_players, players, schedule, store
+from src.edge import nfl_players, players, schedule, store, tagging
 from src.edge.engine import fair_prob, group, prob_to_american, price_quotes
 from src.edge.quotes import Quote, sides_for
 from src.edge.teams import ABBR_BY_NAME, NFL_ABBR_BY_NAME
@@ -92,6 +92,11 @@ def results_summary(rows: list[dict]) -> dict:
             "units": units, "roi": round(units / len(graded), 4) if graded else None}}
 
     out = block(rows)
+    by_tag: dict[str, list[dict]] = {}
+    for r in rows:
+        for t in r.get("tags") or []:
+            by_tag.setdefault(f"{t['key']}:{t['direction']}", []).append(r)
+    out["by_tag"] = {k: block(v) for k, v in sorted(by_tag.items())}
     for dim in ("market", "book"):
         keys = sorted({r[dim] for r in rows})
         out[f"by_{dim}"] = {k: block([r for r in rows if r[dim] == k]) for k in keys}
@@ -136,6 +141,7 @@ def ev_rows(conn, now: datetime, market: str | None = None, book: str | None = N
         player_ids = nfl_players.player_ids(conn, teams)
     else:
         player_ids = _player_ids(conn)
+    tagger = tagging.live_tagger(conn, now) if sport.slug == "nfl" and sport.has_players else None
     out = []
     for p in price_quotes(quotes, threshold, settings.edge_verify_ev):
         q = p.quote
@@ -151,8 +157,9 @@ def ev_rows(conn, now: datetime, market: str | None = None, book: str | None = N
             "fair_price": prob_to_american(p.fair.prob), "ev": round(p.ev, 4), "n_books": p.fair.n_books,
             "observed_at": q.observed_at.isoformat(), "verify": p.verify,
             "bdl_player_id": player_ids.get(q.player),
+            "tags": tagging.row_tags(tagger, q.player, q.market, q.side, e["home_team"], e["away_team"]),
         })
-    return sorted(out, key=lambda r: r["ev"], reverse=True)
+    return sorted(out, key=tagging.sort_key, reverse=True)
 
 
 def _player_ids(conn) -> dict[str, int]:
@@ -233,6 +240,7 @@ def nfl_player(conn, now: datetime, bdl_id: int, market: str, line: float | None
         prices = [q for q in store.load_quotes(conn, [event["event_id"]], market) if q.player in odds_names]
         if line is None and prices:
             line = statistics.median(q.line for q in prices)
+    tagger = tagging.live_tagger(conn, now) if event and prices else None
     opponent = is_home = None
     if event:
         is_home = NFL_ABBR_BY_NAME.get(event["home_team"]) == team
@@ -245,7 +253,9 @@ def nfl_player(conn, now: datetime, bdl_id: int, market: str, line: float | None
         "games": [{"game_date": g["game_date"].isoformat(), "week": g["week"], "opponent": g["opponent"],
                    "is_home": g["is_home"], "minutes": 0, "value": nfl_players.stat_for(market, g)}
                   for g in games_[:20]],
-        "prices": [{"book": q.book, "side": q.side, "line": q.line, "price": q.price, "link": q.link}
+        "prices": [{"book": q.book, "side": q.side, "line": q.line, "price": q.price, "link": q.link,
+                    "tags": tagging.row_tags(tagger, names[0]["odds_name"], market, q.side,
+                                             event["home_team"], event["away_team"])}
                    for q in prices],
     }
 
@@ -253,7 +263,7 @@ def nfl_player(conn, now: datetime, bdl_id: int, market: str, line: float | None
 def results(conn, now: datetime, days: int, market: str | None, book: str | None,
             sport: SportConfig = NBA) -> dict:
     sql = """SELECT o.event_id, o.market, o.player, o.line, o.side, o.book, o.price, o.clv, o.result,
-                    o.profit_units, o.first_seen_at
+                    o.profit_units, o.first_seen_at, o.tags
              FROM edge_opportunities o JOIN edge_events e USING (event_id)
              WHERE o.closing_done AND o.first_seen_at >= %s AND e.sport = %s"""
     params: list = [now - timedelta(days=days), sport.key]

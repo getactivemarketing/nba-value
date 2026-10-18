@@ -79,6 +79,25 @@ def test_opportunities_upsert_keeps_first_seen_and_max_ev(conn):
     assert method == "power"
 
 
+def test_opportunity_tags_round_trip(conn):
+    seen = []
+
+    def tagger(player, teams, market, side):
+        seen.append((player, teams, market, side))
+        return [{"key": "def_soft", "label": "Soft matchup", "direction": "tailwind",
+                 "verdict": "proven", "lift": 0.006, "detail": "x"}]
+
+    events = [{"event_id": "e1", "home_team": "Kansas City Chiefs", "away_team": "Jacksonville Jaguars"}]
+    p = Priced(q(book="betmgm", price=120), Fair(0.5, 4, True), 0.10, True, False)
+    opportunities.record(conn, [p], NOW, tagger=tagger, events=events)
+    opportunities.record(conn, [Priced(q(book="caesars", price=125), Fair(0.5, 4, True), 0.12, True, False)], NOW)
+    assert seen == [("Jayson Tatum", ("KC", "JAX"), "player_points", "over")]
+    with conn.cursor() as cur:
+        cur.execute("SELECT book, tags FROM edge_opportunities ORDER BY id")
+        rows = cur.fetchall()
+    assert rows == [("betmgm", [{"key": "def_soft", "direction": "tailwind"}]), ("caesars", None)]
+
+
 def test_state_and_credit_log(conn):
     store.set_state(conn, "guard_factor", "1", NOW)
     store.set_state(conn, "guard_factor", "2", NOW)

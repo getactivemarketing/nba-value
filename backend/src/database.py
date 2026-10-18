@@ -109,6 +109,7 @@ async def init_db() -> None:
         ("edge_nfl_player_games", "rec_tds", "INTEGER NOT NULL DEFAULT 0"),
         ("edge_nfl_player_games", "ret_tds", "INTEGER NOT NULL DEFAULT 0"),
         ("edge_bt_picks", "tags", "JSONB"),
+        ("edge_opportunities", "tags", "JSONB"),
     ]
 
     added, skipped = await add_missing_columns(engine, column_migrations)

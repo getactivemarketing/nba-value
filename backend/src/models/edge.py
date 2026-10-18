@@ -119,6 +119,7 @@ class EdgeOpportunity(Base):
     clv_note: Mapped[str | None] = mapped_column(String(80))
     result: Mapped[str | None] = mapped_column(String(8))  # win|loss|push|void
     profit_units: Mapped[float | None] = mapped_column(Numeric(7, 4))
+    tags: Mapped[list | None] = mapped_column(JSONB)  # [{key, direction}] shown when first seen (NFL)
 
 
 class EdgeApiCall(Base):

@@ -33,4 +33,4 @@ def test_opportunity_rows_only_for_ev():
     r = rows[0]
     assert r[:8] == ("e1", "player_points", "Jayson Tatum", "over", 27.5, "betmgm", 120, "https://x")
     assert r[8] == NOW and r[9] == 0.5 and r[10] == 0.10 and r[11] == 4
-    assert r[12:] == (NOW, 0.10, "power", False)  # last_seen_at, max_ev, devig_method, closing_done
+    assert r[12:] == (NOW, 0.10, "power", False, None)  # last_seen_at, max_ev, devig_method, closing_done, tags
