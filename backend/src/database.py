@@ -78,6 +78,30 @@ async def add_missing_columns(eng, migrations, lock_timeout_ms: int = 5000):
     return added, skipped
 
 
+# Edge columns that create_all won't add to existing tables. Shared by init_db (API boot) and
+# init_edge_tables (worker boot), so whichever service starts first builds the edge schema.
+EDGE_COLUMN_MIGRATIONS = [
+    # Edge NFL anytime TD: touchdown counts on box scores that predate the columns.
+    ("edge_nfl_player_games", "rush_tds", "INTEGER NOT NULL DEFAULT 0"),
+    ("edge_nfl_player_games", "rec_tds", "INTEGER NOT NULL DEFAULT 0"),
+    ("edge_nfl_player_games", "ret_tds", "INTEGER NOT NULL DEFAULT 0"),
+    ("edge_bt_picks", "tags", "JSONB"),
+    ("edge_opportunities", "tags", "JSONB"),
+]
+
+
+async def init_edge_tables(eng=None):
+    """Create missing edge_* tables and columns only. The edge worker runs this on boot because
+    it can tick before the API's init_db (2026-10-18). Returns add_missing_columns' (added, skipped)."""
+    import src.models  # noqa: F401  registers the edge tables on Base.metadata
+
+    eng = eng or engine
+    tables = [t for name, t in Base.metadata.tables.items() if name.startswith("edge_")]
+    async with eng.begin() as conn:
+        await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=tables))
+    return await add_missing_columns(eng, EDGE_COLUMN_MIGRATIONS)
+
+
 async def init_db() -> None:
     """Initialize database tables and run pending column migrations."""
     from sqlalchemy import text
@@ -104,12 +128,7 @@ async def init_db() -> None:
         ("mlb_prediction_snapshots", "clv", "NUMERIC(7,5)"),
         ("mlb_prediction_snapshots", "clv_books", "INTEGER"),
         ("prediction_snapshots", "celebration_tweet_posted", "BOOLEAN DEFAULT FALSE"),
-        # Edge NFL anytime TD: touchdown counts on box scores that predate the columns.
-        ("edge_nfl_player_games", "rush_tds", "INTEGER NOT NULL DEFAULT 0"),
-        ("edge_nfl_player_games", "rec_tds", "INTEGER NOT NULL DEFAULT 0"),
-        ("edge_nfl_player_games", "ret_tds", "INTEGER NOT NULL DEFAULT 0"),
-        ("edge_bt_picks", "tags", "JSONB"),
-        ("edge_opportunities", "tags", "JSONB"),
+        *EDGE_COLUMN_MIGRATIONS,
     ]
 
     added, skipped = await add_missing_columns(engine, column_migrations)

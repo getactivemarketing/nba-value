@@ -62,3 +62,38 @@ async def _once(migrations):
         return await add_missing_columns(engine, migrations, lock_timeout_ms=500)
     finally:
         await engine.dispose()
+
+
+def test_init_edge_tables_creates_missing_edge_tables_and_columns_only():
+    """The worker can boot before the API (2026-10-18): it must build its own edge schema,
+    and only that, so it never races the API over the rest of the app's tables."""
+    from sqlalchemy import create_engine
+
+    from src.database import Base, init_edge_tables
+    import src.models  # noqa: F401  registers the tables
+
+    sync = create_engine(URL)
+    edge = [t for n, t in Base.metadata.tables.items() if n.startswith("edge_")]
+    Base.metadata.create_all(sync, tables=edge)
+    sync.dispose()
+    setup = psycopg2.connect(URL)
+    setup.autocommit = True
+    cur = setup.cursor()
+    cur.execute("DROP TABLE IF EXISTS edge_tag_status")
+    cur.execute("ALTER TABLE edge_opportunities DROP COLUMN IF EXISTS tags")
+    cur.execute("DROP TABLE IF EXISTS games CASCADE")
+
+    async def run():
+        engine = _engine()
+        try:
+            return await init_edge_tables(engine)
+        finally:
+            await engine.dispose()
+
+    added, skipped = asyncio.run(run())
+    assert ("edge_opportunities", "tags") in added and skipped == []
+    cur.execute("SELECT to_regclass('edge_tag_status'), to_regclass('games')")
+    assert cur.fetchone() == ("edge_tag_status", None)
+    cur.execute("SELECT 1 FROM information_schema.columns WHERE table_name='edge_opportunities' AND column_name='tags'")
+    assert cur.fetchone() == (1,)
+    setup.close()
