@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TagChips } from './TagChips';
 import type { EvTag } from '@/types/edge';
@@ -19,7 +19,7 @@ describe('TagChips', () => {
 
   it('proven chip uses the highlight class and title shows lift', () => {
     render(<TagChips tags={[tag({ verdict: 'proven', lift: 0.006 })]} />);
-    const chip = screen.getByText('Soft matchup ↑');
+    const chip = screen.getByText('Soft matchup ↑ ✓');
     expect(chip.className).toContain('text-[#a4e6ff]');
     expect(chip.className).toContain('bg-[#a4e6ff]/15');
     expect(chip.getAttribute('title')).toBe('detail text · Proven in 2023–25 backtest: +0.6% CLV');
@@ -27,7 +27,7 @@ describe('TagChips', () => {
 
   it('negative chip uses the caution class', () => {
     render(<TagChips tags={[tag({ verdict: 'negative', lift: -0.004 })]} />);
-    const chip = screen.getByText('Soft matchup ↑');
+    const chip = screen.getByText('Soft matchup ↑ !');
     expect(chip.className).toContain('text-[#fbbf24]');
     expect(chip.getAttribute('title')).toBe('detail text · Underperformed in 2023–25 backtest: −0.4% CLV');
   });
@@ -42,5 +42,33 @@ describe('TagChips', () => {
   it('renders nothing for an empty list', () => {
     const { container } = render(<TagChips tags={[]} />);
     expect(container.innerHTML).toBe('');
+  });
+
+  it('adds a non-color cue glyph per verdict', () => {
+    render(<TagChips tags={[tag({ key: 'a', verdict: 'proven' }), tag({ key: 'b', verdict: 'negative' }),
+      tag({ key: 'c', verdict: 'neutral' })]} />);
+    expect(screen.getAllByText('Soft matchup ↑ ✓')).toHaveLength(1);
+    expect(screen.getAllByText('Soft matchup ↑ !')).toHaveLength(1);
+    expect(screen.getAllByText('Soft matchup ↑')).toHaveLength(1);
+  });
+
+  it('is focusable with aria-label equal to the title', () => {
+    render(<TagChips tags={[tag({ verdict: 'proven', lift: 0.006 })]} />);
+    const chip = screen.getByText('Soft matchup ↑ ✓');
+    expect(chip.getAttribute('tabindex')).toBe('0');
+    expect(chip.getAttribute('aria-label')).toBe(chip.getAttribute('title'));
+  });
+
+  it('click and Enter toggle an inline detail line, one at a time', () => {
+    render(<TagChips tags={[tag({ key: 'a', detail: 'first detail' }), tag({ key: 'b', label: 'Other', detail: 'second detail' })]} />);
+    const a = screen.getByText('Soft matchup ↑');
+    expect(screen.queryByText(/first detail/)).toBeNull();
+    fireEvent.click(a);
+    expect(screen.getByText(/first detail/)).toBeTruthy();
+    fireEvent.keyDown(screen.getByText('Other ↑'), { key: 'Enter' });
+    expect(screen.queryByText(/first detail/)).toBeNull();
+    expect(screen.getByText(/second detail/)).toBeTruthy();
+    fireEvent.keyDown(screen.getByText('Other ↑'), { key: ' ' });
+    expect(screen.queryByText(/second detail/)).toBeNull();
   });
 });
