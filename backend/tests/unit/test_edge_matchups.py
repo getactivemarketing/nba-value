@@ -139,3 +139,21 @@ def test_window_fills_only_when_fewer_than_four_current_rows():
 def test_window_applies_key_predicate():
     r = rows(2024, [1, 2, 3])
     assert [x.week for x in window_games(r, 2024, 4, 8, lambda x: x.week != 2)] == [1, 3]
+
+
+def test_null_gsis_roster_row_never_matches_null_passer():
+    ros = pd.concat([ROSTER, pd.DataFrame([(None, "Ghost QB", "QB", "KC", 2024)], columns=ROSTER.columns)],
+                    ignore_index=True)
+    pbp = frame(play(play_type="pass", receiver_player_id="g_wr", receiving_yards=20, passer_player_id=None, passing_yards=20),
+                play(play_type="pass", receiver_player_id="g_wr", receiving_yards=5, passer_player_id="g_qb", passing_yards=5))
+    tg, _ = aggregate(pbp, ros)
+    assert team(tg, "QB").yds == 5
+
+
+def test_nan_full_name_roster_row_does_not_raise():
+    ros = ROSTER.copy()
+    ros.loc[ros.gsis_id == "g_rb", "full_name"] = float("nan")
+    pbp = frame(play(rusher_player_id="g_rb", rushing_yards=3), play(rusher_player_id="g_rb2", rushing_yards=2))
+    _, pg = aggregate(pbp, ros)
+    assert [p.player_key for p in pg] == ["ray backup"]
+    assert pg[0].team_carries == 2

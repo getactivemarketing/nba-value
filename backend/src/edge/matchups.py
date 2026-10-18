@@ -75,13 +75,15 @@ def aggregate(pbp: pd.DataFrame, rosters: pd.DataFrame) -> tuple[list[TeamGame],
     games = reg[["season", "week", "game_id", "defteam"]].drop_duplicates()
     plays = reg[reg["play_type"].isin(["run", "pass"]) & (reg["two_point_attempt"].fillna(0) != 1)].copy()
 
-    ros = rosters.drop_duplicates(["season", "gsis_id"], keep="last").copy()
+    # Null ids would left-merge onto each other; a nameless player can't get a key.
+    ros = rosters.dropna(subset=["gsis_id", "full_name"]).drop_duplicates(["season", "gsis_id"], keep="last").copy()
     ros["pos"] = ros["position"].replace({"FB": "RB"})
     ros = ros[["season", "gsis_id", "full_name", "pos"]]
 
     for col in ("rushing_yards", "receiving_yards", "passing_yards"):
         plays[col] = plays[col].fillna(0)
     plays["rz"] = plays["yardline_100"].le(RED_ZONE)
+    # TDs use the rush_touchdown/pass_touchdown flags; td_player_id is loaded but deliberately unused.
     plays["rush_td"] = plays["rush_touchdown"].fillna(0).eq(1)
     plays["rec_td"] = plays["pass_touchdown"].fillna(0).eq(1)
     for who, col in (("rusher", "rusher_player_id"), ("receiver", "receiver_player_id"),
@@ -95,7 +97,7 @@ def aggregate(pbp: pd.DataFrame, rosters: pd.DataFrame) -> tuple[list[TeamGame],
 
     # Defense allowed, per position: yards, red-zone opportunities, TDs.
     keys = ["season", "week", "defteam"]
-    qb_pass = plays[is_pass & (plays["passer_pos"] == "QB")]
+    qb_pass = plays[is_pass & plays["passer_player_id"].notna() & (plays["passer_pos"] == "QB")]
     ev = []
     for pos in POSITIONS:
         rush = plays[has_rusher & (plays["rusher_pos"] == pos)]
