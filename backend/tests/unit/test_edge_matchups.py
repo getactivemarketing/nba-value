@@ -415,6 +415,32 @@ def test_teammate_out_needs_same_position_and_team():
         ["Wes Deep (Out) — 40% of WR targets, last 4"]
 
 
+def test_teammate_out_share_is_over_the_teams_last_4_games_not_his_own():
+    inj = {"KC": {"ray backup": "out"}}
+    # On IR since Week 3: he led the backfield in Weeks 1-2, then six team games without him.
+    ir = runner() + runner(weeks=range(1, 3), name="Ray Backup", carries=15)
+    assert mate(build_context([], ir, inj, S, W)) == []
+    # Hurt last season: his only rows are 2023's, the team has played 8 games since.
+    last_season = runner() + runner(weeks=range(10, 18), season=S - 1, name="Ray Backup", carries=15)
+    assert mate(build_context([], last_season, inj, S, W)) == []
+    # Led each of the team's last 4 games: fires.
+    led = runner() + runner(weeks=range(5, 9), name="Ray Backup", carries=12)
+    assert [t.detail for t in mate(build_context([], led, inj, S, W))] == \
+        ["Ray Backup (Out) — 60% of RB carries, last 4"]
+    # Missed one of the last 4: that game counts 0 for him (3 x 12 / 4 x 20 = 45%).
+    missed = runner() + runner(weeks=(5, 6, 8), name="Ray Backup", carries=12)
+    assert [t.detail for t in mate(build_context([], missed, inj, S, W))] == \
+        ["Ray Backup (Out) — 45% of RB carries, last 4"]
+
+
+def test_teammate_out_window_skips_byes():
+    # Team bye in Week 7: the last 4 team games before Week 9 are 4, 5, 6, 8.
+    weeks = (1, 2, 3, 4, 5, 6, 8)
+    rows = runner(weeks=weeks) + runner(weeks=(4, 5, 6, 8), name="Ray Backup", carries=6)
+    assert [t.detail for t in mate(build_context([], rows, {"KC": {"ray backup": "out"}}, S, W))] == \
+        ["Ray Backup (Out) — 30% of RB carries, last 4"]
+
+
 def test_teammate_out_not_on_the_injured_player_himself():
     ctx = backfield()
     assert mate(ctx, name="Ray Backup") == []

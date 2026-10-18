@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import pandas as pd
 
@@ -213,6 +214,12 @@ MARKETS_FOR: dict[str, frozenset[str]] = {
     k: frozenset(m for m in _ALL_MARKETS for p in POSITIONS if applies(k, p, m)) for k in TAG_KEYS}
 
 
+class TeamWeek(NamedTuple):
+    """One game a team played (byes leave none), for `window_games`."""
+    season: int
+    week: int
+
+
 @dataclass
 class TagContext:
     def_rank: dict[tuple[str, str], dict[str, tuple[float, int]]]
@@ -222,6 +229,9 @@ class TagContext:
     season: int = 0
     week: int = 0
     n_ranked: dict[str, int] = field(default_factory=dict)  # pos -> number of ranked teams
+    team_weeks: dict[str, list[TeamWeek]] = field(default_factory=dict)  # team -> games played
+    # (team, pos, season, week) -> (pos_carries, pos_targets) for that team game
+    pos_totals: dict[tuple[str, str, int, int], tuple[int, int]] = field(default_factory=dict)
 
 
 def ordinal(n: int) -> str:
@@ -257,11 +267,17 @@ def build_context(team_games, player_games, injuries, season: int, week: int) ->
 
     player_rows: dict = defaultdict(list)
     by_key: dict = defaultdict(list)
+    weeks: dict = defaultdict(set)
+    pos_totals: dict = {}
     for r in pgs:
         player_rows[(r.team, r.player_key)].append(r)
         by_key[r.player_key].append(r)
+        weeks[r.team].add(TeamWeek(r.season, r.week))
+        pos_totals[(r.team, r.pos, r.season, r.week)] = (r.pos_carries, r.pos_targets)
     players = {key: _identities(rows) for key, rows in by_key.items()}
-    return TagContext(def_rank, players, dict(player_rows), injuries, season, week, n_ranked)
+    team_weeks = {t: sorted(ws) for t, ws in weeks.items()}
+    return TagContext(def_rank, players, dict(player_rows), injuries, season, week, n_ranked,
+                      team_weeks, pos_totals)
 
 
 def _identities(rows: list[PlayerGame]) -> list[tuple[str, str]]:
@@ -329,16 +345,21 @@ def tags_for(ctx: TagContext, player: str, event_teams: tuple[str, str], market:
         if rz is not None and rz >= RZ_ROLE - EPS:
             add("rz_role", f"{rz:.0%} of team red-zone looks, last 4")
 
-        # One tag per qualifying injured teammate.
-        pos_den = (lambda r: r.pos_carries) if pos == "RB" else (lambda r: r.pos_targets)
+        # One tag per qualifying injured teammate. His share is over the TEAM's last 4
+        # games: a game he missed counts 0, so a long-term IR starter stops firing.
         unit = "carries" if pos == "RB" else "targets"
+        slot = 0 if pos == "RB" else 1
+        team_win = window_games(ctx.team_weeks.get(team, []), ctx.season, ctx.week, MATE_WINDOW,
+                                lambda r: True)
+        pos_total = sum(ctx.pos_totals.get((team, pos, g.season, g.week), (0, 0))[slot] for g in team_win)
         for mate, status in sorted(ctx.injuries.get(team, {}).items()):
             if mate == key or status not in MATE_STATUSES:
                 continue
             if [tp for tp in ctx.players.get(mate, []) if tp[0] == team] != [(team, pos)]:
                 continue  # not (only) a same-position player on this team
             mrows = ctx.player_rows.get((team, mate), [])
-            share = _share(window_games(mrows, ctx.season, ctx.week, MATE_WINDOW, lambda r: True), num, pos_den)
+            played = {(r.season, r.week): r for r in mrows}
+            share = (sum(num(played[g]) for g in team_win if g in played) / pos_total) if pos_total else None
             if share is not None and share >= MATE_SHARE - EPS:
                 add("teammate_out", f"{mrows[-1].player_name} ({status.capitalize()}) — {share:.0%} of {pos} {unit}, last 4")
 
