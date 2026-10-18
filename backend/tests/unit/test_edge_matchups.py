@@ -299,8 +299,8 @@ def test_def_rz_and_def_td_only_on_their_markets():
 def test_def_rz_and_def_td_copy():
     ctx, opp = ctx_vs(3)
     by = {t.key: t.detail for t in tags_for(ctx, "Rudy Runner", ("KC", opp), TD_MARKET, "over")}
-    assert by == {"def_rz": "JAX allows 37 RB red-zone looks per game (3rd most)",
-                  "def_td": "JAX allows 37 RB TDs per game (3rd most)"}
+    assert by == {"def_rz": "JAX allows 37.0 RB red-zone looks per game (3rd most)",
+                  "def_td": "JAX allows 37.0 RB TDs per game (3rd most)"}
 
 
 def test_detail_copy_def_soft():
@@ -497,3 +497,14 @@ def test_build_context_excludes_the_games_own_week_and_later():
     ctx = build_context(defense(season=S - 1), runner(season=S - 1), {}, S, 1)
     assert ctx.def_rank[(TEAMS[0], "RB")]["yds"] == (120.0, 1)
     assert "def_soft" in keys(tags_for(ctx, "Rudy Runner", ("KC", TEAMS[0]), "player_rush_yds", "over"))
+
+
+def test_def_rz_and_def_td_copy_shows_one_decimal():
+    others = defense(teams=[t for t in TEAMS if t != "JAX"], rz=lambda r: 5 if r == 1 else 0,
+                     td=lambda r: 2 if r == 1 else 0)
+    jax = [TeamGame(S, w, "JAX", "RB", 100.0, rz_, td_)
+           for w, rz_, td_ in zip(range(1, 6), (5, 4, 4, 5, 4), (2, 1, 1, 2, 1))]
+    ctx = build_context(others + jax, runner(), {}, S, W)
+    by = {t.key: t.detail for t in tags_for(ctx, "Rudy Runner", ("KC", "JAX"), TD_MARKET, "over")}
+    assert by == {"def_rz": "JAX allows 4.4 RB red-zone looks per game (2nd most)",
+                  "def_td": "JAX allows 1.4 RB TDs per game (2nd most)"}

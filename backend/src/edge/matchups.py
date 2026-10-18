@@ -310,7 +310,7 @@ def tags_for(ctx: TagContext, player: str, event_teams: tuple[str, str], market:
         for k, stat in (("def_rz", "rz"), ("def_td", "td")):
             value, rank = ranks[stat]
             if rank <= TOP:
-                add(k, f"{opp} allows {value:.0f} {pos} {STAT_WORD[stat]} per game ({ordinal(rank)} most)")
+                add(k, f"{opp} allows {value:.1f} {pos} {STAT_WORD[stat]} per game ({ordinal(rank)} most)")  # per-game counts are small
 
     rows = ctx.player_rows.get((team, key), [])
     if pos in TD_POSITIONS:
