@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from datetime import date, datetime, timedelta, timezone
 
 from src.config import settings
+from src.database import init_edge_tables
 from src.edge import grading, matchups, matchups_store, nfl_injuries, nfl_players, opportunities, players, schedule, store, tagging
 from src.edge.client import EdgeOddsClient, OddsApiError, Usage
 from src.edge.config import LINE_MARKETS, SportConfig, enabled_sports, state_key
@@ -418,7 +419,21 @@ def _reconnect(old):
     return store.connect()
 
 
+async def ensure_schema() -> bool:
+    """Build the edge tables and columns before the first tick. A failure is logged and never
+    blocks the loop: the steps that need the schema record their own errors and retry."""
+    try:
+        added, skipped = await init_edge_tables()
+        if added or skipped:
+            log.info("edge schema: columns added %s; skipped (lock busy) %s", added, skipped)
+        return True
+    except Exception:  # noqa: BLE001 - odds polling must start regardless
+        log.exception("edge schema setup failed; continuing")
+        return False
+
+
 async def _run() -> None:
+    await ensure_schema()
     client = EdgeOddsClient()
     bdl = players.BdlClient()
     nfl_bdl = nfl_players.BdlNflClient()

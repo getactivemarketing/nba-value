@@ -130,3 +130,52 @@ def test_no_touched_events_never_builds_the_tagger(monkeypatch):
     assert not called
     worker._tagger_for(object(), NOW, ["e1"], __import__('src.edge.config',fromlist=['NFL']).NFL)
     assert called == [1]
+
+
+def test_init_db_runs_every_edge_column_migration():
+    """One list feeds both the API's init_db and the worker's init_edge_tables."""
+    import inspect
+
+    from src import database
+
+    assert all(t.startswith("edge_") for t, _, _ in database.EDGE_COLUMN_MIGRATIONS)
+    assert ("edge_opportunities", "tags", "JSONB") in database.EDGE_COLUMN_MIGRATIONS
+    assert "EDGE_COLUMN_MIGRATIONS" in inspect.getsource(database.init_db)
+
+
+def test_worker_builds_its_schema_before_the_first_tick(monkeypatch):
+    import asyncio
+
+    from src.edge import worker
+
+    calls = []
+
+    async def fake_init(*a, **k):
+        calls.append("schema")
+        return [], []
+
+    def stop_connect():
+        calls.append("connect")
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(worker, "init_edge_tables", fake_init)
+    monkeypatch.setattr(worker.store, "connect", stop_connect)
+    monkeypatch.setattr(worker, "EdgeOddsClient", lambda: None)
+    monkeypatch.setattr(worker.players, "BdlClient", lambda: None)
+    monkeypatch.setattr(worker.nfl_players, "BdlNflClient", lambda: None)
+    with pytest.raises(RuntimeError, match="stop"):
+        asyncio.run(worker._run())
+    assert calls == ["schema", "connect"]
+
+
+def test_worker_schema_failure_never_blocks_the_loop(monkeypatch, caplog):
+    import asyncio
+
+    from src.edge import worker
+
+    async def boom(*a, **k):
+        raise OSError("db down")
+
+    monkeypatch.setattr(worker, "init_edge_tables", boom)
+    assert asyncio.run(worker.ensure_schema()) is False
+    assert "edge schema" in caplog.text
