@@ -96,7 +96,7 @@ async def test_matchups_step_timeout_sets_error_and_does_not_raise(monkeypatch, 
     monkeypatch.setattr(matchups, "aggregate", lambda pbp, rosters: time.sleep(0.5) or ([], []))
     conn = _Conn()
     assert await worker.nfl_matchups_step(conn, NOW, frames=(None, None)) == 0
-    assert state["matchups_error"] and "nfl:matchups_ok_at" not in state
+    assert "Timeout" in state["matchups_error"] and "nfl:matchups_ok_at" not in state
 
 
 async def test_matchups_failure_retries_after_an_hour_not_a_day(monkeypatch, state):
