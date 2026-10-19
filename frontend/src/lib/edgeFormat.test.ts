@@ -36,6 +36,10 @@ describe('outcomeLabel', () => {
     expect(outcomeLabel('totals', 'over', 221.5, ev)).toBe('Over 221.5');
     expect(outcomeLabel('player_points', 'under', 27.5, ev)).toBe('Under 27.5');
   });
+  it('shows anytime TD as Yes/No, not over/under 0.5', () => {
+    expect(outcomeLabel('player_anytime_td', 'over', 0.5, ev)).toBe('Yes');
+    expect(outcomeLabel('player_anytime_td', 'under', 0.5, ev)).toBe('No');
+  });
 });
 
 import { edgeBase, marketKeysFor } from './edgeFormat';

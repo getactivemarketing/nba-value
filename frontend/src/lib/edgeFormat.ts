@@ -50,5 +50,6 @@ export function outcomeLabel(market: string, side: string, line: number,
     const l = side === 'home' ? line : -line;
     return `${team} ${l > 0 ? '+' : ''}${l}`;
   }
+  if (market === 'player_anytime_td') return side === 'over' ? 'Yes' : 'No'; // stored as over/under 0.5
   return `${side === 'over' ? 'Over' : 'Under'} ${line}`;
 }
