@@ -183,7 +183,8 @@ class BdlClient:
             params = {"team_ids[]": team_id, "per_page": 100}
             if cursor:
                 params["cursor"] = cursor
-            data = await self._get("players", params)
+            # /players/active, not /players: the latter is every player whose last team was this franchise.
+            data = await self._get("players/active", params)
             out += [{"id": x["id"], "first_name": x["first_name"], "last_name": x["last_name"],
                      "team_abbr": (x.get("team") or {}).get("abbreviation")} for x in data["data"]]
             cursor = (data.get("meta") or {}).get("next_cursor")
