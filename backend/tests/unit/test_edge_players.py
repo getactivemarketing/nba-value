@@ -148,6 +148,28 @@ async def test_roster_fetch_is_two_calls_per_event_and_cached():
 
 
 @pytest.mark.asyncio
+async def test_roster_is_the_active_roster_not_every_player_in_franchise_history():
+    """BallDontLie's /players?team_ids[] returns everyone whose last team was the franchise (260 names
+    for BOS, Bill Russell included); a fuzzy match could land on a retired player. /players/active is
+    the real roster (2026-10-18)."""
+    paths = []
+
+    def handler(request):
+        paths.append(request.url.path)
+        if request.url.path.endswith("/teams"):
+            return httpx.Response(200, json={"data": [{"id": 2, "abbreviation": "BOS"}]})
+        everyone = [{"id": 1, "first_name": "Bill", "last_name": "Russell", "team": {"abbreviation": "BOS"}}]
+        active = [{"id": 434, "first_name": "Jayson", "last_name": "Tatum", "team": {"abbreviation": "BOS"}}]
+        data = active if request.url.path.endswith("/players/active") else everyone + active
+        return httpx.Response(200, json={"data": data, "meta": {}})
+
+    bdl = p.BdlClient(api_key="k", transport=httpx.MockTransport(handler))
+    roster = await bdl.roster("BOS")
+    assert [r["last_name"] for r in roster] == ["Tatum"]
+    assert any(path.endswith("/players/active") for path in paths)
+
+
+@pytest.mark.asyncio
 async def test_resolve_survives_rate_limits():
     def handler(request):
         return httpx.Response(429, json={"error": "rate limited"})
