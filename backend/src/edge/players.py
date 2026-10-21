@@ -30,6 +30,14 @@ ROSTER_TTL = 6 * 3600
 log = logging.getLogger("edge.players")
 SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
 FUZZY_MIN = 0.92
+# Sportsbook nickname -> BallDontLie legal name (both normalized). Too far apart for the fuzzy
+# matcher; each was checked by hand against /players/active (2026-10-21). Still needs the team.
+NAME_ALIASES = {
+    "alex sarr": "alexandre sarr",
+    "herb jones": "herbert jones",
+    "ron holland": "ronald holland",
+    "ace bailey": "airious bailey",
+}
 STAT_PARTS = {
     "player_points": ("pts",), "player_rebounds": ("reb",), "player_assists": ("ast",),
     "player_threes": ("fg3m",), "player_points_rebounds_assists": ("pts", "reb", "ast"),
@@ -65,6 +73,10 @@ def match_player(odds_name: str, candidates: list[dict], event_teams: set[str]) 
     for c in playing:
         if normalize_name(f"{c['first_name']} {c['last_name']}") == target:
             return Match(c["id"], c["team_abbr"], "normalized", 1.0)
+    alias = NAME_ALIASES.get(target)
+    for c in playing:
+        if alias and normalize_name(f"{c['first_name']} {c['last_name']}") == alias:
+            return Match(c["id"], c["team_abbr"], "manual", 1.0)
     best, score = None, 0.0
     for c in playing:
         r = difflib.SequenceMatcher(None, target, normalize_name(f"{c['first_name']} {c['last_name']}")).ratio()
@@ -217,7 +229,10 @@ async def resolve_new_players(conn, bdl: BdlClient, quotes: list[Quote], event: 
     if not names:
         return 0
     with conn.cursor() as cur:
-        cur.execute("SELECT odds_name FROM edge_players WHERE odds_name = ANY(%s)", (names,))
+        # 'unmatched' names are retried on every poll (rosters are cached), so a later alias or a
+        # late roster addition fixes them; matched names are never looked up again.
+        cur.execute("SELECT odds_name FROM edge_players WHERE odds_name = ANY(%s) AND match_method <> 'unmatched'",
+                    (names,))
         known = {r[0] for r in cur.fetchall()}
     new = [n for n in names if n not in known]
     if not new:
@@ -238,7 +253,11 @@ async def resolve_new_players(conn, bdl: BdlClient, quotes: list[Quote], event: 
     if rows:
         with conn.cursor() as cur:
             execute_values(cur, """INSERT INTO edge_players (odds_name, bdl_player_id, team, match_method,
-                                   confidence, updated_at) VALUES %s ON CONFLICT (odds_name) DO NOTHING""", rows)
+                                   confidence, updated_at) VALUES %s
+                                   ON CONFLICT (odds_name) DO UPDATE SET bdl_player_id = EXCLUDED.bdl_player_id,
+                                   team = EXCLUDED.team, match_method = EXCLUDED.match_method,
+                                   confidence = EXCLUDED.confidence, updated_at = EXCLUDED.updated_at
+                                   WHERE edge_players.match_method = 'unmatched'""", rows)
         conn.commit()
     return len(rows)
 

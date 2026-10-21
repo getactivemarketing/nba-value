@@ -37,6 +37,19 @@ def test_no_match_when_team_disagrees_or_too_far():
     assert p.match_player("Nikolai Jokinen", CANDS, {"DEN", "LAL"}) is None
 
 
+def test_known_nickname_aliases_match_the_bdl_legal_name():
+    cands = [{"id": 1028028405, "first_name": "Alexandre", "last_name": "Sarr", "team_abbr": "WAS"},
+             {"id": 17896024, "first_name": "Herbert", "last_name": "Jones", "team_abbr": "NOP"},
+             {"id": 1028026508, "first_name": "Ronald", "last_name": "Holland II", "team_abbr": "DET"},
+             {"id": 1057260888, "first_name": "Airious", "last_name": "Bailey", "team_abbr": "UTA"}]
+    teams = {"WAS", "NOP", "DET", "UTA"}
+    for odds_name, pid in [("Alex Sarr", 1028028405), ("Herb Jones", 17896024),
+                           ("Ron Holland", 1028026508), ("Ace Bailey", 1057260888)]:
+        m = p.match_player(odds_name, cands, teams)
+        assert m and m.bdl_player_id == pid and m.method == "manual", odds_name
+    assert p.match_player("Ace Bailey", cands, {"BOS", "NYK"}) is None  # alias still needs a team in the event
+
+
 def test_parse_minutes():
     assert p.parse_minutes("34:30") == pytest.approx(34.5)
     assert p.parse_minutes("28") == 28.0

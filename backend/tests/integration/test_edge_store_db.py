@@ -693,6 +693,33 @@ async def test_nfl_names_resolve_per_team_and_never_touch_nba_players(conn):
     assert nfl_players.player_ids(conn, {"ATL", "CHI"}) == {"Bijan Robinson": 10, "DJ Moore": 20}
 
 
+class _FakeNbaBdl:
+    def __init__(self, rosters):
+        self.rosters = rosters
+
+    async def roster(self, team):
+        return self.rosters.get(team, [])
+
+
+@pytest.mark.asyncio
+async def test_an_unmatched_nba_name_is_retried_and_fixed_by_a_later_poll(conn):
+    from src.edge import players
+    from src.edge.quotes import Quote
+    q = Quote("e1", "player_points", "Alex Sarr", "over", 12.5, "fanduel", -110, None, NOW)
+    ev = {"home_team": "Washington Wizards", "away_team": "Milwaukee Bucks"}
+    with conn.cursor() as cur:  # how the name was stored before the alias existed
+        cur.execute("INSERT INTO edge_players (odds_name, bdl_player_id, team, match_method, confidence, updated_at)"
+                    " VALUES ('Alex Sarr', NULL, NULL, 'unmatched', 0, %s)", (NOW,))
+    conn.commit()
+    rosters = {"WAS": [{"id": 1028028405, "first_name": "Alexandre", "last_name": "Sarr", "team_abbr": "WAS"}]}
+    assert await players.resolve_new_players(conn, _FakeNbaBdl(rosters), [q], ev, NOW) == 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT bdl_player_id, team, match_method FROM edge_players WHERE odds_name = 'Alex Sarr'")
+        assert cur.fetchone() == (1028028405, "WAS", "manual")
+    # matched names are never looked up again
+    assert await players.resolve_new_players(conn, _FakeNbaBdl({}), [q], ev, NOW) == 0
+
+
 @pytest.mark.asyncio
 async def test_a_traded_player_resolves_again_on_his_new_team(conn):
     from src.edge import nfl_players
