@@ -3,7 +3,8 @@
 
 A wrong match is worse than no match — it shows another player's history next
 to a price — so fuzzy matching needs >= 0.92 similarity AND a team that is
-playing in this event; anything else stays `unmatched` for manual review.
+playing in this event; anything else stays `unmatched` (retried each props poll) until it
+matches or gets a hand-checked entry in NAME_ALIASES.
 """
 from __future__ import annotations
 
