@@ -336,10 +336,11 @@ async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor
 
 
 async def box_scores_step(conn, bdl, now: datetime) -> int:
-    """Load box scores for any of the last 3 ET days whose finished games lack them.
+    """Reload box scores for the last 3 ET days, hourly.
 
-    Hourly. A day is only "done" when every team that finished a game that day
-    has rows, so a late or failed BallDontLie load is retried instead of lost.
+    Only finished games are stored (players.box_row), so a game still going at
+    the first load lands on a later one, and the league's stat corrections
+    replace the first numbers. Grading re-checks recent props against them.
     """
     last = _parse(store.get_state(conn).get("last_box_attempt"))
     if last is not None and now - last < timedelta(minutes=60):
@@ -348,8 +349,7 @@ async def box_scores_step(conn, bdl, now: datetime) -> int:
     loaded = 0
     yday = players.et_date(now) - timedelta(days=1)
     for d in (yday - timedelta(days=2), yday - timedelta(days=1), yday):
-        if grading.box_scores_missing(conn, d):
-            loaded += await players.ingest_box_scores(conn, bdl, d)
+        loaded += await players.ingest_box_scores(conn, bdl, d)
     store.set_state(conn, "bdl_error", "", now)
     return loaded
 

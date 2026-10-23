@@ -296,6 +296,7 @@ class _BoxBdl:
 
     def __init__(self):
         self.ready, self.calls = set(), []
+        self.tatum_pts, self.status = 30, "Final"
 
     async def teams(self):
         return {2: "BOS", 9: "DET"}
@@ -304,11 +305,12 @@ class _BoxBdl:
         self.calls.append(d)
         if d not in self.ready:
             return []
-        return [{"player": {"id": 434}, "team": {"id": 2, "abbreviation": "BOS"},
-                 "game": {"id": 1, "date": d.isoformat(), "season": 2026, "home_team_id": 9, "visitor_team_id": 2},
-                 "min": "36", "pts": 30, "reb": 8, "ast": 6, "fg3m": 4, "stl": 1, "blk": 0, "turnover": 3},
-                {"player": {"id": 777}, "team": {"id": 9, "abbreviation": "DET"},
-                 "game": {"id": 1, "date": d.isoformat(), "season": 2026, "home_team_id": 9, "visitor_team_id": 2},
+        game = {"id": 1, "date": d.isoformat(), "season": 2026, "home_team_id": 9, "visitor_team_id": 2,
+                "status": self.status}
+        return [{"player": {"id": 434}, "team": {"id": 2, "abbreviation": "BOS"}, "game": game,
+                 "min": "36", "pts": self.tatum_pts, "reb": 8, "ast": 6, "fg3m": 4, "stl": 1, "blk": 0,
+                 "turnover": 3},
+                {"player": {"id": 777}, "team": {"id": 9, "abbreviation": "DET"}, "game": game,
                  "min": "30", "pts": 20, "reb": 5, "ast": 5, "fg3m": 2, "stl": 1, "blk": 0, "turnover": 1}]
 
 
@@ -333,9 +335,54 @@ async def test_missed_box_score_day_is_retried_until_loaded(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM edge_player_games WHERE game_date = '2026-10-20'")
         assert cur.fetchone()[0] == 2
-    bdl.calls.clear()
-    await worker.box_scores_step(conn, bdl, t + timedelta(minutes=125))  # complete: no refetch
-    assert date(2026, 10, 20) not in bdl.calls
+
+
+def _tatum_pts(conn, d="2026-10-20"):
+    with conn.cursor() as cur:
+        cur.execute("SELECT pts FROM edge_player_games WHERE bdl_player_id = 434 AND game_date = %s", (d,))
+        row = cur.fetchone()
+    return row and row[0]
+
+
+@pytest.mark.asyncio
+async def test_a_game_still_in_progress_is_loaded_once_it_is_final(conn):
+    # 10-21: LAC/SAC was still being played when the ET date rolled over; its
+    # mid-game rows were stored and then counted as the finished day.
+    from src.edge import worker
+
+    game_day = datetime(2026, 10, 21, 2, 30, tzinfo=timezone.utc)  # 10:30pm ET Oct 20
+    store.upsert_events(conn, [{**_event(), "commence_time": game_day}])
+    bdl = _BoxBdl()
+    bdl.ready.add(date(2026, 10, 20))
+    bdl.status, bdl.tatum_pts = "4th Qtr", 22
+    t = datetime(2026, 10, 21, 4, 10, tzinfo=timezone.utc)  # 12:10am ET, game not final
+    await worker.box_scores_step(conn, bdl, t)
+    assert _tatum_pts(conn) is None
+    with conn.cursor() as cur:
+        cur.execute("UPDATE edge_events SET completed = TRUE, status = 'final'")
+    conn.commit()
+    bdl.status, bdl.tatum_pts = "Final", 30
+    await worker.box_scores_step(conn, bdl, t + timedelta(minutes=61))
+    assert _tatum_pts(conn) == 30
+
+
+@pytest.mark.asyncio
+async def test_loaded_days_are_reloaded_to_pick_up_stat_corrections(conn):
+    from src.edge import worker
+
+    game_day = datetime(2026, 10, 20, 23, 0, tzinfo=timezone.utc)
+    store.upsert_events(conn, [{**_event(), "commence_time": game_day}])
+    with conn.cursor() as cur:
+        cur.execute("UPDATE edge_events SET completed = TRUE, status = 'final'")
+    conn.commit()
+    bdl = _BoxBdl()
+    bdl.ready.add(game_day.date())
+    t = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
+    await worker.box_scores_step(conn, bdl, t)
+    assert _tatum_pts(conn) == 30
+    bdl.tatum_pts = 31  # the league credits him a basket the next morning
+    await worker.box_scores_step(conn, bdl, t + timedelta(minutes=61))
+    assert _tatum_pts(conn) == 31
 
 
 class _FlakyBdl(_BoxBdl):
@@ -1070,3 +1117,58 @@ def test_live_tagger_reads_tag_status_end_to_end(conn):
     conn.commit()
     assert tagging._statuses(conn) == {("def_soft", "tailwind"): ("proven", 0.006)}
     assert tagging.live_tagger(conn, NOW) is not None
+
+
+def _graded_tatum_over(conn, tip, pts, line=30.5):
+    from src.edge import grading
+
+    store.upsert_events(conn, [{**_event(), "commence_time": tip}])
+    early = tip - timedelta(hours=3)
+    opportunities.record(conn, [Priced(Quote("e1", "player_points", "Jayson Tatum", "over", line, "novig", 110,
+                                             None, early), Fair(0.5, 3, True), 0.05, True, False)], early)
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_players (odds_name, bdl_player_id, team, match_method, confidence, updated_at)
+                       VALUES ('Jayson Tatum', 434, 'BOS', 'exact', 1, now())""")
+        cur.execute("""INSERT INTO edge_player_games (bdl_player_id, bdl_game_id, season, game_date, team, opponent,
+                       is_home, minutes, pts, reb, ast, fg3m, stl, blk, tov)
+                       VALUES (434, 1, 2026, %s, 'BOS', 'DET', false, 36, %s, 8, 6, 4, 1, 0, 3)""",
+                    (tip.date(), pts))
+        cur.execute("UPDATE edge_events SET completed = TRUE, home_score = 110, away_score = 104")
+    conn.commit()
+    grading.run_grading(conn, tip + timedelta(hours=4))
+
+
+def _tatum_result(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT result, profit_units FROM edge_opportunities WHERE player = 'Jayson Tatum'")
+        r, u = cur.fetchone()
+    return r, float(u)
+
+
+def _correct_tatum_pts(conn, pts):
+    with conn.cursor() as cur:
+        cur.execute("UPDATE edge_player_games SET pts = %s WHERE bdl_player_id = 434", (pts,))
+    conn.commit()
+
+
+def test_a_graded_prop_is_regraded_when_its_box_score_is_corrected(conn):
+    from src.edge import grading
+
+    tip = NOW
+    _graded_tatum_over(conn, tip, pts=30)
+    assert _tatum_result(conn) == ("loss", -1.0)
+    _correct_tatum_pts(conn, 31)  # partial row replaced by the final one
+    out = grading.run_grading(conn, tip + timedelta(hours=26))
+    assert _tatum_result(conn) == ("win", pytest.approx(1.1))
+    assert out["graded"] == 1
+    assert grading.run_grading(conn, tip + timedelta(hours=27))["graded"] == 0  # nothing changed
+
+
+def test_props_older_than_the_box_score_reload_window_are_left_alone(conn):
+    from src.edge import grading
+
+    tip = NOW
+    _graded_tatum_over(conn, tip, pts=30)
+    _correct_tatum_pts(conn, 31)
+    grading.run_grading(conn, tip + timedelta(days=5))
+    assert _tatum_result(conn) == ("loss", -1.0)

@@ -58,12 +58,22 @@ def test_parse_minutes():
 
 def test_box_row():
     stat = {"player": {"id": 434}, "team": {"id": 2, "abbreviation": "BOS"},
-            "game": {"id": 99, "date": "2026-04-10", "season": 2025, "home_team_id": 2, "visitor_team_id": 9},
+            "game": {"id": 99, "date": "2026-04-10", "season": 2025, "home_team_id": 2, "visitor_team_id": 9,
+                     "status": "Final"},
             "min": "36", "pts": 31, "reb": 8, "ast": 6, "fg3m": 4, "stl": 1, "blk": 0, "turnover": 3}
     row = p.box_row(stat, {2: "BOS", 9: "DET"})
     assert row == {"bdl_player_id": 434, "bdl_game_id": 99, "season": 2025, "game_date": date(2026, 4, 10),
                    "team": "BOS", "opponent": "DET", "is_home": True, "minutes": 36.0,
                    "pts": 31, "reb": 8, "ast": 6, "fg3m": 4, "stl": 1, "blk": 0, "tov": 3}
+
+
+def test_box_row_skips_games_still_in_progress():
+    # BDL serves live stats; a row saved mid-game was graded as final (10-21 LAC/SAC).
+    stat = {"player": {"id": 434}, "team": {"id": 2, "abbreviation": "BOS"},
+            "game": {"id": 99, "date": "2026-04-10", "season": 2025, "home_team_id": 2, "visitor_team_id": 9},
+            "min": "20:22", "pts": 18, "reb": 2, "ast": 2, "fg3m": 1, "stl": 0, "blk": 0, "turnover": 1}
+    for status in ("3rd Qtr", "Halftime", "2026-04-10T23:00:00Z", None):
+        assert p.box_row({**stat, "game": {**stat["game"], "status": status}}, {2: "BOS", 9: "DET"}) is None
 
 
 def g(d, pts, reb=5, ast=5, mins=30.0, opp="DET", home=True, season=2026):

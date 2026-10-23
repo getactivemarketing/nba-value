@@ -15,6 +15,11 @@ from src.edge.quotes import Quote
 from src.edge.teams import ABBR_BY_NAME
 
 
+# Matches the worker's box-score reload (last 3 ET days): props this recent
+# are re-graded whenever their player's numbers change.
+REGRADE_WINDOW = timedelta(days=3)
+
+
 def grade_over_under(actual: float, line: float, side: str) -> str:
     if actual == line:
         return "push"
@@ -53,21 +58,6 @@ def prop_result(opp: dict, player_game: dict | None, team_has_box: bool) -> str 
     if (player_game.get("minutes") or 0) <= 0:
         return "void"
     return grade_over_under(stat_for(opp["market"], player_game), float(opp["line"]), opp["side"])
-
-
-def box_scores_missing(conn, d) -> bool:
-    """True when a team that finished a game on ET date `d` has no box-score rows."""
-    with conn.cursor() as cur:
-        cur.execute("""SELECT home_team, away_team, commence_time FROM edge_events
-                       WHERE completed AND sport = 'basketball_nba' AND commence_time BETWEEN %s AND %s""",
-                    (datetime.combine(d, datetime.min.time(), timezone.utc) - timedelta(hours=12),
-                     datetime.combine(d, datetime.min.time(), timezone.utc) + timedelta(hours=36)))
-        teams = {ABBR_BY_NAME.get(t) for h, a, c in cur.fetchall() if et_date(c) == d for t in (h, a)} - {None}
-        if not teams:
-            return False
-        cur.execute("SELECT DISTINCT team FROM edge_player_games WHERE game_date = %s AND team = ANY(%s)",
-                    (d, sorted(teams)))
-        return len({r[0] for r in cur.fetchall()}) < len(teams)
 
 
 def games_in_progress(conn, now: datetime, sport: str | None = None, hours: int = 4) -> bool:
@@ -131,27 +121,30 @@ def run_grading(conn, now: datetime) -> dict:
             _set(cur, o["id"], result=r, profit_units=profit_units(r, o["price"]))
             graded += 1
 
-        # 3. Prop results from box scores.
-        cur.execute("""SELECT o.id, o.market, o.side, o.line, o.price, e.commence_time, e.home_team,
+        # 3. Prop results from box scores. Recent props are re-checked because the
+        #    worker reloads recent box scores (late finishes, stat corrections).
+        cur.execute("""SELECT o.id, o.market, o.side, o.line, o.price, o.result, e.commence_time, e.home_team,
                               e.away_team, p.bdl_player_id
                        FROM edge_opportunities o JOIN edge_events e USING (event_id)
                        LEFT JOIN edge_players p ON p.odds_name = o.player
-                       WHERE o.result IS NULL AND o.player <> '' AND e.commence_time <= %s
+                       WHERE (o.result IS NULL OR e.commence_time > %s)
+                         AND o.player <> '' AND e.commence_time <= %s
                          -- prop grading needs NBA box scores; NFL props get CLV only until Phase B
                          AND e.sport = 'basketball_nba'""",
-                    (now - timedelta(hours=3),))
-        for o in cur.fetchall():
-            if o["bdl_player_id"] is None:
-                continue  # unmatched name: stays ungraded, listed on /edge/status
+                    (now - REGRADE_WINDOW, now - timedelta(hours=3)))
+        props = [o for o in cur.fetchall() if o["bdl_player_id"] is not None]  # unmatched: listed on /edge/status
+        # One read of the box scores for every date involved, not two queries per prop.
+        dates = sorted({et_date(o["commence_time"]) for o in props})
+        box: dict[tuple, dict] = {}
+        if dates:
+            cur.execute("SELECT * FROM edge_player_games WHERE game_date = ANY(%s)", (dates,))
+            box = {(g["bdl_player_id"], g["game_date"]): dict(g) for g in cur.fetchall()}
+        team_days = {(g["team"], d) for (_, d), g in box.items()}
+        for o in props:
             d = et_date(o["commence_time"])
-            teams = [ABBR_BY_NAME.get(o["home_team"]), ABBR_BY_NAME.get(o["away_team"])]
-            cur.execute("SELECT * FROM edge_player_games WHERE bdl_player_id = %s AND game_date = %s",
-                        (o["bdl_player_id"], d))
-            pg = cur.fetchone()
-            cur.execute("SELECT 1 FROM edge_player_games WHERE game_date = %s AND team = ANY(%s) LIMIT 1",
-                        (d, teams))
-            r = prop_result(o, dict(pg) if pg else None, cur.fetchone() is not None)
-            if r is not None:
+            teams = (ABBR_BY_NAME.get(o["home_team"]), ABBR_BY_NAME.get(o["away_team"]))
+            r = prop_result(o, box.get((o["bdl_player_id"], d)), any((t, d) in team_days for t in teams))
+            if r is not None and r != o["result"]:
                 _set(cur, o["id"], result=r, profit_units=profit_units(r, o["price"]))
                 graded += 1
     conn.commit()

@@ -102,8 +102,15 @@ def parse_minutes(v) -> float:
 
 
 def box_row(stat: dict, abbr_by_team_id: dict[int, str]) -> dict | None:
+    """One player's line from a finished game, or None.
+
+    BallDontLie serves live stats, so a game still in progress is skipped:
+    a mid-game row would be graded as if it were final.
+    """
     try:
         game, team_id = stat["game"], stat["team"]["id"]
+        if game.get("status") != "Final":
+            return None
         is_home = game["home_team_id"] == team_id
         opp_id = game["visitor_team_id"] if is_home else game["home_team_id"]
         return {
