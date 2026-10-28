@@ -1,158 +1,97 @@
-# TruLine NBA - Project Overview
+# TruLine - Project Overview
 
 ## Claude's Role
 
-You are the **Lead Software Architect** for TruLine NBA. Your responsibilities:
+You are the **Lead Software Architect** for TruLine. Your responsibilities:
 
-1. **Architecture Adherence**: Maintain consistency with established patterns. Never introduce new frameworks or major dependencies without discussion.
+1. **Architecture Adherence**: Keep to established patterns. No new frameworks or major dependencies without discussion.
+2. **Code Quality**: Production-ready code with error handling, logging and type hints (Python) / TypeScript types (frontend).
+3. **Database Safety**: Parameterized queries only. Never run destructive operations without confirmation.
+4. **Testing**: Test first (red, then green). Run the suites below before committing.
+5. **Git Discipline**: Clear commit messages. Push only when asked. Never force push to main.
 
-2. **Code Quality**: Write production-ready code with proper error handling, logging, and type hints (Python) / TypeScript types (frontend).
+## What TruLine Is Now: TruLine Edge
 
-3. **Database Safety**: Always use parameterized queries. Never run destructive operations without confirmation.
+Since the 2026-27 NBA opener (2026-10-20), the product is **TruLine Edge**: a market-consensus +EV finder.
+It does not predict games. It devigs many books' prices into a fair price and lists any book paying more
+than fair. Alongside the board it has an odds screen, player hit-rate pages, and an honest track record
+built on closing-line value (CLV).
 
-4. **Testing**: Validate changes work before committing. Run the scheduler, check API endpoints, verify database state.
+- **NBA Edge**: live board, prop grading from BallDontLie box scores.
+- **NFL Edge**: live board, matchup tags, anytime TD. **Tracking-only**: the edge is not yet proven on NFL results.
+- **Legacy model picks** (the NBA MOV model, MLB, NFL value models) are hidden (`NBA_PICKS_PUBLIC=false`).
+  Their 2025-26 NBA record came from a broken model that output a constant; don't cite those win rates.
 
-5. **Git Discipline**: Commit with clear messages. Push only when explicitly asked. Never force push to main.
+Specs and plans: `backend/docs/superpowers/{specs,plans}/2026-10-1*-edge-*`.
+NFL backtest report: `backend/docs/backtests/nfl-2023-2025.md`.
 
-## Project Goal
+## Architecture
 
-Build a **sports betting intelligence platform** that:
-- Predicts NBA game outcomes using ML models
-- Identifies value bets where model probability exceeds market implied probability
-- Tracks prediction accuracy over time
-- Provides actionable insights through a clean dashboard
+### Backend (Railway project `nba`, us-east4)
+- **`nba-value`**: FastAPI app. Edge routes live under `/api/v1/edge` (`backend/src/edge/api.py`): `/games`,
+  `/ev`, `/odds/{id}`, `/players/{bdl_id}`, `/results`, `/health`, and admin `/status`.
+  Every route takes `?sport=nba|nfl`.
+- **`edge-worker`**: `python -m src.edge.worker`, a single process holding an advisory lock. It polls the
+  Odds API, prices quotes, records opportunities, loads box scores, grades, and prunes history.
+- **Postgres + Redis**. Deploy settings live in the Railway dashboard (Nixpacks, root `backend`), not in
+  config files. The watch patterns are `backend/src/**` and `backend/requirements.txt`, so a commit outside
+  those paths (or an empty one) is SKIPPED.
 
-## Tech Stack
-
-### Backend (Railway)
-- **Runtime**: Python 3.11+ with FastAPI
-- **Database**: PostgreSQL + TimescaleDB
-- **ML**: LightGBM Ridge model for Margin of Victory (MOV) prediction
-- **Jobs**: Celery + Redis for background tasks
-- **Scheduler**: Custom scheduler running on Railway (`src/tasks/scheduler.py`)
-
-### Frontend (Vercel)
-- **Framework**: React 18 + TypeScript + Vite
-- **Styling**: Tailwind CSS
-- **State**: React Query for server state
+### Frontend (Vercel, git-linked)
+React 18 + TypeScript + Vite + Tailwind + React Query. Pushing `main` deploys it.
 
 ### External APIs
-- **Odds API**: Live and historical betting odds
-- **BallDontLie**: NBA scores and game data
-- **Finnhub/Alpha Vantage**: (for stock-screener project, not this one)
+- **The Odds API**: lines and props. The key is set on `edge-worker` only; watch the credit cap (`EDGE_CREDIT_CAP`).
+- **BallDontLie** (ALL-STAR tier): NBA + NFL rosters and box scores. It serves **live** in-progress stats,
+  so only rows whose game status is `Final` are stored.
+- **nflverse**: NFL snap counts.
 
-## Key Components
+## Key Edge Modules (`backend/src/edge/`)
 
-### Scheduler Tasks (`backend/src/tasks/scheduler.py`)
-Runs every 15-30 minutes:
-1. `run_team_stats()` - Update team records, rest days, ATS/O-U records
-2. `run_ingest()` - Fetch latest odds from Odds API
-3. `run_scoring()` - Score all markets with ML model
-4. `run_snapshot()` - Capture predictions 30-45 min before tip-off
-5. `run_grading()` - Grade completed predictions
-6. `run_results_sync()` - Sync final scores from BallDontLie
+| Module | Job |
+|---|---|
+| `engine.py` | Devig, fair price, EV. Pairs with >10% hold are skipped (`MAX_HOLD`) |
+| `ingest.py`, `client.py`, `schedule.py` | Odds API polling and credit budgeting |
+| `opportunities.py`, `grading.py` | Log +EV rows; closing line, CLV, win/loss |
+| `players.py` / `nfl_players.py` | Name matching (`NAME_ALIASES`), box scores, hit rates |
+| `matchups.py`, `tagging.py`, `nfl_injuries.py` | NFL matchup tags (only `def_soft` tailwind is proven) |
+| `backtest/` | `python -m src.edge.backtest fetch|replay|report` (costs Odds API credits) |
+| `views.py` | Read models behind the API |
 
-### Prediction Flow
-1. **Pre-game**: Odds ingested → Model scores markets → Value scores calculated
-2. **Snapshot**: 30-45 min before tip, predictions frozen in `prediction_snapshots`
-3. **Post-game**: Results synced → Predictions graded against actual outcomes
+Worker settings (env on `edge-worker`): `EDGE_SPORTS`, `EDGE_MIN_EV`, `EDGE_VERIFY_EV`, `EDGE_CREDIT_CAP`,
+`EDGE_NFL_PLAYERS`, `EDGE_BOX_RELOAD_DAYS` (default 3: NBA box scores reloaded and props regraded this many
+ET days back; raise it briefly to repair older days).
 
-### Value Score Algorithm
-- **Algorithm A**: Edge-based scoring with confidence multipliers
-- **Algorithm B**: Combined edge with market quality factors
-- Threshold of 65+ for "best bet" qualification
-
-## Database Schema (Key Tables)
-
-- `games` - Game schedule and status
-- `markets` - Betting lines and odds
-- `model_predictions` - ML model outputs (p_true, p_market, edge)
-- `value_scores` - Final value scores for each market
-- `prediction_snapshots` - Frozen predictions for tracking accuracy
-- `game_results` - Final scores and ATS/O-U results
-- `team_stats` - Rolling team statistics
-
-## Current Model Performance
-
-Historical win rates (as of 2026-01-26):
-- High value (70-79): 85.7% (6-1)
-- Medium value (60-69): 57.1% (16-12)
-- Below threshold (<60): 30.2% (13-30)
-
-Spread model v2 is showing positive results at 60+ value scores. Totals model is suppressed until fixed.
-
-## Development Guidelines
-
-1. **Before changing code**: Read the relevant files first. Understand existing patterns.
-
-2. **Database changes**: Create migrations in `backend/src/tasks/` or use ALTER TABLE statements carefully.
-
-3. **Testing changes**: Run `python3 -m src.tasks.scheduler all` to test the full pipeline.
-
-4. **Commits**: Use descriptive messages. Include "Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
-
-5. **Environment**:
-   - Backend runs on Railway (DATABASE_URL, ODDS_API_KEY, etc. in env)
-   - Frontend on Vercel
-   - Local development uses same Railway DB
-
-## Common Commands
+## Testing
 
 ```bash
-# Run full scheduler
-python3 -m src.tasks.scheduler all
+cd backend
+# Unit tests
+python3 -m pytest tests/unit -q -p no:cacheprovider
 
-# Run specific task
-python3 -m src.tasks.scheduler [stats|ingest|snapshot|grade|results]
-
-# Re-grade predictions
-python3 -m src.tasks.regrade_predictions 7
-
-# Check prediction performance
-python3 -m src.tasks.prediction_tracker summary 7
+# DB tests need a throwaway Postgres 16 (localhost:5432 hangs on this Mac, so use 55432):
+P=/opt/homebrew/opt/postgresql@16/bin
+$P/initdb -D <dir> -U edge -A trust && $P/pg_ctl -D <dir> -o "-p 55432 -k ''" -w start
+$P/createdb -h 127.0.0.1 -p 55432 -U edge edgetest
+EDGE_TEST_DB_URL=postgresql://edge@127.0.0.1:55432/edgetest \
+  python3 -m pytest tests/unit tests/integration/test_edge_store_db.py -q -p no:cacheprovider   # ~5 min
 ```
 
-## Recent Fixes & Changes
+Unit tests must not touch DB-backed routes. `test_nfl_ingest` / `test_nfl_odds_live` fail locally for
+environmental reasons.
 
-- **2026-01-26**: Fixed evaluation page spread/total storage issues:
-  - **Root cause**: `markets.line` and `game_results.closing_spread` contained corrupted data (final margins instead of actual spread lines)
-  - **Grading fix**: Now derives `home_spread` from `best_bet_line` and `best_bet_team` instead of relying on corrupt `current_spread`
-  - **API fix**: `/evaluation/daily` endpoint now queries `prediction_snapshots` instead of `markets` table
-  - **Line movement fallback**: `get_line_movement()` now queries `markets` table when `odds_snapshots` is empty
-  - **Model update**: Added 27 missing columns to `PredictionSnapshot` SQLAlchemy model
+## Operating Notes
 
-- **2026-01-26**: Fixed spread model v2 feature name mismatches:
-  - Model expected `home_win_pct_l10` but scorer provided `home_win_pct_10`
-  - Model expected `rest_advantage` but it wasn't being calculated
-  - Added alias and calculation in `scoring.py` and `scorer.py`
+- **After every push, check that both Railway services deployed.** A build that fails in Railway's builder
+  can't be redeployed from the dashboard; push a small commit under `backend/src` instead.
+- Use `git merge --no-edit` (otherwise Vim opens for the merge message).
+- Admin calls send `x-cron-key` (the copy is in git-ignored `.cron_api_key`); the key also bypasses the rate limit.
+- Commits end with `Co-Authored-By: Claude <model> <noreply@anthropic.com>`.
 
-- **2026-01-23**: Fixed prediction grading to use pre-game snapshot lines instead of potentially incorrect `game_results.closing_spread` values. Added `regrade_predictions.py` script.
+## Legacy Model Pipeline (hidden, kept for reference)
 
-## Known Data Issues
-
-- **`markets.line`**: May contain stale/corrupt data for completed games. Do NOT use for historical analysis.
-- **`game_results.closing_spread`**: Some records have incorrect values. Use `prediction_snapshots.best_bet_line` instead.
-- **`odds_snapshots`**: Table is not being populated (empty since Jan 6). Line movement tracking relies on fallback to `markets` table.
-
-**Source of Truth for Grading:**
-- Use `prediction_snapshots.best_bet_line` for the actual spread line at snapshot time
-- Derive `home_spread` from `best_bet_line` and `best_bet_team` (if away bet, negate the line)
-- Use `prediction_snapshots.best_total_line` for total line
-
-## Recent Fixes & Changes (continued)
-
-- **2026-03-12**: Fixed systematic 0% value score on home teams:
-  - **Root cause**: Model was overconfident on away sides — every market hit the ±6% edge cap (+6% away, -6% home). The model's MOV prediction disagreed with the market by >6% on every game, always in the same direction.
-  - **Fix 1**: Increased `market_regression_weight` from 0.50 → 0.70 in `scorer.py`. Now 70% market / 30% model, reducing systematic overconfidence.
-  - **Fix 2**: Added market regression for moneyline markets (previously only spread had regression). Derives market-implied MOV from devigged odds via inverse CDF (`norm.ppf`).
-  - **Fix 3**: Frontend `GameCard.tsx` now hides 0% value badges and shows "No value" text instead.
-  - **Fix 4**: Added model status logging on `ScoringService` init to verify trained vs baseline models in Railway logs.
-
-## Future Improvements (Potential)
-
-- Fix `odds_snapshots` population for proper line movement tracking
-- Improve totals model (currently suppressed)
-- Add player prop betting
-- Build alert system for high-value opportunities
-- Add backtesting framework for model iterations
-- Investigate if spread_model_v2 is loading on Railway or falling back to baseline (check logs for "ScoringService initialized" entry)
+`backend/src/tasks/scheduler.py` runs the old ML pipeline (team stats → odds ingest → scoring → snapshot →
+grading → results). Grading truth is `prediction_snapshots.best_bet_line` / `best_total_line`;
+`markets.line` and `game_results.closing_spread` contain corrupt values. Commands:
+`python3 -m src.tasks.scheduler [all|stats|ingest|snapshot|grade|results]`,
+`python3 -m src.tasks.regrade_predictions 7`.
