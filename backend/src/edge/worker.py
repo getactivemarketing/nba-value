@@ -340,7 +340,7 @@ async def box_scores_step(conn, bdl, now: datetime) -> int:
 
     Only finished games are stored (players.box_row), so a game still going at
     the first load lands on a later one, and the league's stat corrections
-    replace the first numbers. Grading re-checks recent props against them.
+    replace the first numbers. Grading (grading.run_grading) re-checks recent props against them.
     """
     last = _parse(store.get_state(conn).get("last_box_attempt"))
     if last is not None and now - last < timedelta(minutes=60):
