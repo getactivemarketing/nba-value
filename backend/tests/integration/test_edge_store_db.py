@@ -385,6 +385,19 @@ async def test_loaded_days_are_reloaded_to_pick_up_stat_corrections(conn):
     assert _tatum_pts(conn) == 31
 
 
+@pytest.mark.asyncio
+async def test_box_score_reload_window_is_a_setting(conn, monkeypatch):
+    # A one-time catch-up (10-28): widen the window to repair older days, then set it back.
+    from src.config import settings
+    from src.edge import worker
+
+    monkeypatch.setattr(settings, "edge_box_reload_days", 5)
+    bdl = _BoxBdl()
+    await worker.box_scores_step(conn, bdl, datetime(2026, 10, 28, 9, 0, tzinfo=timezone.utc))
+    assert [d.isoformat() for d in bdl.calls] == ["2026-10-23", "2026-10-24", "2026-10-25",
+                                                  "2026-10-26", "2026-10-27"]
+
+
 class _FlakyBdl(_BoxBdl):
     def __init__(self, fail_on):
         super().__init__()
@@ -1172,3 +1185,15 @@ def test_props_older_than_the_box_score_reload_window_are_left_alone(conn):
     _correct_tatum_pts(conn, 31)
     grading.run_grading(conn, tip + timedelta(days=5))
     assert _tatum_result(conn) == ("loss", -1.0)
+
+
+def test_a_wider_reload_window_regrades_older_props(conn, monkeypatch):
+    from src.config import settings
+    from src.edge import grading
+
+    tip = NOW
+    _graded_tatum_over(conn, tip, pts=30)
+    _correct_tatum_pts(conn, 31)
+    monkeypatch.setattr(settings, "edge_box_reload_days", 10)
+    grading.run_grading(conn, tip + timedelta(days=5))
+    assert _tatum_result(conn) == ("win", pytest.approx(1.1))

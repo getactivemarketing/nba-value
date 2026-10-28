@@ -15,9 +15,10 @@ from src.edge.quotes import Quote
 from src.edge.teams import ABBR_BY_NAME
 
 
-# Matches the worker's box-score reload (last 3 ET days): props this recent
-# are re-graded whenever their player's numbers change.
-REGRADE_WINDOW = timedelta(days=3)
+def regrade_window() -> timedelta:
+    """Matches the worker's box-score reload: props this recent are re-graded
+    whenever their player's numbers change."""
+    return timedelta(days=max(1, settings.edge_box_reload_days))
 
 
 def grade_over_under(actual: float, line: float, side: str) -> str:
@@ -131,7 +132,7 @@ def run_grading(conn, now: datetime) -> dict:
                          AND o.player <> '' AND e.commence_time <= %s
                          -- prop grading needs NBA box scores; NFL props get CLV only until Phase B
                          AND e.sport = 'basketball_nba'""",
-                    (now - REGRADE_WINDOW, now - timedelta(hours=3)))
+                    (now - regrade_window(), now - timedelta(hours=3)))
         props = [o for o in cur.fetchall() if o["bdl_player_id"] is not None]  # unmatched: listed on /edge/status
         # One read of the box scores for every date involved, not two queries per prop.
         dates = sorted({et_date(o["commence_time"]) for o in props})
