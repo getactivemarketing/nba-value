@@ -1197,3 +1197,15 @@ def test_a_wider_reload_window_regrades_older_props(conn, monkeypatch):
     monkeypatch.setattr(settings, "edge_box_reload_days", 10)
     grading.run_grading(conn, tip + timedelta(days=5))
     assert _tatum_result(conn) == ("win", pytest.approx(1.1))
+
+
+def test_team_defenses_are_not_listed_as_unmatched_nfl_players(conn):
+    # D/ST props have no player to match; 64 of them buried the real misses on /edge/status.
+    from src.edge import views
+
+    with conn.cursor() as cur:
+        for name in ("Baltimore Ravens Defense", "Baltimore Ravens D/ST", "Joe Nobody"):
+            cur.execute("""INSERT INTO edge_nfl_players (odds_name, team, match_method, confidence, updated_at)
+                           VALUES (%s, 'BAL', 'unmatched', 0, now())""", (name,))
+    conn.commit()
+    assert views.status(conn, NOW)["nfl_unmatched_players"] == ["Joe Nobody (BAL)"]

@@ -293,7 +293,9 @@ def status(conn, now: datetime) -> dict:
         cur.execute("SELECT odds_name FROM edge_players WHERE match_method = 'unmatched' ORDER BY odds_name")
         unmatched = [r[0] for r in cur.fetchall()]
         cur.execute("""SELECT odds_name || ' (' || team || ')' FROM edge_nfl_players
-                       WHERE match_method = 'unmatched' ORDER BY 1""")
+                       WHERE match_method = 'unmatched'
+                         AND odds_name !~ ' (Defense|D/ST)$'  -- team defense props: no player to match
+                       ORDER BY 1""")
         nfl_unmatched = [r[0] for r in cur.fetchall()]
         cur.execute("""SELECT COUNT(*) FROM edge_opportunities o JOIN edge_events e USING (event_id)
                        WHERE o.result IS NULL AND o.player <> '' AND e.sport = 'americanfootball_nfl'
