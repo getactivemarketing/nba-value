@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from psycopg2.extras import RealDictCursor
 
 from src.config import settings
-from src.edge.config import NBA, NFL, TD_MARKET, SportConfig
+from src.edge.config import HIDDEN_PICK_BOOKS, NBA, NFL, TD_MARKET, SportConfig
 from src.edge import nfl_players, players, schedule, store, tagging
 from src.edge.engine import fair_prob, group, prob_to_american, price_quotes
 from src.edge.quotes import Quote, sides_for
@@ -145,7 +145,7 @@ def ev_rows(conn, now: datetime, market: str | None = None, book: str | None = N
     out = []
     for p in price_quotes(quotes, threshold, settings.edge_verify_ev):
         q = p.quote
-        if not p.is_ev or (book and q.book != book):
+        if not p.is_ev or q.book in HIDDEN_PICK_BOOKS or (book and q.book != book):
             continue
         e = events[q.event_id]
         out.append({
@@ -265,8 +265,9 @@ def results(conn, now: datetime, days: int, market: str | None, book: str | None
     sql = """SELECT o.event_id, o.market, o.player, o.line, o.side, o.book, o.price, o.clv, o.result,
                     o.profit_units, o.first_seen_at, o.tags
              FROM edge_opportunities o JOIN edge_events e USING (event_id)
-             WHERE o.closing_done AND o.first_seen_at >= %s AND e.sport = %s"""
-    params: list = [now - timedelta(days=days), sport.key]
+             WHERE o.closing_done AND o.first_seen_at >= %s AND e.sport = %s
+               AND NOT (o.book = ANY(%s))"""
+    params: list = [now - timedelta(days=days), sport.key, list(HIDDEN_PICK_BOOKS)]
     if market:
         sql += " AND o.market = %s"
         params.append(market)

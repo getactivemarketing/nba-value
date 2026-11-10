@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.edge import grading
+from src.edge import engine, grading
 from src.edge.quotes import Quote
 
 TIP = datetime(2026, 10, 20, 23, 0, tzinfo=timezone.utc)
@@ -47,22 +47,28 @@ def test_a_line_pulled_hours_before_tip_is_not_in_the_close():
     pulled = TIP - timedelta(hours=2)
     quotes += [_hq("draftkings", "over", -120, pulled), _hq("draftkings", "under", 100, pulled)]
     opp = {"event_id": "e1", "market": "player_points", "player": "A", "side": "over",
-           "line": 25.5, "book": "fanduel", "price": -110}
+           "line": 25.5, "book": "betmgm", "price": -110}
     prob, clv, note = grading.closing_for(quotes, opp, TIP)
     assert prob is None and note == "thin close (2 books, sharp=True)"
 
 
-def test_closing_includes_own_book_and_uses_last_pre_tip_quote():
+def test_closing_excludes_own_book_and_uses_last_pre_tip_quote():
+    """Grading a pick against a close that contains its own price flatters it (an exchange
+    weighs 2x), so the close is built from the other books only."""
     at = TIP - timedelta(minutes=5)
     hist = []
-    for b in ("pinnacle", "fanduel", "betmgm"):
+    for b in ("pinnacle", "fanduel", "draftkings"):
         hist += [_hq(b, "over", -120, at), _hq(b, "under", 100, at)]
-    hist.append(_hq("betmgm", "over", 150, TIP - timedelta(hours=5)))  # older, superseded
+    hist += [_hq("novig", "over", 130, at), _hq("novig", "under", -150, at)]  # own book: ignored
+    hist.append(_hq("pinnacle", "over", 150, TIP - timedelta(hours=5)))  # older, superseded
     opp = {"event_id": "e1", "market": "player_points", "player": "A", "side": "over",
-           "line": 25.5, "book": "betmgm", "price": 120}
+           "line": 25.5, "book": "novig", "price": 130}
     prob, clv, note = grading.closing_for(hist, opp, TIP)
-    assert note is None and prob > 0.5
-    assert clv == pytest.approx(prob - 1 / 2.2)
+    others = [q for q in hist if q.book != "novig" and q.observed_at == at]
+    expected = engine.fair_prob(engine.group(others)[("e1", "player_points", "A", 25.5)],
+                                "player_points", "over", exclude_book=None).prob
+    assert note is None and prob == pytest.approx(expected)
+    assert clv == pytest.approx(prob - 1 / 2.3)
 
 
 def test_thin_close_has_no_clv_and_says_why():

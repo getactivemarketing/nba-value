@@ -4,6 +4,11 @@ from dataclasses import dataclass
 
 SHARP_BOOKS = frozenset({"pinnacle", "novig", "prophetx"})
 DFS_BOOKS = frozenset({"prizepicks", "underdog"})
+# Picks at these books are logged but never shown (board or track record). Their outliers
+# are informed prices, not mistakes: 2026-10-20..11-09 NBA picks there lost 3.8% while other
+# books' picks made 4.7%, and props flagged only at an exchange won ~3 pts below the close.
+# They still feed the fair price as sharp books.
+HIDDEN_PICK_BOOKS = frozenset({"novig", "prophetx"})
 BOOKS = (
     "pinnacle", "novig", "prophetx",
     "draftkings", "fanduel", "betmgm", "williamhill_us", "espnbet", "fanatics",

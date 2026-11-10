@@ -43,11 +43,12 @@ def profit_units(result: str, price: int) -> float:
 
 
 def closing_for(quotes: list[Quote], opp: dict, tip: datetime) -> tuple[float | None, float | None, str | None]:
-    """quotes = the event's edge_quotes rows (frozen at tip). Own book included: only our price is on trial."""
+    """quotes = the event's edge_quotes rows (frozen at tip). The pick's own book is left out of the
+    close, as it is at pick time: an exchange's own price (2x weight) flattered its picks' CLV."""
     closing = latest_before(quotes, tip, timedelta(minutes=CLOSING_WINDOW_MINUTES))
     key = (opp["event_id"], opp["market"], opp["player"], float(opp["line"]))
     books = group(closing).get(key, {})
-    f = fair_prob(books, opp["market"], opp["side"], exclude_book=None)
+    f = fair_prob(books, opp["market"], opp["side"], exclude_book=opp["book"])
     if f.thin:
         return None, None, f"thin close ({f.n_books} books, sharp={f.has_sharp})"
     return f.prob, clv(f.prob, int(opp["price"])), None

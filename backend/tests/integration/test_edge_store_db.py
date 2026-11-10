@@ -703,6 +703,22 @@ def test_results_are_per_sport(conn):
     assert views.results(conn, NOW, 30, None, None, sport=NFL)["n"] == 1
 
 
+def test_results_leave_out_exchange_picks(conn):
+    from src.edge import views
+    from src.edge.config import NBA
+    store.upsert_events(conn, [_event()])
+    with conn.cursor() as cur:
+        for book in ("fanduel", "novig", "prophetx"):
+            cur.execute("""INSERT INTO edge_opportunities (event_id, market, player, side, line, book, price,
+                           first_seen_at, last_seen_at, fair_prob, ev, max_ev, n_books, devig_method,
+                           closing_done, clv) VALUES ('e1', 'h2h', '', 'home', 0, %s, 110, %s, %s,
+                           0.5, 0.05, 0.05, 5, 'power', TRUE, 0.01)""", (book, NOW, NOW))
+    conn.commit()
+    out = views.results(conn, NOW, 30, None, None, sport=NBA)
+    assert out["n"] == 1 and set(out["by_book"]) == {"fanduel"}
+    assert views.results(conn, NOW, 30, None, "novig", sport=NBA)["n"] == 0
+
+
 @pytest.mark.asyncio
 async def test_a_long_game_still_gets_its_final_score(conn):
     """MNF overtime ends ~3h40m after kickoff; the next NFL game is days away.

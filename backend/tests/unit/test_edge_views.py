@@ -85,3 +85,15 @@ def test_results_by_tag_groups_by_key_and_direction():
     assert s["by_tag"]["def_soft:tailwind"]["n"] == 2
     assert s["by_tag"]["def_soft:tailwind"]["clv"]["mean_clv"] == 0.03
     assert views.results_summary([r(0.0, None)])["by_tag"] == {}
+
+
+def test_exchange_picks_are_logged_but_not_on_the_board(monkeypatch):
+    """Novig/ProphetX outliers are informed prices, not mistakes: on 2026-10-20..11-09 their
+    NBA picks lost 3.8% while other books' picks made 4.7%. They still feed the fair price."""
+    priced = _setup(monkeypatch, None, home="Boston Celtics", away="Detroit Pistons")
+    nv = Quote("e1", "player_points", "C Three", "over", 20.5, "novig", 120, None, NOW)
+    px = Quote("e1", "player_points", "C Three", "over", 20.5, "prophetx", 118, None, NOW)
+    priced += [Priced(nv, Fair(0.5, 5, True), 0.10, True, False),
+               Priced(px, Fair(0.5, 5, True), 0.09, True, False)]
+    rows = views.ev_rows(None, NOW, min_ev=0.0, sport=NBA)
+    assert {r["book"] for r in rows} == {"fanduel"} and len(rows) == 3
