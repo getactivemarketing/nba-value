@@ -1,6 +1,7 @@
 // frontend/src/components/edge/EvTable.tsx
 import { Link } from 'react-router-dom';
 import type { EvRow } from '@/types/edge';
+import { FormCell } from './FormCell';
 import { TagChips } from './TagChips';
 import { bookLabel, edgeBase, fmtAge, fmtAmerican, fmtEv, type Sport } from '@/lib/edgeFormat';
 
@@ -16,7 +17,8 @@ export function EvTable({ rows, playerIds = {}, sport = 'nba' }:
           <tr className="text-left text-[10px] text-[#64748b] uppercase font-bold tracking-widest border-b border-[#1e293b]">
             <th className="pb-2">EV</th><th className="pb-2">Bet</th><th className="pb-2">Book</th>
             <th className="pb-2 text-center">Price</th><th className="pb-2 text-center">Fair</th>
-            <th className="pb-2 text-center">Books</th><th className="pb-2 text-center">Age</th><th className="pb-2" />
+            <th className="pb-2 text-center">Books</th>
+            {sport === 'nba' && <th className="pb-2 text-center" title="How often this bet won in the player's last 10 games">L10</th>}<th className="pb-2 text-center">Age</th><th className="pb-2" />
           </tr>
         </thead>
         <tbody>
@@ -41,6 +43,11 @@ export function EvTable({ rows, playerIds = {}, sport = 'nba' }:
               <td className="py-2 text-center font-mono text-[#f1f5f9]">{fmtAmerican(r.price)}</td>
               <td className="py-2 text-center font-mono text-[#94a3b8] text-xs">{fmtAmerican(r.fair_price)}</td>
               <td className="py-2 text-center font-mono text-[#94a3b8] text-xs">{r.n_books}</td>
+              {sport === 'nba' && (
+                <td className="py-2 text-center font-mono text-xs">
+                  <FormCell form={r.form ?? null} flag={r.form_flag ?? false} fairProb={r.fair_prob} />
+                </td>
+              )}
               <td className="py-2 text-center font-mono text-[#64748b] text-xs">{fmtAge(r.observed_at)}</td>
               <td className="py-2 text-right">
                 {r.link && (

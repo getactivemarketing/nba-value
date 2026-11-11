@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from psycopg2.extras import RealDictCursor
 
 from src.config import settings
-from src.edge.config import HIDDEN_PICK_BOOKS, NBA, NFL, TD_MARKET, SportConfig
+from src.edge.config import FORM_FLAG_GAP, HIDDEN_PICK_BOOKS, NBA, NFL, TD_MARKET, SportConfig
 from src.edge import nfl_players, players, schedule, store, tagging
 from src.edge.engine import fair_prob, group, prob_to_american, price_quotes
 from src.edge.quotes import Quote, sides_for
@@ -142,12 +142,18 @@ def ev_rows(conn, now: datetime, market: str | None = None, book: str | None = N
     else:
         player_ids = _player_ids(conn)
     tagger = tagging.live_tagger(conn, now) if sport.slug == "nfl" and sport.has_players else None
+    picks = [p for p in price_quotes(quotes, threshold, settings.edge_verify_ev)
+             if p.is_ev and p.quote.book not in HIDDEN_PICK_BOOKS and not (book and p.quote.book != book)]
+    recent = {}
+    if sport.slug == "nba":
+        ids = {player_ids[p.quote.player] for p in picks if p.quote.player in player_ids}
+        recent = players.load_recent_games(conn, sorted(ids)) if ids else {}
     out = []
-    for p in price_quotes(quotes, threshold, settings.edge_verify_ev):
+    for p in picks:
         q = p.quote
-        if not p.is_ev or q.book in HIDDEN_PICK_BOOKS or (book and q.book != book):
-            continue
         e = events[q.event_id]
+        games_ = recent.get(player_ids.get(q.player))
+        form = players.recent_form(games_, q.market, float(q.line), q.side) if games_ else None
         out.append({
             "event_id": q.event_id, "matchup": f"{e['away_team']} @ {e['home_team']}",
             "commence_time": e["commence_time"].isoformat(), "market": q.market,
@@ -158,6 +164,8 @@ def ev_rows(conn, now: datetime, market: str | None = None, book: str | None = N
             "observed_at": q.observed_at.isoformat(), "verify": p.verify,
             "bdl_player_id": player_ids.get(q.player),
             "tags": tagging.row_tags(tagger, q.player, q.market, q.side, e["home_team"], e["away_team"]),
+            "form": form,
+            "form_flag": bool(form and form["rate"] < p.fair.prob - FORM_FLAG_GAP),
         })
     return sorted(out, key=tagging.sort_key, reverse=True)
 

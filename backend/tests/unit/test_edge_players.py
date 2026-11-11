@@ -213,3 +213,18 @@ async def test_bdl_network_errors_become_bdl_errors():
     with pytest.raises(p.BdlError) as exc:
         await bdl.teams()
     assert exc.value.status == 0
+
+
+def test_recent_form_counts_the_bet_side_over_the_last_10_played_games():
+    pts = [30, 10, 10, 26, 10, 25, 10, 10, 10, 10, 40, 40]  # newest first; the last two are 11+ games back
+    games = [g(date(2026, 11, 20 - i), x) for i, x in enumerate(pts)]
+    games.insert(1, g(date(2026, 11, 19), 0, mins=0.0))  # DNP: skipped, not counted as a game
+    over = p.recent_form(games, "player_points", 25.0, "over")
+    assert over == {"hits": 2, "games": 9, "rate": 0.222}  # the 25 is a push: out of the rate
+    assert p.recent_form(games, "player_points", 25.0, "under")["hits"] == 7
+
+
+def test_recent_form_needs_five_games_and_a_stat_market():
+    games = [g(date(2026, 11, 10 - i), 20) for i in range(4)]
+    assert p.recent_form(games, "player_points", 15.5, "over") is None
+    assert p.recent_form(games * 2, "player_blocks", 0.5, "over") is None

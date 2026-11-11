@@ -192,6 +192,7 @@ def test_views_on_real_sql(conn):
     assert [(r["book"], r["side"]) for r in rows] == [("betmgm", "over")]
     assert rows[0]["bet"] == "Jayson Tatum Over 27.5 Points" and rows[0]["bdl_player_id"] == 434
     assert rows[0]["link"] == "https://betmgm"
+    assert rows[0]["form"] is None and rows[0]["form_flag"] is False  # 3 games: too few for a form read
 
     grid = views.odds(conn, now, "e1", "player_points")
     over = [r for r in grid["rows"] if r["side"] == "over"][0]
@@ -1226,3 +1227,21 @@ def test_team_defenses_are_not_listed_as_unmatched_nfl_players(conn):
                            VALUES (%s, 'BAL', 'unmatched', 0, now())""", (name,))
     conn.commit()
     assert views.status(conn, NOW)["nfl_unmatched_players"] == ["Joe Nobody (BAL)"]
+
+
+def test_load_recent_games_keeps_each_players_newest_played_games(conn):
+    from src.edge import players
+
+    with conn.cursor() as cur:
+        for pid, n in ((434, 15), (77, 2)):
+            for i in range(n):
+                cur.execute("""INSERT INTO edge_player_games (bdl_player_id, bdl_game_id, season, game_date, team,
+                               opponent, is_home, minutes, pts, reb, ast, fg3m, stl, blk, tov)
+                               VALUES (%s, %s, 2026, %s, 'BOS', 'DET', false, %s, %s, 0, 0, 0, 0, 0, 0)""",
+                            (pid, pid * 100 + i, datetime(2026, 11, 20 - i).date(), 0 if i == 0 else 30, i))
+    conn.commit()
+    got = players.load_recent_games(conn, [434, 77, 999])
+    assert set(got) == {434, 77}
+    assert len(got[434]) == 12 and min(g["pts"] for g in got[434]) == 1  # the DNP (pts 0) is skipped
+    assert len(got[77]) == 1
+    assert players.load_recent_games(conn, []) == {}

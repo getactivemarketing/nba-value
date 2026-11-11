@@ -97,3 +97,28 @@ def test_exchange_picks_are_logged_but_not_on_the_board(monkeypatch):
                Priced(px, Fair(0.5, 5, True), 0.09, True, False)]
     rows = views.ev_rows(None, NOW, min_ev=0.0, sport=NBA)
     assert {r["book"] for r in rows} == {"fanduel"} and len(rows) == 3
+
+
+def test_nba_rows_carry_recent_form_and_flag_big_disagreements(monkeypatch):
+    """2026-10-20..11-10 NBA props at regular books: picks whose last-10 hit rate ran 15+ points
+    below the market's fair chance returned -0.8%; the rest returned about +6.4%."""
+    priced = _setup(monkeypatch, None, home="Boston Celtics", away="Detroit Pistons")
+    cold = Quote("e1", "player_points", "C Three", "over", 20.5, "fanduel", 120, None, NOW)
+    warm = Quote("e1", "player_points", "C Three", "under", 20.5, "betmgm", 120, None, NOW)
+    priced[:] = [Priced(cold, Fair(0.50, 6, True), 0.10, True, False),
+                 Priced(warm, Fair(0.50, 6, True), 0.08, True, False)]
+    monkeypatch.setattr(views, "_player_ids", lambda conn: {"C Three": 7})
+    pts = [10, 12, 30, 9, 11, 14, 25, 8, 13, 10]  # over 20.5 in 2 of 10
+    games = [{"game_date": NOW.date() - timedelta(days=i + 1), "minutes": 30.0, "pts": x, "reb": 0, "ast": 0,
+              "fg3m": 0} for i, x in enumerate(pts)]
+    monkeypatch.setattr(views.players, "load_recent_games", lambda conn, ids: {7: games})
+    rows = {r["side"]: r for r in views.ev_rows(None, NOW, min_ev=0.0, sport=NBA)}
+    assert rows["over"]["form"] == {"hits": 2, "games": 10, "rate": 0.2}
+    assert rows["over"]["form_flag"] is True  # 20% vs the market's 50%
+    assert rows["under"]["form"]["rate"] == 0.8 and rows["under"]["form_flag"] is False
+
+
+def test_rows_without_box_scores_have_no_form(monkeypatch):
+    _setup(monkeypatch, None)  # NFL: no recent-form check
+    assert all(r["form"] is None and r["form_flag"] is False
+               for r in views.ev_rows(None, NOW, min_ev=0.0, sport=NFL))

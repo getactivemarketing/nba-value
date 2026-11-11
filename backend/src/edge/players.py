@@ -153,6 +153,20 @@ def hit_rates(games: list[dict], market: str, line: float, opponent: str | None,
     }
 
 
+def recent_form(games: list[dict], market: str, line: float, side: str, n: int = 10) -> dict | None:
+    """How often the bet side won in the player's last n played games. Pushes are left out of
+    `games`. None below 5 played games or for a market box scores can't grade."""
+    if market not in STAT_PARTS:
+        return None
+    played = sorted((x for x in games if (x["minutes"] or 0) > 0), key=lambda x: x["game_date"], reverse=True)[:n]
+    if len(played) < 5:
+        return None
+    stats = [stat_for(market, x) for x in played]
+    hits = sum(1 for v in stats if (v > line if side == "over" else v < line))
+    decided = sum(1 for v in stats if v != line)
+    return {"hits": hits, "games": decided, "rate": round(hits / decided, 3)} if decided else None
+
+
 class BdlError(Exception):
     def __init__(self, status: int, message: str):
         self.status = status
@@ -290,6 +304,21 @@ def load_games(conn, bdl_player_id: int, limit: int = 82) -> list[dict]:
         cur.execute("""SELECT * FROM edge_player_games WHERE bdl_player_id = %s
                        ORDER BY game_date DESC LIMIT %s""", (bdl_player_id, limit))
         return [dict(r) for r in cur.fetchall()]
+
+
+def load_recent_games(conn, bdl_player_ids: list[int], per_player: int = 12) -> dict[int, list[dict]]:
+    """Each player's most recent played games, for the board's recent-form check."""
+    if not bdl_player_ids:
+        return {}
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""SELECT * FROM (
+                         SELECT g.*, row_number() OVER (PARTITION BY bdl_player_id ORDER BY game_date DESC) rn
+                         FROM edge_player_games g WHERE bdl_player_id = ANY(%s) AND minutes > 0) t
+                       WHERE rn <= %s""", (list(bdl_player_ids), per_player))
+        out: dict[int, list[dict]] = {}
+        for r in cur.fetchall():
+            out.setdefault(r["bdl_player_id"], []).append(dict(r))
+        return out
 
 
 async def backfill(conn, bdl: BdlClient, start: date, end: date) -> int:

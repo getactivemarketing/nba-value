@@ -9,6 +9,11 @@ DFS_BOOKS = frozenset({"prizepicks", "underdog"})
 # books' picks made 4.7%, and props flagged only at an exchange won ~3 pts below the close.
 # They still feed the fair price as sharp books.
 HIDDEN_PICK_BOOKS = frozenset({"novig", "prophetx"})
+
+# NBA props whose last-10 hit rate runs this far below the market's fair chance are flagged (not
+# hidden). 2026-10-20..11-10 at regular books: flagged picks returned -0.8%, the rest about +6.4%
+# (found after the fact; re-check on later games before hiding them).
+FORM_FLAG_GAP = 0.15
 BOOKS = (
     "pinnacle", "novig", "prophetx",
     "draftkings", "fanduel", "betmgm", "williamhill_us", "espnbet", "fanatics",

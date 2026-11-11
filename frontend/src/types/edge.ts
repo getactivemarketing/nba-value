@@ -9,7 +9,9 @@ export interface EvRow {
   link: string | null; fair_prob: number; fair_price: number; ev: number; n_books: number;
   observed_at: string; verify: boolean; bdl_player_id: number | null;
   tags: EvTag[];
+  form?: EvForm | null; form_flag?: boolean;
 }
+export interface EvForm { hits: number; games: number; rate: number }
 export interface EdgeGame {
   event_id: string; home_team: string; away_team: string; commence_time: string;
   last_lines_poll: string | null; last_props_poll: string | null; prop_markets: number;
