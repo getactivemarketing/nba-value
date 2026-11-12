@@ -1,11 +1,13 @@
 // frontend/src/pages/EdgeHome.tsx
 import { Link } from 'react-router-dom';
-import { useEdgeGames } from '@/hooks/useEdge';
+import { useEdgeGames, useEdgeNightly } from '@/hooks/useEdge';
 import { EdgeFinder } from '@/pages/EdgeFinder';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
+import { NightlyCard } from '@/components/edge/NightlyCard';
 
 export function EdgeHome() {
   const { data: games = [] } = useEdgeGames();
+  const { data: nightly } = useEdgeNightly();
   return (
     <div>
       <h1 className="text-3xl font-bold text-[#f1f5f9] font-display tracking-tight">Tonight's NBA slate</h1>
@@ -21,6 +23,7 @@ export function EdgeHome() {
           </Link>
         ))}
       </div>
+      {nightly && <NightlyCard data={nightly} />}
       <div className="mt-8 flex items-baseline justify-between">
         <h2 className="text-base font-black font-mono text-[#94a3b8]">Top +EV right now</h2>
         <Link to="/edge" className="text-xs font-mono text-[#a4e6ff]">See all →</Link>

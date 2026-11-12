@@ -49,3 +49,20 @@ export interface ResultsResponse extends ResultsBlock {
   by_tag?: Record<string, ResultsBlock>;
   daily_clv: { date: string; mean_clv: number; n: number }[];
 }
+
+export interface NightlyLeg {
+  event_id: string; matchup: string; commence_time: string; market: string; market_label: string;
+  player: string; side: string; line: number; bet: string; book: string; price: number;
+  fair_prob: number; ev: number; n_books: number; form: EvForm | null;
+  result: 'win' | 'loss' | 'push' | 'void' | null; profit_units: number | null;
+}
+export interface NightlyParlay {
+  book: string; legs: NightlyLeg[]; decimal: number; american: number; hit_prob: number; ev: number;
+  result: 'win' | 'loss' | 'push' | null; profit_units: number | null;
+}
+export interface NightlyCard { slate_date: string; locked_at: string; top: NightlyLeg[]; parlay: NightlyParlay | null }
+export interface NightlyResponse {
+  slate_date: string; locks_at: string | null; tonight: NightlyCard | null; history: NightlyCard[];
+  record: { top: { n: number; wins: number; losses: number; units: number };
+            parlay: { n: number; wins: number; units: number } };
+}

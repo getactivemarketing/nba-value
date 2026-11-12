@@ -17,3 +17,5 @@ export const useEdgeResults = (days = 365, sport: Sport = 'nba') =>
   useQuery({ queryKey: ['edge', sport, 'results', days], queryFn: () => edgeApi.results(days, sport), staleTime: 300000 });
 export const useEdgeHealth = (sport: Sport = 'nba') =>
   useQuery({ queryKey: ['edge', sport, 'health'], queryFn: () => edgeApi.health(sport), refetchInterval: 60000 });
+export const useEdgeNightly = () =>
+  useQuery({ queryKey: ['edge', 'nba', 'nightly'], queryFn: () => edgeApi.nightly(), refetchInterval: 120000 });

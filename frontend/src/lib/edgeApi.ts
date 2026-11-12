@@ -1,6 +1,6 @@
 // frontend/src/lib/edgeApi.ts
 import axios from 'axios';
-import type { EdgeGame, EvRow, OddsResponse, PlayerResponse, ResultsResponse } from '@/types/edge';
+import type { EdgeGame, EvRow, NightlyResponse, OddsResponse, PlayerResponse, ResultsResponse } from '@/types/edge';
 import type { Sport } from './edgeFormat';
 
 const client = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api/v1' });
@@ -24,6 +24,9 @@ export const edgeApi = {
   },
   async results(days = 365, sport: Sport = 'nba'): Promise<ResultsResponse> {
     return (await client.get<ResultsResponse>('/edge/results', { params: { days, sport } })).data;
+  },
+  async nightly(): Promise<NightlyResponse> {
+    return (await client.get<NightlyResponse>('/edge/nightly', { params: { sport: 'nba' } })).data;
   },
   async health(sport: Sport = 'nba'): Promise<{ delayed: boolean }> {
     return (await client.get<{ delayed: boolean }>('/edge/health', { params: { sport } })).data;

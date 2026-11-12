@@ -1245,3 +1245,50 @@ def test_load_recent_games_keeps_each_players_newest_played_games(conn):
     assert len(got[434]) == 12 and min(g["pts"] for g in got[434]) == 1  # the DNP (pts 0) is skipped
     assert len(got[77]) == 1
     assert players.load_recent_games(conn, []) == {}
+
+
+def test_nightly_locks_once_then_grades_from_logged_picks(conn, monkeypatch):
+    from src.edge import nightly, views
+
+    tip = datetime(2026, 11, 12, 0, 10, tzinfo=timezone.utc)  # 7:10 pm ET on 11-11
+    evs = [{"event_id": f"g{i}", "sport": "basketball_nba", "home_team": "Boston Celtics",
+            "away_team": "Detroit Pistons", "commence_time": tip + timedelta(hours=i)} for i in range(3)]
+    store.upsert_events(conn, evs)
+
+    def board(conn_, now, sport=None):
+        return [{"event_id": f"g{i}", "matchup": "Detroit Pistons @ Boston Celtics",
+                 "commence_time": (tip + timedelta(hours=i)).isoformat(), "market": "player_points",
+                 "market_label": "Points", "player": f"P{i}", "side": "over", "line": 20.5,
+                 "bet": f"P{i} Over 20.5 Points", "book": "betmgm", "price": 100, "fair_prob": 0.55,
+                 "ev": 0.1 - i / 100, "n_books": 8, "verify": False,
+                 "form": {"hits": 6, "games": 10, "rate": 0.6}, "form_flag": False} for i in range(3)]
+    monkeypatch.setattr(views, "ev_rows", board)
+
+    early = tip - timedelta(minutes=61)
+    assert nightly.maybe_lock(conn, early) == 0
+    out = nightly.nightly(conn, early)
+    assert out["tonight"] is None and out["locks_at"] == (tip - timedelta(hours=1)).isoformat()
+
+    at = tip - timedelta(minutes=59)
+    assert nightly.maybe_lock(conn, at) == 6  # 3 top + 3 parlay legs
+    assert nightly.maybe_lock(conn, at + timedelta(minutes=5)) == 0  # locked once
+
+    # Results come from any logged pick on the same bet (another book, another price).
+    with conn.cursor() as cur:
+        for i, res in enumerate(["win", "win", "loss"]):
+            cur.execute("""INSERT INTO edge_opportunities (event_id, market, player, side, line, book, price,
+                           first_seen_at, last_seen_at, fair_prob, ev, max_ev, n_books, devig_method, closing_done,
+                           result, profit_units)
+                           VALUES (%s, 'player_points', %s, 'over', 20.5, 'fanduel', -110, %s, %s, 0.55, 0.05,
+                           0.05, 8, 'power', true, %s, 0)""", (f"g{i}", f"P{i}", at, at, res))
+    conn.commit()
+    card = nightly.nightly(conn, at)["tonight"]
+    assert [l["result"] for l in card["top"]] == ["win", "win", "loss"]
+    assert card["top"][0]["profit_units"] == 1.0 and card["top"][0]["form"]["hits"] == 6
+    assert card["parlay"]["book"] == "betmgm" and card["parlay"]["result"] == "loss"
+    assert card["parlay"]["american"] == 700
+
+    later = nightly.nightly(conn, at + timedelta(days=1))
+    assert later["tonight"] is None and len(later["history"]) == 1
+    assert later["record"] == {"top": {"n": 3, "wins": 2, "losses": 1, "units": 1.0},
+                               "parlay": {"n": 1, "wins": 0, "units": -1.0}}

@@ -20,7 +20,7 @@ from psycopg2.pool import ThreadedConnectionPool
 from src.api.admin import _verify_cron_key
 from src.api.deps import require_admin
 from src.config import get_sync_database_url
-from src.edge import store, views
+from src.edge import nightly, store, views
 from src.edge.config import SPORTS, SportConfig
 from src.utils.redact import redact
 
@@ -197,6 +197,13 @@ def get_results(days: int = Query(365, ge=1, le=730), market: str | None = None,
                 book: str | None = None, sp: SportConfig = Depends(_sport)) -> dict:
     return _cached(("results", sp.slug, days, market, book),
                    lambda c, now: views.results(c, now, days, market, book, sp))
+
+
+@router.get("/nightly")
+def get_nightly(sp: SportConfig = Depends(_sport)) -> dict:
+    if sp.slug != "nba":
+        raise HTTPException(status_code=404, detail="tonight's top 5 is NBA only")
+    return _cached(("nightly", sp.slug), lambda c, now: nightly.nightly(c, now, sp))
 
 
 @router.get("/health")

@@ -131,6 +131,34 @@ class EdgeApiCall(Base):
     remaining: Mapped[int | None] = mapped_column(Integer)
 
 
+class EdgeNightlyLeg(Base):
+    """Tonight's top 5 and parlay, locked an hour before the first game (src/edge/nightly.py).
+    Results are read from edge_opportunities, not stored here."""
+    __tablename__ = "edge_nightly_legs"
+    __table_args__ = (UniqueConstraint("sport", "slate_date", "kind", "rank", name="uq_edge_nightly_legs"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    sport: Mapped[str] = mapped_column(String(8), nullable=False)
+    slate_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)  # top|parlay
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    locked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    matchup: Mapped[str] = mapped_column(String(130), nullable=False)
+    commence_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    market: Mapped[str] = mapped_column(String(48), nullable=False)
+    market_label: Mapped[str] = mapped_column(String(24), nullable=False)
+    player: Mapped[str] = mapped_column(String(80), nullable=False)
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    line: Mapped[float] = mapped_column(Numeric(6, 2), nullable=False)
+    bet: Mapped[str] = mapped_column(String(160), nullable=False)
+    book: Mapped[str] = mapped_column(String(32), nullable=False)
+    price: Mapped[int] = mapped_column(Integer, nullable=False)
+    fair_prob: Mapped[float] = mapped_column(Numeric(6, 5), nullable=False)
+    ev: Mapped[float] = mapped_column(Numeric(7, 5), nullable=False)
+    n_books: Mapped[int] = mapped_column(Integer, nullable=False)
+    form: Mapped[dict | None] = mapped_column(JSONB)
+
+
 class EdgeWorkerState(Base):
     __tablename__ = "edge_worker_state"
     key: Mapped[str] = mapped_column(String(40), primary_key=True)

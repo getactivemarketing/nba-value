@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from src.config import settings
 from src.database import init_edge_tables
-from src.edge import grading, matchups, matchups_store, nfl_injuries, nfl_players, opportunities, players, schedule, store, tagging
+from src.edge import grading, matchups, matchups_store, nfl_injuries, nightly, nfl_players, opportunities, players, schedule, store, tagging
 from src.edge.client import EdgeOddsClient, OddsApiError, Usage
 from src.edge.config import LINE_MARKETS, SportConfig, enabled_sports, state_key
 from src.edge.engine import price_quotes
@@ -114,6 +114,14 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
         store.set_state(conn, "last_grading", _iso(now), now)
 
     out["pruned"] = prune_step(conn, now)
+
+    if any(s.slug == "nba" for s in sports):
+        try:
+            out["nightly"] = nightly.maybe_lock(conn, now)
+        except Exception as e:  # noqa: BLE001 - tonight's picks never block odds
+            log.exception("nightly lock failed")
+            conn.rollback()
+            store.set_state(conn, "nightly_error", redact(f"{type(e).__name__}: {e}")[:300], now)
 
     # BallDontLie work never blocks odds: failures land in bdl_error.
     for step in (box_scores_step, backfill_step):
