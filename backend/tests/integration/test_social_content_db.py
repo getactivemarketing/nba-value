@@ -101,3 +101,44 @@ def test_posted_plays_blind_and_value_with_results(conn):
         ("blind", "A One", "win"), ("value", "B Two", None)]  # no parlay leg, no other game's play
     assert plays[0]["bet"] == "A One Over 20.5 Points" and plays[0]["profit_units"] == pytest.approx(1.16)
     assert plays[1]["profit_units"] is None
+
+
+def test_posted_plays_dedupes_blind_that_is_also_a_top_leg(conn):
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_blind_plays (sport, n, slate_date, event_id, market, market_label, player,
+                       side, line, book, price, fair_prob, ev, n_books, commence_time, created_at)
+                       VALUES ('nba',4,%s,'e1','player_points','Points','A One','over',20.5,'fanduel',116,0.49,0.1,9,%s,%s)""",
+                    (DAY, TIP, NOW))
+        cur.execute("""INSERT INTO edge_nightly_legs (sport, slate_date, kind, rank, locked_at, event_id, matchup,
+                       commence_time, market, market_label, player, side, line, bet, book, price, fair_prob, ev, n_books)
+                       VALUES ('nba',%s,'top',0,%s,'e1','D @ B',%s,'player_points','Points','A One','over',20.5,
+                               'x','fanduel',116,0.55,0.05,8)""", (DAY, NOW, TIP))
+    conn.commit()
+    plays = content.posted_plays(conn, "e1")
+    assert [(p["kind"], p["player"]) for p in plays] == [("blind", "A One")]
+
+
+def ev_row(cur, eid, sport, home, away, hs, as_, completed=True, status="final", day=date(2026, 11, 1)):
+    cur.execute("""INSERT INTO edge_events (event_id, sport, home_team, away_team, commence_time, status, completed,
+                   home_score, away_score) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (eid, sport, home, away, datetime(day.year, day.month, day.day, 23, tzinfo=timezone.utc),
+                 status, completed, hs, as_))
+
+
+def test_team_records(conn):
+    with conn.cursor() as cur:
+        n = "basketball_nba"
+        ev_row(cur, "a", n, "Boston Celtics", "Detroit Pistons", 110, 100)
+        ev_row(cur, "b", n, "Detroit Pistons", "Boston Celtics", 90, 95)
+        ev_row(cur, "c", n, "Boston Celtics", "Miami Heat", 100, 101)
+        ev_row(cur, "d", n, "Boston Celtics", "Miami Heat", None, None, completed=False, status="scheduled")
+        ev_row(cur, "e", n, "Boston Celtics", "Miami Heat", 0, 0, status="postponed")
+        ev_row(cur, "f", n, "Boston Celtics", "Miami Heat", 100, 80, day=date(2026, 10, 1))  # preseason
+        ev_row(cur, "g", "americanfootball_nfl", "Dallas Cowboys", "Tampa Bay Buccaneers", 27, 27,
+               day=date(2026, 10, 11))
+    conn.commit()
+    nba = content.team_records(conn, "nba", content.SEASON_START["nba"])
+    assert nba["BOS"] == {"w": 2, "l": 1, "t": 0, "games": 3, "label": "2-1"}
+    assert nba["DET"]["label"] == "0-2" and nba["MIA"]["label"] == "1-0"
+    nfl = content.team_records(conn, "nfl", content.SEASON_START["nfl"])
+    assert nfl["DAL"] == {"w": 0, "l": 0, "t": 1, "games": 1, "label": "0-0-1"}

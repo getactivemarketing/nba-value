@@ -10,20 +10,17 @@ from src.config import settings
 from src.edge import nightly, players, views
 from src.edge.grading import profit_units
 from src.edge.players import ET, et_date
+from src.edge.social.safety import tip_of
 from src.edge.teams import ABBR_BY_NAME, NFL_ABBR_BY_NAME
 
 CHEATSHEET_MIN, CHEATSHEET_MAX = 6, 10
+SEASON_START = {"nba": date(2026, 10, 20), "nfl": date(2026, 9, 1)}
 _NICK_OVERRIDES = {"Portland Trail Blazers": "TrailBlazers"}
 
 
 def slate_for(commence: datetime) -> date:
     """The slate a game belongs to: the ET date of its tip (a game that crosses midnight stays put)."""
     return nightly.slate_date(commence)
-
-
-def _tip(x: dict) -> datetime:
-    t = x["commence_time"]
-    return datetime.fromisoformat(t) if isinstance(t, str) else t
 
 
 # ---- links and text -------------------------------------------------------------------------
@@ -64,7 +61,7 @@ def nickname(full_name: str) -> str:
 
 def final_text(sport: str, event: dict, w: int, l: int, pushes: int, units: float) -> str:
     rec = f"{w}-{l}" + (f"-{pushes}" if pushes > 0 else "")
-    tail = f"{rec} {'✅ ' if units > 0 else ''}{units:+.2f}u"
+    tail = f"{rec} {'✅ ' if round(units, 2) > 0 else ''}{units:+.2f}u"
     away, home = event["away_team"], event["home_team"]
     return (f"FINAL\n\n{away} {event['away_score']}, {home} {event['home_score']}\n\n"
             f"TruLine plays in this game: {tail}\n\n"
@@ -110,7 +107,7 @@ def second_source_nba(conn, event: dict) -> tuple[int, int] | None:
     with conn.cursor() as cur:
         cur.execute("""SELECT team, SUM(pts) FROM edge_player_games
                        WHERE game_date = %s AND team = ANY(%s) AND opponent = ANY(%s) GROUP BY team""",
-                    (et_date(_tip(event)), [home, away], [home, away]))
+                    (et_date(tip_of(event)), [home, away], [home, away]))
         pts = {t: int(p) for t, p in cur.fetchall()}
     conn.rollback()
     return (pts[home], pts[away]) if home in pts and away in pts else None
@@ -122,7 +119,7 @@ def second_source_nfl(conn, event: dict) -> tuple[int, int] | None:
     home, away = NFL_ABBR_BY_NAME.get(event["home_team"]), NFL_ABBR_BY_NAME.get(event["away_team"])
     if not home or not away:
         return None
-    day = et_date(_tip(event))
+    day = et_date(tip_of(event))
     with conn.cursor() as cur:
         cur.execute("""SELECT home_score, away_score FROM edge_nfl_games
                        WHERE home = %s AND away = %s AND status_state = 'final'
@@ -157,7 +154,50 @@ def posted_plays(conn, event_id: str) -> list[dict]:
                         WHERE x.event_id = %s AND x.kind = 'top' ORDER BY x.slate_date, x.rank""", (event_id,))
         out += [{**dict(r), "kind": "value"} for r in cur.fetchall()]
     conn.rollback()
+    seen: set[tuple] = set()
+    deduped = []
+    for p in out:  # blind rows come first, so a bet that is also a Top-5 leg keeps the blind row
+        key = (p["market"], p["player"], p["side"], float(p["line"]))
+        if key not in seen:
+            seen.add(key)
+            deduped.append(p)
+    out = deduped
     for p in out:
         p["line"], p["price"] = float(p["line"]), int(p["price"])
         p["profit_units"] = round(profit_units(p["result"], p["price"]), 4) if p["result"] else None
+    return out
+
+
+def record_line(plays: list[dict]) -> tuple[int, int, int, float]:
+    """(wins, losses, pushes, units) over graded plays; void and ungraded plays are left out."""
+    graded = [p for p in plays if p.get("result") in ("win", "loss", "push")]
+    return (sum(p["result"] == "win" for p in graded), sum(p["result"] == "loss" for p in graded),
+            sum(p["result"] == "push" for p in graded), round(sum(p["profit_units"] or 0.0 for p in graded), 4))
+
+
+# ---- team records ---------------------------------------------------------------------------
+
+def team_records(conn, sport: str, season_start: date) -> dict[str, dict]:
+    """W-L(-T) per team abbreviation from completed edge_events (both scores present) since
+    `season_start`. Postponed/cancelled/suspended rows never count."""
+    abbr = ABBR_BY_NAME if sport == "nba" else NFL_ABBR_BY_NAME
+    key = "basketball_nba" if sport == "nba" else "americanfootball_nfl"
+    start = datetime(season_start.year, season_start.month, season_start.day, tzinfo=ET)
+    with conn.cursor() as cur:
+        cur.execute("""SELECT home_team, away_team, home_score, away_score FROM edge_events
+                       WHERE sport = %s AND completed AND home_score IS NOT NULL AND away_score IS NOT NULL
+                         AND commence_time >= %s AND status !~* '(postponed|cancel|suspended)'""", (key, start))
+        games = cur.fetchall()
+    conn.rollback()
+    out: dict[str, dict] = {}
+    for home, away, hs, a_s in games:
+        for name, mine, theirs in ((home, hs, a_s), (away, a_s, hs)):
+            t = abbr.get(name)
+            if not t:
+                continue
+            r = out.setdefault(t, {"w": 0, "l": 0, "t": 0, "games": 0})
+            r["games"] += 1
+            r["w" if mine > theirs else "l" if mine < theirs else "t"] += 1
+    for r in out.values():
+        r["label"] = f"{r['w']}-{r['l']}" + (f"-{r['t']}" if r["t"] else "")
     return out

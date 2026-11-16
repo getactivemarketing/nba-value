@@ -53,3 +53,16 @@ def test_no_second_source_or_incomplete_blocks():
 def test_postponed_game_never_recapped_or_receipted():
     for status in ("postponed", "Postponed", "CANCELLED", "suspended", "Game Suspended"):
         assert not safety.final_ok(ev(status=status), (110, 104))
+
+
+def test_naive_datetimes_fail_closed():
+    naive_now = NOW.replace(tzinfo=None)
+    assert not safety.pick_ok(row(120), naive_now, 0.05)
+    assert not safety.pick_ok({"commence_time": "2026-11-16T23:00:00"}, NOW, 0.05)
+    assert not safety.value_ok([row(30)], naive_now)
+    assert not safety.value_ok([{"commence_time": "2026-11-16T23:00:00"}], NOW)
+
+
+def test_non_integer_score_fails_closed():
+    assert not safety.final_ok(ev(home_score="abc"), (110, 104))
+    assert not safety.final_ok(ev(), ("x", 104))

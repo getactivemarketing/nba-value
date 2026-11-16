@@ -89,3 +89,15 @@ def test_other_templates():
         "✅ CASHED. A One Over 20.5 Points at -110 from tonight's Top 5.")
     assert content.blind_receipt_text(7, "A One", 116, "nba").startswith(
         "✅ CASHED. Blind Play #7 was A One.\n\nCalled it before tip at +116. Did you guess right?")
+
+
+def test_final_text_no_check_for_sub_cent_units():
+    assert "✅" not in content.final_text("nba", event(), 1, 1, 0, 0.004)
+
+
+def test_record_line_counts_only_graded():
+    plays = [{"result": "win", "profit_units": 1.16}, {"result": "loss", "profit_units": -1.0},
+             {"result": "push", "profit_units": 0.0}, {"result": "void", "profit_units": 0.0},
+             {"result": None, "profit_units": None}]
+    assert content.record_line(plays) == (1, 1, 1, 0.16)
+    assert content.record_line([]) == (0, 0, 0, 0.0)
