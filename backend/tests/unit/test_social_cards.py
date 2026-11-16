@@ -1,0 +1,194 @@
+import io
+import time
+from datetime import date, datetime, timezone
+
+import pytest
+from PIL import Image
+
+from src.edge.social import cards
+from src.edge.social.blind import BlindCard
+from src.edge.social.nba_matchup import Panel
+from src.edge.social.nfl_matchup import NflPanel
+
+SLATE = date(2026, 11, 15)
+LOCKED = datetime(2026, 11, 15, 23, 10, tzinfo=timezone.utc)
+MAX_BYTES = int(1.5 * 1024 * 1024)
+LONG = "Giannis Antetokounmpo-Wolfeschlegelsteinhausen Jr."
+
+
+def png_bytes(size=(350, 254), color=(200, 120, 60, 255)) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGBA", size, color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def check(data: bytes) -> None:
+    assert isinstance(data, bytes) and len(data) < MAX_BYTES
+    img = Image.open(io.BytesIO(data))
+    assert img.format == "PNG"
+    assert img.size == (1080, 1350)
+    img.load()
+
+
+def nba_card(panel=None) -> BlindCard:
+    return BlindCard(sport="nba", n=1, position="F", market_label="Pts+Reb+Ast", side="over", line=32.5,
+                     price=116, ev=0.05, n_books=9, l10_hits=5, l10_games=10, l10_avg=34.1,
+                     tip_label="1:10 PM ET", panel=panel)
+
+
+NBA_PANEL = Panel(favorable=True, opp_vs_pos_rank=27, drtg_rank=22, pace_rank=6, usage_l10=26.8,
+                  usage_change=2.7, minutes_l5=35.2)
+
+
+def prop(i=0, player="Jalen Brunson", **kw):
+    r = {"player": player, "market": "player_points", "market_label": "Points", "side": "over", "line": 24.5,
+         "price": -110, "fair_prob": 0.58, "ev": 0.04, "book": "fanduel", "n_books": 9,
+         "matchup": "New York Knicks @ Boston Celtics", "team": "NYK", "rank": i + 1,
+         "l10": {"hits": 9, "games": 10, "rate": 0.9}}
+    r.update(kw)
+    return r
+
+
+EVENT = {"sport": "nba", "away_team": "Indiana Pacers", "home_team": "Philadelphia 76ers",
+         "away_score": 112, "home_score": 118}
+RECORDS = {"IND": {"w": 7, "l": 6, "t": 0, "games": 13, "label": "7-6"},
+           "PHI": {"w": 8, "l": 5, "t": 0, "games": 13, "label": "8-5"}}
+PLAY = {"kind": "blind", "sport": "nba", "n": 1, "player": "Pascal Siakam", "team": "IND",
+        "matchup": "Indiana Pacers @ Philadelphia 76ers", "market": "player_points_rebounds_assists",
+        "market_label": "Pts+Reb+Ast", "side": "over", "line": 32.5, "price": 116, "result": "win",
+        "profit_units": 1.16, "actual": 36, "stat_line": "24 pts · 7 reb · 5 ast", "slate_date": SLATE,
+        "panel": {"opp_vs_pos_rank": 27}, "position": "F"}
+
+
+def timed(fn, *a, **kw) -> bytes:
+    t0 = time.perf_counter()
+    out = fn(*a, **kw)
+    assert time.perf_counter() - t0 < 5
+    return out
+
+
+# ---- every renderer: decodable 1080x1350 PNG under 1.5 MB, in < 5 s, with no faces or logos ---------
+
+def test_blind_nba_with_panel():
+    check(timed(cards.render_blind, nba_card(NBA_PANEL)))
+
+
+def test_blind_panel_as_stored_dict():
+    import dataclasses
+    check(timed(cards.render_blind, nba_card(dataclasses.asdict(NBA_PANEL))))
+
+
+def test_blind_without_panel_or_form():
+    card = BlindCard(sport="nba", n=3, position=None, market_label="Threes", side="under", line=2.5, price=-105,
+                     ev=0.031, n_books=7, l10_hits=None, l10_games=None, l10_avg=None, tip_label="Tonight",
+                     panel=None)
+    check(timed(cards.render_blind, card))
+
+
+def test_blind_nfl_panel_without_snap_share():
+    panel = NflPanel(favorable=True, opp_rank=3, share_l4=0.27, snap_share=None, tags=["def_soft"])
+    card = BlindCard(sport="nfl", n=2, position="WR", market_label="Rec Yds", side="over", line=64.5,
+                     price=-110, ev=0.042, n_books=8, l10_hits=6, l10_games=10, l10_avg=71.2,
+                     tip_label="1:00 PM ET", panel=panel)
+    check(timed(cards.render_blind, card))
+
+
+def test_cheatsheet_no_faces():
+    rows = [prop(i) for i in range(10)]
+    check(timed(cards.render_cheatsheet, "nba", SLATE, rows, {}))
+
+
+def test_value_no_faces():
+    legs = [prop(i, player=f"Player Number {i}") for i in range(5)]
+    check(timed(cards.render_value, "nba", SLATE, legs, {}, LOCKED))
+
+
+def test_final_no_logos_no_faces():
+    plays = [{**PLAY, "kind": "blind"}, {**PLAY, "kind": "value", "player": "Tyrese Maxey", "result": "loss",
+                                         "profit_units": -1.0}]
+    check(timed(cards.render_final, EVENT, RECORDS, {}, plays, {}))
+
+
+def test_receipt_no_face_no_logo():
+    check(timed(cards.render_receipt, PLAY, None, None))
+
+
+# ---- with images ------------------------------------------------------------------------------
+
+def test_renderers_with_faces_logos_and_original():
+    face, logo = png_bytes(), png_bytes((500, 500), (0, 45, 98, 255))
+    faces = {"Jalen Brunson": face, "Pascal Siakam": face}
+    logos = {"IND": logo, "PHI": logo, "NYK": logo}
+    check(cards.render_cheatsheet("nba", SLATE, [prop(i) for i in range(6)], faces, logos=logos))
+    check(cards.render_value("nba", SLATE, [prop(i) for i in range(5)], faces, LOCKED, logos=logos))
+    check(cards.render_final(EVENT, RECORDS, logos, [PLAY], faces))
+    original = cards.render_blind(nba_card(NBA_PANEL))
+    check(cards.render_receipt(PLAY, face, logo, original))
+
+
+def test_corrupt_image_bytes_fall_back():
+    junk = b"not a png"
+    check(cards.render_receipt(PLAY, junk, junk, junk))
+    check(cards.render_final(EVENT, RECORDS, {"IND": junk, "PHI": junk}, [PLAY], {"Pascal Siakam": junk}))
+
+
+def test_long_names_and_many_plays_render():
+    rows = [prop(i, player=LONG, matchup="Golden State Warriors @ Portland Trail Blazers") for i in range(10)]
+    check(cards.render_cheatsheet("nba", SLATE, rows, {}))
+    check(cards.render_value("nba", SLATE, rows[:5], {}, LOCKED))
+    plays = [{**PLAY, "player": LONG, "result": r, "profit_units": u}
+             for r, u in [("win", 1.0), ("loss", -1.0), ("push", 0.0), ("void", None), (None, None)] * 2]
+    check(cards.render_final(EVENT, {}, {}, plays, {}))
+    check(cards.render_receipt({**PLAY, "player": LONG, "stat_line": "x " * 80}, None, None))
+
+
+def test_nfl_final_and_receipt():
+    event = {"sport": "nfl", "away_team": "Buffalo Bills", "home_team": "Kansas City Chiefs",
+             "away_score": 24, "home_score": 24}
+    play = {**PLAY, "sport": "nfl", "kind": "value", "player": "Josh Allen", "team": "BUF",
+            "market": "player_pass_yds", "market_label": "Pass Yds", "line": 245.5, "actual": 281,
+            "stat_line": None, "panel": None, "matchup": "Buffalo Bills @ Kansas City Chiefs"}
+    check(cards.render_final(event, {}, {}, [play], {}))
+    check(cards.render_receipt(play, None, None))
+
+
+# ---- helpers ----------------------------------------------------------------------------------
+
+def test_ordinal():
+    assert [cards.ordinal(n) for n in (1, 2, 3, 4, 11, 12, 13, 21, 22, 27)] == \
+        ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "27th"]
+
+
+def test_record_label_needs_three_games():
+    recs = {"IND": {"games": 13, "label": "7-6"}, "PHI": {"games": 2, "label": "1-1"}}
+    assert cards.record_label(recs, "IND") == "7-6"
+    assert cards.record_label(recs, "PHI") is None
+    assert cards.record_label(recs, "BOS") is None
+    assert cards.record_label({}, None) is None
+
+
+def test_ellipsize_fits_width():
+    font = cards.font("sans_bold", 40)
+    out = cards.ellipsize(LONG, font, 300)
+    assert out.endswith("…") and font.getlength(out) <= 300
+    assert cards.ellipsize("Short", font, 300) == "Short"
+
+
+@pytest.mark.parametrize("name,short", [("Jalen Brunson", "J. Brunson"), ("Nikola Jokić", "N. Jokić"),
+                                        ("Nene", "Nene")])
+def test_short_name(name, short):
+    assert cards.short_name(name) == short
+
+
+def test_last_name_skips_suffix():
+    assert cards.last_name("Jaren Jackson Jr.") == "Jackson"
+    assert cards.last_name("Pascal Siakam") == "Siakam"
+
+
+def test_sample_cli_writes_cards(tmp_path):
+    cards.main(["--sample", str(tmp_path)])
+    names = sorted(p.name for p in tmp_path.glob("*.png"))
+    assert {"blind_nba.png", "blind_nfl.png", "cheatsheet.png", "value.png", "final.png",
+            "receipt.png"} <= set(names)
+    for p in tmp_path.glob("*.png"):
+        check(p.read_bytes())
