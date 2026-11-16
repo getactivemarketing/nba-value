@@ -12,15 +12,14 @@ def _row(gid, team, opp, pos, pts, minutes=30, d=date(2026, 11, 1), pid=1, **kw)
     return {**base, **kw}
 
 
-def _league(games_each=5, wash_pts=40, n=30):
+def _league(games_each=5, n=30):
     """Teams T00..T(n-1) each play `games_each` games vs a fixed neighbour; each side has one F and one G row."""
     rows, gid = [], 0
     for i, t in enumerate(TEAMS[:n]):
         opp = TEAMS[(i + 1) % n]
         for _ in range(games_each):
             gid += 1
-            f_pts = wash_pts if t == "T00" else 20      # T00's forward scores big against its opponent...
-            rows.append(_row(gid, t, opp, "F", f_pts, pid=100 + i))
+            rows.append(_row(gid, t, opp, "F", 20, pid=100 + i))
             rows.append(_row(gid, t, opp, "G", 10, pid=200 + i))
             rows.append(_row(gid, opp, t, "F", 20, pid=100 + (i + 1) % n))
             rows.append(_row(gid, opp, t, "G", 10, pid=200 + (i + 1) % n))
@@ -53,13 +52,13 @@ def test_drtg_rank_1_is_fewest_points_per_possession():
 
 def test_pace_rank_1_is_most_possessions():
     rows, gid = [], 0
-    for i, t in enumerate(TEAMS):
+    for i, t in enumerate(TEAMS[:29]):  # 29 + ZZ = 30 teams
         for n in range(5):
             gid += 1
             rows.append(_row(gid, t, "ZZ", "F", 20, pid=1000 + i, fga=70 + i, fta=0, tov=0, oreb=0))
             rows.append(_row(gid, "ZZ", t, "F", 20, pid=2000, fga=70, fta=0, tov=0, oreb=0))
     ranks = m.build_ranks(rows)
-    assert ranks["T29"].pace_rank == 1 and ranks["T00"].pace_rank == 30
+    assert ranks["T28"].pace_rank == 1 and ranks["T00"].pace_rank == 29
 
 
 def test_null_position_is_excluded_from_vs_position_but_counts_in_team_totals():
@@ -105,6 +104,7 @@ UNDER = {**OVER, "side": "under"}
 USAGE_OK = m.PlayerUsage(usage_l10=25, usage_season=25, minutes_l5=34, minutes_season=34, games=40)
 
 
+
 def ranks(vs, drtg, market=PRA, pos="F"):
     return m.TeamRanks("X", {(pos, market): vs}, drtg, 15)
 
@@ -144,3 +144,30 @@ def test_panel_fields_and_missing_position_market_is_not_favorable():
     p = m.panel(OVER, "F", ranks(27, 22), usage(u10=27, useason=25))
     assert (p.opp_vs_pos_rank, p.drtg_rank, p.pace_rank, p.usage_change, p.minutes_l5) == (27, 22, 15, 2, 34)
     assert not m.panel(OVER, "C", ranks(27, 22), USAGE_OK).favorable
+
+
+def test_fewer_than_30_teams_never_favorable():
+    ranks25 = m.build_ranks(_league(n=25))
+    assert len(ranks25) == 25
+    for t, r in ranks25.items():
+        assert r.drtg_rank == 0 and r.pace_rank == 0 and r.vs_pos == {}
+        assert not m.panel(OVER, "F", r, USAGE_OK).favorable
+        assert not m.panel(UNDER, "F", r, USAGE_OK).favorable
+    # even at extreme hand-fed ranks, an unknown drtg (0) is never favorable
+    assert not m.panel(UNDER, "F", m.TeamRanks("X", {("F", PRA): 1}, 0, 0), USAGE_OK).favorable
+    assert not m.panel(OVER, "F", m.TeamRanks("X", {("F", PRA): 30}, 0, 0), USAGE_OK).favorable
+
+
+def test_key_missing_for_a_defender_drops_key():
+    rows = _league()
+    # nobody in the league ever scored against T07 from the C spot except on 29 other teams: C key covers 29 teams
+    rows += [_row(800 + i, "T01", TEAMS[i], "C", 10, pid=900 + i) for i in range(29) if TEAMS[i] != "T01"]
+    ranks = m.build_ranks(rows)
+    assert all(("C", PRA) not in r.vs_pos for r in ranks.values())
+    assert all(("F", PRA) in r.vs_pos for r in ranks.values())
+
+
+def test_player_with_few_games_not_favorable():
+    assert not m.panel(OVER, "F", ranks(27, 22), m.PlayerUsage(25, 25, 34, 34, 4)).favorable
+    assert m.panel(OVER, "F", ranks(27, 22), m.PlayerUsage(25, 25, 34, 34, 5)).favorable
+    assert not m.panel(OVER, "F", ranks(27, 22), m.PlayerUsage(0, 0, 0, 0, 0)).favorable

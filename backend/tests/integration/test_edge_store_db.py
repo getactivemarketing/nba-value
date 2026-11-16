@@ -1410,8 +1410,7 @@ def test_nba_matchup_load_context_returns_ranks_and_usage(conn):
     conn.commit()
     ranks, usage_for = nba_matchup.load_context(conn, 2026)
     assert set(ranks) == {"AAA", "BBB"}
-    assert ranks["AAA"].drtg_rank in (1, 2) and ranks["BBB"].drtg_rank in (1, 2)
-    assert ranks["AAA"].vs_pos[("F", "player_points")] != ranks["BBB"].vs_pos[("F", "player_points")]
+    assert ranks["AAA"].drtg_rank == 0 and ranks["AAA"].vs_pos == {}  # 2 teams: fails closed (needs all 30)
     u = usage_for(1)
     assert u.games == 5 and u.minutes_l5 == 34 and 0 < u.usage_l10 < 100
     assert usage_for(999) is None

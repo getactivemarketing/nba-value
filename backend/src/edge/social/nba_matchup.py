@@ -23,6 +23,13 @@ Definitions
   empty vs_pos and ranks of 0, is left out of the ranking, and panel() treats it
   (or any missing (position, market)) as NOT favorable instead of raising.
 
+- Fail closed: the favorable cutoffs are absolute (1-30), so a ranking only counts
+  if it covers all LEAGUE_TEAMS teams. A (position, market) key ranked over fewer
+  teams is omitted from every team's vs_pos; a DRtg/pace ranking over fewer teams
+  gives drtg_rank / pace_rank = 0 ("unknown") for everyone. panel() is never
+  favorable when its key is missing, drtg_rank is 0, or the player has fewer than
+  MIN_PLAYER_GAMES games with minutes.
+
 Only load_context touches the database.
 """
 from __future__ import annotations
@@ -34,6 +41,8 @@ from typing import Callable
 from src.edge import players
 
 MIN_TEAM_GAMES = 5
+MIN_PLAYER_GAMES = 5
+LEAGUE_TEAMS = 30
 POSSESSION_FTA = 0.44
 
 
@@ -107,7 +116,8 @@ def build_ranks(games: list[dict]) -> dict[str, TeamRanks]:
     for (defender, market, pos), per_game in allowed.items():
         if defender in ok:
             avg[(pos, market)][defender] = sum(per_game.values()) / len(team_games[defender])
-    vs_rank = {key: _rank(vals, descending=False) for key, vals in avg.items()}  # most allowed -> highest rank
+    vs_rank = {key: _rank(vals, descending=False) for key, vals in avg.items()  # most allowed -> highest rank
+               if len(vals) == LEAGUE_TEAMS}
 
     # DRtg and pace
     opp_pts: dict[str, float] = defaultdict(float)
@@ -126,16 +136,16 @@ def build_ranks(games: list[dict]) -> dict[str, TeamRanks]:
         opp_pts[b] += ta["pts"]; opp_poss[b] += _possessions(ta)
     drtg = {t: 100 * opp_pts[t] / opp_poss[t] for t in ok if opp_poss[t] > 0}
     pace = {t: own_poss[t] / len(team_games[t]) for t in ok}
-    drtg_rank = _rank(drtg, descending=False)    # lowest rating allowed = 1
-    pace_rank = _rank(pace, descending=True)     # most possessions = 1
+    drtg_rank = _rank(drtg, descending=False) if len(drtg) == LEAGUE_TEAMS else {}  # lowest rating allowed = 1
+    pace_rank = _rank(pace, descending=True) if len(pace) == LEAGUE_TEAMS else {}    # most possessions = 1
 
     result: dict[str, TeamRanks] = {}
     for team in teams:
-        if team not in ok or team not in drtg_rank:
+        if team not in ok:
             result[team] = TeamRanks(team, {}, 0, 0)
             continue
         vs = {key: ranks[team] for key, ranks in vs_rank.items() if team in ranks}
-        result[team] = TeamRanks(team, vs, drtg_rank[team], pace_rank[team])
+        result[team] = TeamRanks(team, vs, drtg_rank.get(team, 0), pace_rank.get(team, 0))
     return result
 
 
@@ -166,7 +176,7 @@ def player_usage(rows: list[dict], team_totals: dict[tuple[int, str], dict]) -> 
 
 def panel(row: dict, position: str, opp: TeamRanks, usage: PlayerUsage) -> Panel:
     vs = opp.vs_pos.get((position, row["market"]))
-    insufficient = vs is None or not opp.drtg_rank
+    insufficient = vs is None or not opp.drtg_rank or usage.games < MIN_PLAYER_GAMES
     vs_rank = vs or 0
     side = row["side"]
     if insufficient:
