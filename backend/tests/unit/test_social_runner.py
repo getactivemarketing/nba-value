@@ -74,6 +74,7 @@ class World:
         self.mono = 0.0     # runner._monotonic(): the pass budget clock
         self.unknown_noted = []
         self.blind_players_today, self.cheatsheet_exclude = set(), None
+        self.last_blind = None  # when the sport's last blind play went out (posted or dry run)
 
 
 def _play(n=1, **kw):
@@ -119,6 +120,7 @@ def world(monkeypatch):
                         else (ev["home_score"], ev["away_score"]))
     monkeypatch.setattr(runner, "_headshots_due", lambda conn, sport, now: False)
     monkeypatch.setattr(runner, "_blind_due", lambda conn, sport, now: True)
+    monkeypatch.setattr(runner, "_last_blind_post", lambda conn, sport: w.last_blind)
     monkeypatch.setattr(runner, "_utcnow", lambda: w.clock)
     monkeypatch.setattr(runner, "_monotonic", lambda: w.mono)
     monkeypatch.setattr(runner, "_note_unknown", lambda conn, now: w.unknown_noted.append(now))
@@ -621,3 +623,55 @@ async def test_blind_skips_the_top5_guess_only_where_a_value_post_exists(world, 
     world.live_rows = [_live()]
     await step(NOV16_11ET, FakePoster())
     assert seen == [excluded]
+
+
+# 10:00 ET is 14:00 UTC under EDT (Oct 21) and 15:00 UTC under EST (Nov 16); 22:00 ET is 02:00 / 03:00 UTC.
+WINDOW_EDGES = [(datetime(2026, 10, 21, 14, 0, tzinfo=timezone.utc), datetime(2026, 10, 22, 2, 0, tzinfo=timezone.utc)),
+                (datetime(2026, 11, 16, 15, 0, tzinfo=timezone.utc), datetime(2026, 11, 17, 3, 0, tzinfo=timezone.utc))]
+
+
+@pytest.mark.parametrize("opens, closes", WINDOW_EDGES)
+async def test_blind_posts_only_between_10_and_22_et_across_dst(world, opens, closes):
+    late_tip = closes + timedelta(minutes=90)  # 11:30 PM ET, same slate
+    world.live_rows = [_live(pick=True, commence_time=late_tip.isoformat())]
+    world.blind_plays = [_play(commence_time=late_tip)]
+    for t in (opens - timedelta(minutes=1), closes):
+        p = FakePoster()
+        await step(t, p)
+        assert p.calls == [] and world.recorded == [], t  # nothing numbered or posted outside the window
+    for t in (opens, closes - timedelta(minutes=1)):
+        world.ledger.rows.clear()
+        p = FakePoster()
+        await step(t, p)
+        assert len(p.calls) == 1 and "Blind Play #1" in p.calls[0][0][0], t
+
+
+async def test_blind_posts_are_20_minutes_apart(world):
+    world.live_rows = [_live(pick=True)]
+    world.blind_plays = [_play()]
+    world.last_blind = NOV16_11ET - timedelta(minutes=19)
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert p.calls == [] and world.recorded == []
+    world.last_blind = NOV16_11ET - timedelta(minutes=20)
+    await step(NOV16_11ET, p)
+    assert len(p.calls) == 1 and world.ledger.statuses("blind") == {"blind:nba:1": "posted"}
+
+
+async def test_at_most_one_blind_post_per_pass(world):
+    world.blind_plays = [_play(1), _play(2, player="B Two", event_id="e2"), _play(3, player="C Three", event_id="e3")]
+    world.live_rows = [_live(), _live(player="B Two", event_id="e2"), _live(player="C Three", event_id="e3")]
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert len(p.calls) == 1 and world.ledger.statuses("blind") == {"blind:nba:1": "posted"}
+    world.last_blind = NOV16_11ET
+    await step(NOV16_11ET + timedelta(minutes=20), p)
+    assert len(p.calls) == 2 and world.ledger.statuses("blind") == {"blind:nba:1": "posted", "blind:nba:2": "posted"}
+
+
+async def test_a_skipped_blind_play_does_not_use_up_the_pass(world):
+    world.blind_plays = [_play(1), _play(2, player="B Two", event_id="e2")]
+    world.live_rows = [_live(player="B Two", event_id="e2")]  # #1 is no longer +EV: skipped
+    p = FakePoster(dry_run=True)
+    await step(NOV16_11ET, p)
+    assert world.ledger.statuses("blind") == {"blind:nba:1": "skipped", "blind:nba:2": "dry_run"}

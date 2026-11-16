@@ -39,6 +39,8 @@ VALUE_SPORTS = frozenset({"nba"})
 FINAL_WINDOW = timedelta(hours=36)
 RECEIPT_DAYS = 3
 BLIND_EVERY = timedelta(minutes=5)  # selection rebuilds the board and matchup panels: not every 30 s tick
+BLIND_WINDOW = (time(10, 0), time(22, 0))  # ET: blind plays post from 10:00 up to (not at) 22:00
+BLIND_MIN_GAP = timedelta(minutes=20)      # since the sport's last blind post (posted or dry run)
 
 
 SOCIAL_PASS_BUDGET = 120  # seconds: past this a pass starts no new post or Blotato lookup
@@ -68,6 +70,10 @@ def default_poster() -> Poster:
 
 def _http() -> httpx.AsyncClient:
     return httpx.AsyncClient()
+
+
+def blind_window_open(now: datetime) -> bool:
+    return BLIND_WINDOW[0] <= now.astimezone(ET).time() < BLIND_WINDOW[1]
 
 
 def cheatsheet_due(sport: str, now: datetime) -> date | None:
@@ -167,6 +173,16 @@ def _blind_due(conn, sport: str, now: datetime) -> bool:
         return False
     store.set_state(conn, key, now.isoformat(), now)
     return True
+
+
+def _last_blind_post(conn, sport: str) -> datetime | None:
+    """When the sport's last blind play went out (posted or dry run), or None."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT MAX(updated_at) FROM edge_social_posts
+                       WHERE kind = 'blind' AND sport = %s AND status IN ('posted', 'dry_run')""", (sport,))
+        row = cur.fetchone()
+    conn.rollback()
+    return row[0] if row else None
 
 
 _EVENT_COLS = "event_id, home_team, away_team, commence_time, status, completed, home_score, away_score"
@@ -413,12 +429,14 @@ class _Pass:
         self._tally(sport, kind, status)
         return status
 
-    async def guarded(self, what: str, fn, *args) -> None:
+    async def guarded(self, what: str, fn, *args):
+        """fn's result, or None when it raised (logged; one kind failing never stops the next)."""
         try:
-            await fn(*args)
-        except Exception:  # noqa: BLE001 - one kind failing never stops the next
+            return await fn(*args)
+        except Exception:  # noqa: BLE001
             log.exception("social %s failed", what)
             self._rollback()
+            return None
 
     # ---- media ----
 
@@ -509,10 +527,18 @@ class _Pass:
                          recheck=lead_ok)
         await self.publish(sport, "value", key, build)
 
+    def blind_spaced(self, sport: str) -> bool:
+        """True when the sport's last blind post (posted or dry run) is BLIND_MIN_GAP or more ago."""
+        last = _last_blind_post(self.conn, sport)
+        return last is None or self.now - last >= BLIND_MIN_GAP
+
     async def blind(self, sport: str, live) -> None:
-        # Gate, switch and brake are checked before record(): a play is only numbered when it can post now.
+        # Gate, switch, brake, window and spacing are checked before record(): a play is only
+        # numbered when it can post now. Staggered: one blind post per pass, BLIND_MIN_GAP apart.
         if (not ledger.enabled("blind", sport) or _gate(self.conn, sport) != "pass" or self.stopped()
                 or self.brake(sport)):
+            return
+        if not blind_window_open(self.now) or not self.blind_spaced(sport):
             return
         if not _blind_due(self.conn, sport, self.now):
             return
@@ -531,9 +557,11 @@ class _Pass:
             key = f"blind:{sport}:{n}"
             if self.settled("blind", key):
                 continue
-            await self.guarded(key, self.blind_one, sport, key, play, current, tips)
+            status = await self.guarded(key, self.blind_one, sport, key, play, current, tips)
+            if status in ("posted", "dry_run"):
+                return  # one blind post per pass; the next waits BLIND_MIN_GAP
 
-    async def blind_one(self, sport: str, key: str, play: dict, current: dict, tips: dict) -> None:
+    async def blind_one(self, sport: str, key: str, play: dict, current: dict, tips: dict) -> str:
         async def build():
             now_row = current.get((*_bet_key(play), play["book"]))
             if now_row is None:
@@ -548,7 +576,7 @@ class _Pass:
             return Draft([content.blind_text(sport, n), content.blind_reply(sport, n)], [[png], []],
                          {"n": n, "event_id": play["event_id"]},
                          recheck=lambda t: safety.pick_ok(now_row, t, now_row["ev"]))
-        await self.publish(sport, "blind", key, build)
+        return await self.publish(sport, "blind", key, build)
 
     def posted_in(self, sport: str, event: dict) -> list[dict]:
         slate = content.slate_for(safety.tip_of(event))

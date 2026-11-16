@@ -232,3 +232,20 @@ async def test_unknown_rows_without_a_submission_id_show_in_worker_state(conn):
     assert ledger.unknown_without_submission(conn) == 2
     await run(conn, NOW, _LivePoster())
     assert store.get_state(conn)["social_unknown"] == "2"
+
+
+def test_last_blind_post_counts_posted_and_dry_run_blind_rows_of_the_sport(conn):
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM edge_social_posts")
+    conn.commit()
+    assert runner._last_blind_post(conn, "nba") is None
+    for kind, key, status, at in (("blind", "blind:nba:1", "dry_run", NOW - timedelta(minutes=30)),
+                                  ("blind", "blind:nba:2", "skipped", NOW - timedelta(minutes=5)),
+                                  ("cheatsheet", "cheatsheet:nba:x", "posted", NOW - timedelta(minutes=1)),
+                                  ("blind", "blind:nfl:1", "posted", NOW)):
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO edge_social_posts (sport, kind, key, status, attempts, created_at, updated_at)
+                           VALUES (%s,%s,%s,%s,1,%s,%s)""", (key.split(":")[1] if kind == "blind" else "nba",
+                                                             kind, key, status, at, at))
+        conn.commit()
+    assert runner._last_blind_post(conn, "nba") == NOW - timedelta(minutes=30)
