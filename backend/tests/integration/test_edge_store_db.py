@@ -1393,3 +1393,25 @@ async def test_resolve_new_players_stores_position_group(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT bdl_player_id, position FROM edge_players WHERE odds_name = 'Jayson Tatum'")
         assert cur.fetchone() == (434, "F")
+
+
+def test_nba_matchup_load_context_returns_ranks_and_usage(conn):
+    from src.edge.social import nba_matchup
+
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_players (odds_name, bdl_player_id, team, position, match_method, confidence, updated_at)
+                       VALUES ('Fwd One', 1, 'AAA', 'F', 'exact', 1, now()), ('Fwd Two', 2, 'BBB', 'F', 'exact', 1, now())""")
+        for i in range(5):
+            for pid, team, opp, pts in ((1, "AAA", "BBB", 30), (2, "BBB", "AAA", 20)):
+                cur.execute("""INSERT INTO edge_player_games (bdl_player_id, bdl_game_id, season, game_date, team, opponent,
+                                   is_home, minutes, pts, reb, ast, fg3m, stl, blk, tov, fgm, fga, fta, oreb)
+                               VALUES (%s, %s, 2026, %s, %s, %s, true, 34, %s, 5, 5, 2, 1, 0, 3, 8, 18, 5, 1)""",
+                            (pid, 10 + i, date(2026, 11, 1) + timedelta(days=i), team, opp, pts))
+    conn.commit()
+    ranks, usage_for = nba_matchup.load_context(conn, 2026)
+    assert set(ranks) == {"AAA", "BBB"}
+    assert ranks["AAA"].drtg_rank in (1, 2) and ranks["BBB"].drtg_rank in (1, 2)
+    assert ranks["AAA"].vs_pos[("F", "player_points")] != ranks["BBB"].vs_pos[("F", "player_points")]
+    u = usage_for(1)
+    assert u.games == 5 and u.minutes_l5 == 34 and 0 < u.usage_l10 < 100
+    assert usage_for(999) is None
