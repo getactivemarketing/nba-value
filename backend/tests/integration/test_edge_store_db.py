@@ -327,7 +327,7 @@ async def test_missed_box_score_day_is_retried_until_loaded(conn):
     bdl = _BoxBdl()
     t = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
     await worker.box_scores_step(conn, bdl, t)                       # BDL late: no rows yet
-    assert bdl.calls[-1].isoformat() == "2026-10-20"
+    assert [d.isoformat() for d in bdl.calls][-2:] == ["2026-10-20", "2026-10-21"]  # ... and today
     n = len(bdl.calls)
     await worker.box_scores_step(conn, bdl, t + timedelta(minutes=30))  # throttled (hourly)
     assert len(bdl.calls) == n
@@ -396,7 +396,21 @@ async def test_box_score_reload_window_is_a_setting(conn, monkeypatch):
     bdl = _BoxBdl()
     await worker.box_scores_step(conn, bdl, datetime(2026, 10, 28, 9, 0, tzinfo=timezone.utc))
     assert [d.isoformat() for d in bdl.calls] == ["2026-10-23", "2026-10-24", "2026-10-25",
-                                                  "2026-10-26", "2026-10-27"]
+                                                  "2026-10-26", "2026-10-27", "2026-10-28"]  # + today (ET)
+
+
+@pytest.mark.asyncio
+async def test_todays_finished_games_load_the_same_night(conn):
+    """Ruling 27: an early game that is Final tonight is stored tonight (only Final rows are kept),
+    so its recap and receipts don't wait for tomorrow."""
+    from src.edge import worker
+
+    game_day = datetime(2026, 10, 20, 23, 0, tzinfo=timezone.utc)  # 7pm ET Oct 20
+    bdl = _BoxBdl()
+    bdl.ready.add(date(2026, 10, 20))
+    await worker.box_scores_step(conn, bdl, game_day + timedelta(hours=3))  # 10pm ET, game over
+    assert _tatum_pts(conn) == 30
+    assert bdl.calls[-1] == date(2026, 10, 20)
 
 
 class _FlakyBdl(_BoxBdl):
@@ -1390,20 +1404,38 @@ def test_live_stale_pending_becomes_unknown_and_is_never_reclaimed(conn, caplog)
 
 def test_unknown_rows_count_toward_brakes(conn):
     from src.edge.social import ledger
+    for i in range(6):  # blind posts: finals and receipts skip the hourly cap
+        ledger.claim(conn, "nba", "blind", f"blind:nba:u{i}", NOW)
     for i in range(6):
-        ledger.claim(conn, "nba", "final", f"final:u{i}", NOW)
-    for i in range(6):
-        assert ledger.claim(conn, "nba", "final", f"final:u{i}", NOW + timedelta(minutes=16)) is None
-    assert ledger.find(conn, "final", "final:u0")["status"] == "unknown"
+        assert ledger.claim(conn, "nba", "blind", f"blind:nba:u{i}", NOW + timedelta(minutes=16)) is None
+    assert ledger.find(conn, "blind", "blind:nba:u0")["status"] == "unknown"
     assert ledger.brake_tripped(conn, "nba", NOW + timedelta(minutes=16))
 
 
 def test_brake_trips_at_six_an_hour(conn):
     from src.edge.social import ledger
     for i in range(6):
-        ledger.finish(conn, ledger.claim(conn, "nba", "final", f"final:e{i}", NOW), "posted", NOW, text="x")
+        ledger.finish(conn, ledger.claim(conn, "nba", "blind", f"blind:nba:{i}", NOW), "posted", NOW, text="x")
     assert ledger.brake_tripped(conn, "nba", NOW) and not ledger.brake_tripped(conn, "nfl", NOW)
     assert not ledger.brake_tripped(conn, "nba", NOW + timedelta(hours=2))  # hour window rolled, day cap is 25
+
+
+def test_finals_and_receipts_skip_the_hourly_cap_but_not_the_daily_cap(conn, monkeypatch):
+    """Ruling 27: a busy night's recaps and receipts may exceed 6 an hour; the 25-a-day cap still holds."""
+    from src.config import settings
+    from src.edge.social import ledger
+    for i in range(4):
+        ledger.finish(conn, ledger.claim(conn, "nba", "final", f"final:h{i}", NOW), "posted", NOW, text="x")
+        ledger.finish(conn, ledger.claim(conn, "nba", "receipt", f"receipt:h{i}", NOW), "posted", NOW, text="x")
+    assert not ledger.brake_tripped(conn, "nba", NOW)  # 8 this hour, all finals/receipts
+    for i in range(5):
+        ledger.finish(conn, ledger.claim(conn, "nba", "blind", f"blind:nba:{i}", NOW), "posted", NOW, text="x")
+    assert not ledger.brake_tripped(conn, "nba", NOW)  # 5 counted toward the hourly cap
+    ledger.finish(conn, ledger.claim(conn, "nba", "value", "value:nba:x", NOW), "posted", NOW, text="x")
+    assert ledger.brake_tripped(conn, "nba", NOW)      # 6th non-final post this hour
+    monkeypatch.setattr(settings, "social_max_per_day", 14)
+    later = NOW + timedelta(hours=2)
+    assert ledger.brake_tripped(conn, "nba", later)  # 14 today, finals and receipts included
 
 
 def test_dry_run_rows_do_not_count_toward_brakes(conn):

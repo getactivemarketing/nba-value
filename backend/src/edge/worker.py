@@ -361,11 +361,12 @@ async def _tick_sport(conn, client, bdl, sport: SportConfig, state: dict, factor
 
 
 async def box_scores_step(conn, bdl, now: datetime) -> int:
-    """Reload box scores for the last few ET days (settings.edge_box_reload_days), hourly.
+    """Reload box scores for the last few ET days (settings.edge_box_reload_days) plus today, hourly.
 
     Only finished games are stored (players.box_row), so a game still going at
     the first load lands on a later one, and the league's stat corrections
     replace the first numbers. Grading (grading.run_grading) re-checks recent props against them.
+    Today is loaded too so tonight's finished games are graded (and recapped) the same night.
     """
     last = _parse(store.get_state(conn).get("last_box_attempt"))
     if last is not None and now - last < timedelta(minutes=60):
@@ -374,7 +375,7 @@ async def box_scores_step(conn, bdl, now: datetime) -> int:
     loaded = 0
     yday = players.et_date(now) - timedelta(days=1)
     days = max(1, settings.edge_box_reload_days)
-    for d in (yday - timedelta(days=i) for i in range(days - 1, -1, -1)):
+    for d in [yday - timedelta(days=i) for i in range(days - 1, -1, -1)] + [yday + timedelta(days=1)]:
         loaded += await players.ingest_box_scores(conn, bdl, d)
     store.set_state(conn, "bdl_error", "", now)
     return loaded

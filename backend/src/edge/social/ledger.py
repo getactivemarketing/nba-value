@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 _FINISH_STATUSES = frozenset({"posted", "dry_run", "skipped", "failed", "unknown"})
 COUNTED_AS_POSTED = ("posted", "pending", "unknown")  # what the brakes count
+HOURLY_CAP_EXEMPT = ("final", "receipt")  # kinds only the daily cap counts
 
 
 @dataclass(frozen=True)
@@ -107,15 +108,17 @@ def finish(conn, claim: Claim, status: str, now: datetime, *, text: str, image: 
 
 
 def brake_tripped(conn, sport: str, now: datetime) -> bool:
-    """True when posted+pending+unknown rows reach the per-ET-day or per-hour cap for this sport."""
+    """True when posted+pending+unknown rows reach the per-ET-day or per-hour cap for this sport.
+    Finals and receipts follow game ends (a busy night has many at once), so the hourly cap leaves
+    them out; the daily cap counts every kind."""
     day_start = now.astimezone(ET).replace(hour=0, minute=0, second=0, microsecond=0)
     with conn.cursor() as cur:
         cur.execute("""SELECT count(*) FILTER (WHERE updated_at >= %s),
-                              count(*) FILTER (WHERE updated_at >= %s)
+                              count(*) FILTER (WHERE updated_at >= %s AND kind <> ALL(%s))
                        FROM edge_social_posts
                        WHERE sport = %s AND status = ANY(%s) AND updated_at >= %s""",
-                    (day_start, now - timedelta(hours=1), sport, list(COUNTED_AS_POSTED),
-                     min(day_start, now - timedelta(hours=1))))
+                    (day_start, now - timedelta(hours=1), list(HOURLY_CAP_EXEMPT), sport,
+                     list(COUNTED_AS_POSTED), min(day_start, now - timedelta(hours=1))))
         per_day, per_hour = cur.fetchone()
     conn.rollback()
     return per_day >= settings.social_max_per_day or per_hour >= settings.social_max_per_hour
