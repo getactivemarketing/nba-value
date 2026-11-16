@@ -8,6 +8,7 @@ from psycopg2.extras import RealDictCursor
 
 from src.config import settings
 from src.edge import nfl_players, nightly, players, views
+from src.edge.engine import american_to_decimal
 from src.edge.grading import profit_units
 from src.edge.players import ET, et_date
 from src.edge.social.safety import tip_of
@@ -98,15 +99,36 @@ def nfl_recent_form(games: list[dict], market: str, line: float, side: str, n: i
     return {"hits": hits, "games": decided, "rate": round(hits / decided, 3)} if decided else None
 
 
-def cheatsheet_rows(rows: list[dict], games_by_player: dict[int, list[dict]], sport: str = "nba") -> list[dict]:
+def _bet(r: dict) -> tuple:
+    return (r.get("event_id"), r["market"], r["player"], r["side"], float(r["line"]))
+
+
+def best_price_per_bet(rows: list[dict]) -> list[dict]:
+    """One row per bet (event, market, player, side, line): the board has one row per book, so keep
+    the book paying the most (then the higher EV). Order follows each bet's first row."""
+    def pays(r: dict) -> tuple[float, float]:
+        return (american_to_decimal(int(r["price"])) if r.get("price") is not None else 0.0, r["ev"])
+
+    best: dict[tuple, dict] = {}
+    for r in rows:
+        k = _bet(r)
+        if k not in best or pays(r) > pays(best[k]):
+            best[k] = r
+    return list(best.values())
+
+
+def cheatsheet_rows(rows: list[dict], games_by_player: dict[int, list[dict]], sport: str = "nba",
+                    exclude_players: set[str] | frozenset[str] = frozenset()) -> list[dict]:
     """+EV player props ranked by last-10 hit rate then EV. Each row's `l10` is recomputed from the
-    player's box scores (NBA edge_player_games, NFL nfl_players.load_games rows). Fewer than 6
-    usable rows means no post: [] (a thin sheet looks bad)."""
+    player's box scores (NBA edge_player_games, NFL nfl_players.load_games rows). A bet listed at
+    several books counts once, at its best price; `exclude_players` (today's blind plays) are left
+    out so the sheet never names a blind play. Fewer than 6 usable rows means no post: [] (a thin
+    sheet looks bad)."""
     form_of = nfl_recent_form if sport == "nfl" else players.recent_form
     out = []
-    for r in rows:
-        if r["ev"] <= 0 or not r["market"].startswith("player_") or r.get("verify") or not r.get("bdl_player_id"):
-            continue
+    usable = [r for r in rows if r["ev"] > 0 and r["market"].startswith("player_") and not r.get("verify")
+              and r.get("bdl_player_id") and r["player"] not in exclude_players]
+    for r in best_price_per_bet(usable):
         form = form_of(games_by_player.get(r["bdl_player_id"], []), r["market"], float(r["line"]), r["side"])
         if form is None or form["rate"] is None:
             continue
@@ -159,17 +181,17 @@ _RESULT = """LEFT JOIN LATERAL (
 
 def posted_plays(conn, event_id: str) -> list[dict]:
     """Plays TruLine posted for a game: blind plays and the Top-5 legs (parlay legs are not
-    single plays). {kind: blind|value, sport, n, bet, market, player, side, line, price, result,
-    profit_units}; result is None until graded."""
+    single plays). {kind: blind|value, sport, n, bet, market, market_label, player, side, line, price,
+    result, profit_units}; result is None until graded."""
     out: list[dict] = []
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(f"""SELECT x.sport, x.n, x.market, x.player, x.side, x.line, x.price, res.result
-                        FROM edge_blind_plays x {_RESULT} WHERE x.event_id = %s ORDER BY x.sport, x.n""",
+        cur.execute(f"""SELECT x.sport, x.n, x.market, x.market_label, x.player, x.side, x.line, x.price,
+                               res.result FROM edge_blind_plays x {_RESULT} WHERE x.event_id = %s ORDER BY x.sport, x.n""",
                     (event_id,))
         out += [{**dict(r), "kind": "blind", "bet": views.describe(r["market"], r["player"], r["side"], float(r["line"]), "", "")}
                 for r in cur.fetchall()]
-        cur.execute(f"""SELECT x.sport, x.rank AS n, x.market, x.player, x.side, x.line, x.price, x.bet,
-                               res.result FROM edge_nightly_legs x {_RESULT}
+        cur.execute(f"""SELECT x.sport, x.rank AS n, x.market, x.market_label, x.player, x.side, x.line,
+                               x.price, x.bet, res.result FROM edge_nightly_legs x {_RESULT}
                         WHERE x.event_id = %s AND x.kind = 'top' ORDER BY x.slate_date, x.rank""", (event_id,))
         out += [{**dict(r), "kind": "value"} for r in cur.fetchall()]
     conn.rollback()

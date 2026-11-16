@@ -258,9 +258,20 @@ def _box_line(conn, sport: str, play: dict) -> tuple[float | None, str | None]:
     return players.stat_for(play["market"], g), f"{g['pts']} pts · {g['reb']} reb · {g['ast']} ast"
 
 
-def _cheatsheet_rows(conn, sport: str, rows: list[dict]) -> list[dict]:
-    """Rows ranked for the sheet. NBA form from edge_player_games; NFL from nfl_players.load_games
-    (the NFL player page's games), which needs the player's team: roster team ∩ the game's teams."""
+def _blind_players(conn, sport: str, day: date) -> set[str]:
+    """Players with a blind play recorded for the slate (posted or not): never named elsewhere."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT player FROM edge_blind_plays WHERE sport = %s AND slate_date = %s", (sport, day))
+        out = {r[0] for r in cur.fetchall()}
+    conn.rollback()
+    return out
+
+
+def _cheatsheet_rows(conn, sport: str, rows: list[dict], exclude: set[str] = frozenset()) -> list[dict]:
+    """Rows ranked for the sheet, without the `exclude` players. NBA form from edge_player_games; NFL
+    from nfl_players.load_games (the NFL player page's games), which needs the player's team: roster
+    team ∩ the game's teams."""
+    rows = [r for r in rows if r["player"] not in exclude]
     rows = [r for r in rows if r.get("bdl_player_id")]
     if sport == "nfl":
         _assign_teams(conn, sport, rows)
@@ -272,7 +283,7 @@ def _cheatsheet_rows(conn, sport: str, rows: list[dict]) -> list[dict]:
         ids = sorted({r["bdl_player_id"] for r in rows})
         games = players.load_recent_games(conn, ids) if ids else {}
     conn.rollback()
-    return content.cheatsheet_rows(rows, games, sport)
+    return content.cheatsheet_rows(rows, games, sport, exclude_players=exclude)
 
 
 # ---- the pass -----------------------------------------------------------------------------------
@@ -459,7 +470,8 @@ class _Pass:
             return [r for r in rows if safety.tip_of(r) >= t + CHEATSHEET_MIN_LEAD]
 
         async def build():
-            rows = far_enough(_cheatsheet_rows(self.conn, sport, far_enough(live(), self.now)), self.now)
+            rows = far_enough(_cheatsheet_rows(self.conn, sport, far_enough(live(), self.now),
+                                               _blind_players(self.conn, sport, day)), self.now)
             if len(rows) < content.CHEATSHEET_MIN:
                 return Skip("fewer than 6 +EV props with a last-10 hit rate, 10+ minutes before tip")
             _assign_teams(self.conn, sport, rows)

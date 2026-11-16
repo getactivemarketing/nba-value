@@ -142,3 +142,34 @@ def test_team_records(conn):
     assert nba["DET"]["label"] == "0-2" and nba["MIA"]["label"] == "1-0"
     nfl = content.team_records(conn, "nfl", content.SEASON_START["nfl"])
     assert nfl["DAL"] == {"w": 0, "l": 0, "t": 1, "games": 1, "label": "0-0-1"}
+
+
+def test_posted_plays_carry_market_label_onto_the_final_card(conn, monkeypatch):
+    """Real posted_plays output drawn by render_final: the stat label ('Pts') must be on the card."""
+    from PIL import ImageDraw
+
+    from src.edge.social import cards
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_blind_plays (sport, n, slate_date, event_id, market, market_label, player,
+                       side, line, book, price, fair_prob, ev, n_books, commence_time, created_at)
+                       VALUES ('nba',4,%s,'e1','player_points','Points','A One','over',20.5,'fanduel',116,0.49,0.1,9,%s,%s)""",
+                    (DAY, TIP, NOW))
+        cur.execute("""INSERT INTO edge_nightly_legs (sport, slate_date, kind, rank, locked_at, event_id, matchup,
+                       commence_time, market, market_label, player, side, line, bet, book, price, fair_prob, ev, n_books)
+                       VALUES ('nba',%s,'top',0,%s,'e1','D @ B',%s,'player_rebounds','Rebounds','B Two','over',5.5,
+                               'B Two Over 5.5 Rebounds','fanduel',-110,0.55,0.05,8)""", (DAY, NOW, TIP))
+    conn.commit()
+    plays = content.posted_plays(conn, "e1")
+    assert [p["market_label"] for p in plays] == ["Points", "Rebounds"]
+    drawn: list[str] = []
+    orig = ImageDraw.ImageDraw.text
+
+    def spy(self, xy, text, *a, **kw):
+        drawn.append(str(text))
+        return orig(self, xy, text, *a, **kw)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", spy)
+    event = {"sport": "nba", "away_team": "Detroit Pistons", "home_team": "Boston Celtics", "away_score": 104,
+             "home_score": 110}
+    cards.render_final(event, {}, {}, plays, {})
+    text = "\n".join(drawn)
+    assert "One O 20.5 Pts +116" in text and "Two O 5.5 Reb -110" in text

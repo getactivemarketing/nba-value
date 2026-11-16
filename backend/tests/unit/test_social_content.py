@@ -129,3 +129,37 @@ def test_nfl_recent_form_handles_unders_pushes_and_unknown_markets():
     assert content.nfl_recent_form(g, "player_receptions", 4.0, "under") == {"hits": 2, "games": 4, "rate": 0.5}
     assert content.nfl_recent_form(g, "player_rush_reception_yds", 45.5, "over")["hits"] == 2
     assert content.nfl_recent_form(g, "player_points", 4.5, "over") is None
+
+
+# ---- final review: cheat-sheet dedupe and blind exclusion (Ruling 25) -----------------------
+
+def _ev_row(player, book, price, ev, pid, event_id="e1", line=20.5, side="over"):
+    """A views.ev_rows-shaped row: one per (bet, book)."""
+    return {"event_id": event_id, "matchup": "Detroit Pistons @ Boston Celtics", "market": "player_points",
+            "market_label": "Points", "player": player, "side": side, "line": line, "book": book, "price": price,
+            "fair_prob": 0.5, "ev": ev, "n_books": 8, "verify": False, "bdl_player_id": pid}
+
+
+def test_cheatsheet_lists_a_bet_offered_at_several_books_once_at_its_best_price():
+    g = {i: games(8) for i in range(1, 7)}
+    rows = [_ev_row("Star", "fanduel", -105, 0.03, 1), _ev_row("Star", "draftkings", 120, 0.09, 1),
+            _ev_row("Star", "betmgm", 110, 0.06, 1)]
+    rows += [_ev_row(f"P{i}", "fanduel", 100, 0.02, i, event_id=f"e{i}") for i in range(2, 6)]
+    out = content.cheatsheet_rows(rows, g)
+    assert out == []  # 3 rows of one bet + 4 others = 5 distinct bets: too thin, dupes don't pad it
+    rows.append(_ev_row("P6", "fanduel", 100, 0.02, 6, event_id="e6"))
+    out = content.cheatsheet_rows(rows, g)
+    assert len(out) == 6
+    star = [r for r in out if r["player"] == "Star"]
+    assert len(star) == 1 and (star[0]["book"], star[0]["price"]) == ("draftkings", 120)
+    # a different line or side for the same player is a different bet
+    rows.append(_ev_row("Star", "fanduel", 100, 0.02, 1, line=24.5))
+    assert len([r for r in content.cheatsheet_rows(rows, g) if r["player"] == "Star"]) == 2
+
+
+def test_cheatsheet_excludes_todays_blind_play_players():
+    rows, g = sheet(7)
+    assert len(content.cheatsheet_rows(rows, g)) == 7
+    out = content.cheatsheet_rows(rows, g, exclude_players={"P0"})
+    assert len(out) == 6 and "P0" not in {r["player"] for r in out}
+    assert content.cheatsheet_rows(rows, g, exclude_players={"P0", "P1"}) == []  # the 6-row minimum counts after

@@ -73,6 +73,7 @@ class World:
         self.clock = None   # wall clock runner._utcnow() returns (step() sets it to the pass's now)
         self.mono = 0.0     # runner._monotonic(): the pass budget clock
         self.unknown_noted = []
+        self.blind_players_today, self.cheatsheet_exclude = set(), None
 
 
 def _play(n=1, **kw):
@@ -109,7 +110,11 @@ def world(monkeypatch):
     monkeypatch.setattr(runner, "_receipt_candidates", lambda conn, sport, now: w.receipts)
     monkeypatch.setattr(runner, "_assign_teams", lambda conn, sport, rows: None)
     monkeypatch.setattr(runner, "_box_line", lambda conn, sport, play: (None, None))
-    monkeypatch.setattr(runner, "_cheatsheet_rows", lambda conn, sport, rows: w.cheatsheet)
+    def cheatsheet_rows(conn, sport, rows, exclude=frozenset()):
+        w.cheatsheet_exclude = set(exclude)
+        return w.cheatsheet
+    monkeypatch.setattr(runner, "_cheatsheet_rows", cheatsheet_rows)
+    monkeypatch.setattr(runner, "_blind_players", lambda conn, sport, day: set(w.blind_players_today))
     monkeypatch.setattr(runner, "_second_source", lambda conn, sport, ev: w.second if w.second is not None
                         else (ev["home_score"], ev["away_score"]))
     monkeypatch.setattr(runner, "_headshots_due", lambda conn, sport, now: False)
@@ -596,3 +601,12 @@ async def test_unknown_count_is_noted_every_pass(world):
     await step(NOV16_11ET, FakePoster())
     await step(NOV16_11ET, FakePoster(dry_run=True))
     assert world.unknown_noted == [NOV16_11ET, NOV16_11ET]
+
+
+# ---- final review fixes ---------------------------------------------------------------------------
+
+async def test_cheatsheet_leaves_out_todays_blind_play_players(world):
+    world.blind_players_today = {"A One"}
+    world.cheatsheet = _sheet(6)
+    await step(NOV16_11ET, FakePoster())
+    assert world.cheatsheet_exclude == {"A One"}
