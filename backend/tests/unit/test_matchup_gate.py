@@ -108,9 +108,31 @@ def test_classify_unclassifiable_bets_are_rest():
     assert not any(o["favorable"] for o in out)
 
 
-def test_nfl_not_implemented(capsys):
-    assert mg.main(["--sport", "nfl"]) != 0
-    assert "not implemented" in capsys.readouterr().err
+def test_nfl_gate_passes_on_nonnegative_mean():
+    assert mg.gate_nfl([0.01, 0.0, 0.02])["pass"]
+    assert mg.gate_nfl([0.0] * 3)["pass"]  # exactly 0 passes
+    assert mg.gate_nfl([0.02] * 5)["n_fav"] == 5  # no minimum n
+
+
+def test_nfl_gate_fails_on_negative_mean_or_empty():
+    assert not mg.gate_nfl([0.01, -0.03, -0.01])["pass"]
+    assert not mg.gate_nfl([])["pass"]
+
+
+def test_nfl_evaluate_splits_on_def_soft_tags(monkeypatch):
+    t0 = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    soft = [{"key": "def_soft", "direction": "tailwind", "detail": ""}]
+    head = soft + [{"key": "questionable", "direction": "headwind", "detail": ""}]
+
+    def row(player, tags, clv):
+        return _opp(t0, player=player, tags=tags, clv=clv, result="win", profit_units=0.9,
+                    market="player_pass_yds")
+    rows = [row("A", soft, 0.02), row("B", head, -0.05), row("C", [], -0.01)]
+    monkeypatch.setattr(mg, "load_nfl_opportunities", lambda conn, season: rows)
+    out = mg.evaluate_nfl(None, 2026)
+    assert [b["player"] for b in out["fav"]] == ["A"] and len(out["rest"]) == 2
+    assert out["gate"]["pass"]
+    assert "Verdict: PASS" in mg.render_report_nfl(out, 2026, date(2026, 11, 20))
 
 
 def test_report_mentions_position_coverage_and_verdict():

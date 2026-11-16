@@ -178,6 +178,10 @@ Markets stay off regardless of what the numbers do mid-season.
   also ONE consensus line, so the Stage 3 "not driven by one book" check cannot
   be satisfied on fallback data alone.
 
+- **2026-11-16** — Samir approved posting NFL Edge blind plays on X
+  (tracking-only product; requires `def_soft` tailwind and no headwind). Not an
+  amendment; no gate threshold changed.
+
 ## 7. Amendments
 
 *None. Any entry here must record date, reason, and which window it applies to

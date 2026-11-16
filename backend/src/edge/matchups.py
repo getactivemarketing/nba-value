@@ -318,13 +318,22 @@ def _share(rows, num, den) -> float | None:
     return sum(num(r) for r in rows) / d if d else None
 
 
-def tags_for(ctx: TagContext, player: str, event_teams: tuple[str, str], market: str, side: str) -> list[Tag]:
+def resolve_player(ctx: TagContext, player: str, event_teams: tuple[str, str]) -> tuple[str, str, str, str] | None:
+    """(player_key, team, pos, opponent) for a player in this event, or None when he is
+    unknown, traded off the event's teams, or his name key is ambiguous."""
     key = normalize_name(player)
     ids = [tp for tp in ctx.players.get(key, []) if tp[0] in event_teams]
     if len(ids) != 1:
-        return []  # unknown, traded off the event's teams, or an ambiguous name key
+        return None
     team, pos = ids[0]
-    opp = event_teams[1] if event_teams[0] == team else event_teams[0]
+    return key, team, pos, (event_teams[1] if event_teams[0] == team else event_teams[0])
+
+
+def tags_for(ctx: TagContext, player: str, event_teams: tuple[str, str], market: str, side: str) -> list[Tag]:
+    who = resolve_player(ctx, player, event_teams)
+    if who is None:
+        return []
+    key, team, pos, opp = who
     sign = 1 if side == "over" else -1
     out: list[Tag] = []
 

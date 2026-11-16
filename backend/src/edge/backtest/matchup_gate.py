@@ -1,7 +1,7 @@
 # backend/src/edge/backtest/matchup_gate.py
 """Pre-registered validation gate for the Blind Plays "favorable matchup" filter.
 
-    python -m src.edge.backtest.matchup_gate --sport nba [--write-state] [--out PATH]
+    python -m src.edge.backtest.matchup_gate --sport nba|nfl [--write-state] [--out PATH]
 
 Blind plays may only use favorable bets, so before launch we check that favorable
 bets did not do worse on closing-line value than the rest. The rule is fixed here,
@@ -24,15 +24,16 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from src.edge import players, store
-from src.edge.social import nba_matchup
+from src.edge.social import nba_matchup, nfl_matchup
 from src.edge.teams import ABBR_BY_NAME
 from src.edge.views import results_summary
-from src.utils.season import current_nba_season
+from src.utils.season import current_nba_season, current_nfl_season
 
 TOLERANCE = 0.0025
 MIN_FAV_BETS = 200
 NFL_MIN_MEAN = 0.0
 DEFAULT_OUT = "docs/backtests/nba-matchup-filter-2026-11.md"
+NFL_DEFAULT_OUT = "docs/backtests/nfl-matchup-filter-2026-11.md"
 BET_KEY = ("event_id", "market", "player", "side", "line")
 
 
@@ -74,6 +75,68 @@ def gate(fav_clv: list[float], rest_clv: list[float], min_n: int = MIN_FAV_BETS)
         reasons.append(f"only {n_fav} favorable bets (need {min_n})")
     return {"pass": not reasons, "n_fav": n_fav, "n_rest": len(rest_clv), "fav_mean": fav_mean,
             "rest_mean": rest_mean, "fav_ci95": fav_ci, "rest_ci95": rest_ci, "failed": reasons}
+
+
+def gate_nfl(fav_clv: list[float]) -> dict:
+    """NFL rule: def_soft is already proven, so just confirm favorable bets are not negative on CLV
+    (mean >= NFL_MIN_MEAN) on whatever n exists. An empty group fails."""
+    mean, ci = _mean_ci(fav_clv)
+    failed = []
+    if mean is None:
+        failed.append("no favorable bets")
+    elif mean < NFL_MIN_MEAN:
+        failed.append(f"favorable mean CLV {mean:.4f} is below {NFL_MIN_MEAN}")
+    return {"pass": not failed, "n_fav": len(fav_clv), "fav_mean": mean, "fav_ci95": ci, "failed": failed}
+
+
+def load_nfl_opportunities(conn, season: int) -> list[dict]:
+    """Closed, graded (win/loss/push) NFL player-prop opportunities with CLV and their stored tags."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT o.event_id, o.market, o.player, o.side, o.line, o.book, o.clv, o.result,
+                              o.profit_units, o.first_seen_at AS first_seen, o.tags, e.home_team, e.away_team,
+                              e.commence_time
+                       FROM edge_opportunities o
+                       JOIN edge_events e ON e.event_id = o.event_id
+                       WHERE e.sport = 'americanfootball_nfl' AND o.closing_done AND o.clv IS NOT NULL
+                         AND o.result IN ('win', 'loss', 'push') AND o.player <> ''
+                         AND e.commence_time >= %s""",
+                    (datetime(season, 3, 1, tzinfo=timezone.utc),))
+        cols = [c[0] for c in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    conn.commit()
+    for r in rows:
+        r["line"], r["clv"] = float(r["line"]), float(r["clv"])
+        r["profit_units"] = float(r["profit_units"]) if r["profit_units"] is not None else None
+        r["tags"] = r["tags"] or []
+    return rows
+
+
+def evaluate_nfl(conn, season: int) -> dict:
+    raw = load_nfl_opportunities(conn, season)
+    bets = dedupe(raw)
+    fav = [b for b in bets if nfl_matchup.favorable(b)]
+    rest = [b for b in bets if not nfl_matchup.favorable(b)]
+    return {"gate": gate_nfl([b["clv"] for b in fav]), "fav": fav, "rest": rest,
+            "raw_rows": len(raw), "bets": len(bets)}
+
+
+def render_report_nfl(result: dict, season: int, today: date) -> str:
+    g = result["gate"]
+    lines = [
+        "# NFL matchup filter validation (Blind Plays gate)", "",
+        f"Generated {today.isoformat()}, NFL season {season}. **Verdict: {'PASS' if g['pass'] else 'FAIL'}**", "",
+        "## Rule", "",
+        f"Favorable = stored tags include `def_soft` tailwind and no headwind. Pass iff favorable mean CLV >= "
+        f"{NFL_MIN_MEAN} on whatever n exists (def_soft is already proven; this only confirms it is not negative).", "",
+        "## Results", "",
+        "| Group | Bets | Mean CLV | CLV 95% CI | Win rate | Units | ROI |", "|---|---|---|---|---|---|---|",
+        _group_row("Favorable", result["fav"]), _group_row("Rest", result["rest"]),
+        _group_row("All", result["fav"] + result["rest"]), "",
+        f"Opportunity rows: {result['raw_rows']}; unique bets: {result['bets']}.", "",
+        "## Why it " + ("passed" if g["pass"] else "failed"), "",
+    ]
+    lines += [f"- {x}" for x in g["failed"]] if g["failed"] else [f"- Mean CLV is not negative (n={g['n_fav']})."]
+    return "\n".join(lines) + "\n"
 
 
 def position_coverage(games: list[dict]) -> float | None:
@@ -214,26 +277,24 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--sport", choices=["nba", "nfl"], required=True)
     ap.add_argument("--write-state", action="store_true", help="record pass/fail as social_blind_gate:<sport>")
-    ap.add_argument("--out", default=DEFAULT_OUT, help="report path (relative to backend/)")
+    ap.add_argument("--out", default=None, help="report path (relative to backend/); per-sport default")
     ap.add_argument("--season", type=int, default=None)
     args = ap.parse_args(argv)
-    if args.sport == "nfl":
-        print("not implemented: the NFL gate arrives with the NFL matchup filter", file=sys.stderr)
-        return 2
-    season = args.season or current_nba_season()
+    nfl = args.sport == "nfl"
+    season = args.season or (current_nfl_season() if nfl else current_nba_season())
+    out = Path(args.out or (NFL_DEFAULT_OUT if nfl else DEFAULT_OUT))
     conn = store.connect()
     try:
-        result = evaluate(conn, season)
+        result = evaluate_nfl(conn, season) if nfl else evaluate(conn, season)
         now = datetime.now(timezone.utc)
-        out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(render_report(result, season, now.date()))
+        out.write_text((render_report_nfl if nfl else render_report)(result, season, now.date()))
         if args.write_state:
-            store.set_state(conn, "social_blind_gate:nba", "pass" if result["gate"]["pass"] else "fail", now)
+            store.set_state(conn, f"social_blind_gate:{args.sport}", "pass" if result["gate"]["pass"] else "fail", now)
     finally:
         conn.close()
     g = result["gate"]
-    print(f"nba matchup gate: {'PASS' if g['pass'] else 'FAIL'} (n_fav={g['n_fav']}); report {out}")
+    print(f"{args.sport} matchup gate: {'PASS' if g['pass'] else 'FAIL'} (n_fav={g['n_fav']}); report {out}")
     return 0 if g["pass"] else 1
 
 
