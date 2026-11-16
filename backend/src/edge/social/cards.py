@@ -65,6 +65,7 @@ L_TEXT, L_BLUE, L_DIM, L_BORDER = (15, 23, 42), (29, 78, 216), (100, 116, 139), 
 L_WIN, L_LOSS, L_FADED = (22, 163, 74), (220, 38, 38), (148, 163, 184)
 
 MIN_RECORD_GAMES = 3
+STAMP_RESERVE = 280  # receipt: the kicker stops this far short of the right margin, clear of the CASHED band
 MAX_FINAL_PLAYS = 6
 SHORT_MARKET = {
     "Points": "Pts", "Rebounds": "Reb", "Assists": "Ast", "Threes": "3PM", "Pts+Reb+Ast": "PRA",
@@ -122,9 +123,41 @@ def record_label(records: dict, abbr: str | None) -> str | None:
     return r.get("label")
 
 
+def _num(x) -> float | None:
+    """A float, or None for None / non-numeric input (cards render '—' rather than raise)."""
+    if x is None or isinstance(x, bool):
+        return None
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
 def _price(p) -> str:
-    p = int(p)
-    return f"+{p}" if p > 0 else str(p)
+    v = _num(p)
+    if v is None:
+        return "—"
+    v = int(v)
+    return f"+{v}" if v > 0 else str(v)
+
+
+def _pct(x, signed: bool = False) -> str:
+    v = _num(x)
+    if v is None:
+        return "—"
+    return f"{v * 100:+.1f}%" if signed else f"{v * 100:.1f}%"
+
+
+def form_labels(games) -> tuple[str, str]:
+    """Tile labels for hits/games and the average: 'LAST 9' / 'AVG L9' when 9 games decided the form."""
+    g = _num(games)
+    if g is None or g <= 0:
+        return "LAST 10", "L10 AVG"
+    return f"LAST {int(g)}", f"AVG L{int(g)}"
+
+
+def _nick(name: str | None) -> str:
+    return nickname(name) if name and name.strip() else ""
 
 
 def _md(d: date) -> str:
@@ -156,8 +189,9 @@ def _bet_short(row: dict) -> str:
     """'O 32.5 PRA'; anytime TD reads 'TD Yes' / 'TD No'."""
     if row.get("market_label") == "Anytime TD" or row.get("market") == "player_anytime_td":
         return "TD Yes" if row.get("side") == "over" else "TD No"
-    side = {"over": "O", "under": "U"}.get(row.get("side"), str(row.get("side", "")).title())
-    return f"{side} {float(row['line']):g} {_market_short(row)}"
+    side = {"over": "O", "under": "U"}.get(row.get("side"), str(row.get("side") or "").title())
+    line = _num(row.get("line"))
+    return " ".join(s for s in (side, f"{line:g}" if line is not None else "", _market_short(row)) if s)
 
 
 def _image(data: bytes | None) -> Image.Image | None:
@@ -205,8 +239,10 @@ def _spaced_width(text: str, f, spacing: float) -> float:
 
 def _kicker(draw, text: str, color=CYAN, y: int = PAD, max_w: int = W - 2 * PAD) -> None:
     f = font("mono_bold", 30)
-    while _spaced_width(text, f, 5) > max_w and len(text) > 1:
-        text = text[:-2] + "…"
+    if _spaced_width(text, f, 5) > max_w:
+        while text and _spaced_width(text.rstrip() + "…", f, 5) > max_w:
+            text = text[:-1]
+        text = text.rstrip() + "…"
     _spaced(draw, (PAD, y), text, f, color, 5)
 
 
@@ -348,19 +384,21 @@ def _matchup_rows(card: BlindCard, p: dict) -> list[tuple[str, str, str | None, 
                  _toward(drtg, 30, over) if drtg else None, LIME))
     rows.append(("Opp. pace", f"{ordinal(pace)} fastest" if pace else "—", None,
                  _toward(pace, 30, not over) if pace else None, GREEN))
-    if p.get("usage_l10") is not None:
-        u, ch = float(p["usage_l10"]), float(p.get("usage_change") or 0)
+    if _num(p.get("usage_l10")) is not None:
+        u, ch = _num(p["usage_l10"]), _num(p.get("usage_change")) or 0.0
         note = "steady" if abs(ch) < 0.5 else f"{'↑' if ch > 0 else '↓'} from {u - ch:.1f}%"
         rows.append(("Usage rate (L10)", f"{u:.1f}%", note, None, GREEN))
-    if p.get("minutes_l5") is not None:
-        rows.append(("Minutes (L5)", f"{float(p['minutes_l5']):.1f}", None, None, GREEN))
+    if _num(p.get("minutes_l5")) is not None:
+        rows.append(("Minutes (L5)", f"{_num(p['minutes_l5']):.1f}", None, None, GREEN))
     return rows
 
 
 def render_blind(card: BlindCard) -> bytes:
     """The hook: the bet and its numbers, no player, team or opponent anywhere."""
     img, d = _canvas()
-    _kicker(d, f"TRULINE · {card.sport.upper()} BLIND PLAY #{card.n}")
+    sport = (card.sport or "").upper()
+    _kicker(d, " ".join(s for s in ("TRULINE ·", sport, "BLIND PLAY", f"#{card.n}" if card.n is not None else "")
+                        if s))
 
     # silhouette + bet
     top = 140
@@ -370,12 +408,15 @@ def render_blind(card: BlindCard) -> bytes:
     x = PAD + size + 44
     max_w = W - PAD - x
     pos = POSITION_NAME.get((card.position or "").upper(), (card.position or "").upper())
-    head = " · ".join(s for s in (pos, card.market_label.upper()) if s)
+    head = " · ".join(s for s in (pos, (card.market_label or "").upper()) if s)
     d.text((x, top + 22), ellipsize(head, font("sans", 36), max_w), font=font("sans", 36), fill=MUTED)
     if card.market_label == "Anytime TD":
         parts = [("YES" if card.side == "over" else "NO", TEXT)]
     else:
-        parts = [(card.side.upper() + " ", TEXT), (f"{card.line:g}", CYAN)]
+        line = _num(card.line)
+        parts = [((card.side or "").upper() + " ", TEXT)]
+        if line is not None:
+            parts.append((f"{line:g}", CYAN))
     parts.append(("  " + _price(card.price), TEXT))
     size = 78
     while size > 40 and sum(font("sans_bold", size).getlength(t) for t, _ in parts) > max_w:
@@ -387,13 +428,16 @@ def render_blind(card: BlindCard) -> bytes:
         cx += fb.getlength(text)
     when = "tonight" if card.tip_label == "Tonight" else card.tip_label
     verb = "kicks off" if card.sport == "nfl" else "tips"
-    sub = f"{card.n_books} books priced · {verb} {when}"
+    sub = " · ".join(s for s in (f"{card.n_books} books priced" if card.n_books else "",
+                                 f"{verb} {when}" if when else "") if s)
     d.text((x, top + 182), ellipsize(sub, font("sans", 32), max_w), font=font("sans", 32), fill=MUTED)
 
-    l10 = f"{card.l10_hits}/{card.l10_games}" if card.l10_hits is not None and card.l10_games else "—"
-    avg = f"{card.l10_avg:g}" if card.l10_avg is not None else "—"
-    _tiles(d, 420, [(f"{card.ev * 100:+.1f}%", "EDGE", CYAN), (str(card.n_books), "BOOKS", TEXT),
-                    (l10, "LAST 10", TEXT), (avg, "L10 AVG", TEXT)])
+    hits, games, avg = _num(card.l10_hits), _num(card.l10_games), _num(card.l10_avg)
+    form = f"{int(hits)}/{int(games)}" if hits is not None and games else "—"
+    form_label, avg_label = form_labels(games)
+    _tiles(d, 420, [(_pct(card.ev, signed=True), "EDGE", CYAN),
+                    (str(card.n_books) if card.n_books is not None else "—", "BOOKS", TEXT),
+                    (form, form_label, TEXT), (f"{avg:g}" if avg is not None else "—", avg_label, TEXT)])
 
     p = _panel_dict(card.panel)
     if p:
@@ -502,20 +546,21 @@ def render_cheatsheet(sport: str, slate: date, rows: list[dict], faces: dict[str
                       *, logos: dict[str, bytes | None] | None = None) -> bytes:
     """Hit-rate leaders among tonight's +EV props: face, bet, L10 hits, market fair %."""
     img, d = _canvas()
-    logos = logos or {}
-    y = _list_header(d, f"TRULINE · {sport.upper()} CHEAT SHEET · {_md(slate)}", "Hit-rate leaders",
-                     "PROP", "L10    FAIR")
-    rows = rows[:10]
+    logos, faces = logos or {}, faces or {}
+    y = _list_header(d, f"TRULINE · {(sport or '').upper()} CHEAT SHEET · {_md(slate)}", "Hit-rate leaders",
+                     "PROP", "HIT RATE   FAIR")
+    rows = (rows or [])[:10]
     avail = H - PAD - 46 - 30 - y
     h = min(150, avail // max(1, len(rows)))
     fr = font("mono_bold", 34 if h >= 110 else 30)
     fd = font("mono", 30 if h >= 110 else 27)
     for r in rows:
         l10 = r.get("l10") or {}
-        hits, games = l10.get("hits"), l10.get("games")
+        hits, games = _num(l10.get("hits")), _num(l10.get("games"))
         rate = hits / games if hits is not None and games else None
-        hit_txt = f"{hits}/{games}" if rate is not None else "—"
-        fair = f"{round(float(r['fair_prob']) * 100)}%" if r.get("fair_prob") is not None else "—"
+        hit_txt = f"{int(hits)}/{int(games)}" if rate is not None else "—"
+        fair_p = _num(r.get("fair_prob"))
+        fair = f"{round(fair_p * 100)}%" if fair_p is not None else "—"
         _prop_row(img, d, y, h, r, faces.get(r.get("player")), logos, sport,
                   [(hit_txt, GREEN if rate is not None and rate >= 0.7 else TEXT, fr), (fair, DIM, fd)],
                   sub_extra=_tailwind(r))
@@ -530,17 +575,20 @@ def render_value(sport: str, slate: date, legs: list[dict], faces, locked_at: da
     img, d = _canvas()
     logos = logos or {}
     y = _list_header(d, f"TRULINE · TONIGHT'S TOP 5 · {_md(slate)}", "Value plays", "BET", "PRICE · EDGE")
-    legs = legs[:5]
+    legs = (legs or [])[:5]
     h = 160
     fp, fe = font("mono_bold", 36), font("mono_bold", 36)
     for i, r in enumerate(legs):
         book = BOOK_NAMES.get(r.get("book"), r.get("book") or "")
         _prop_row(img, d, y, h, r, (faces or {}).get(r.get("player")), logos, sport,
-                  [(_price(r["price"]), TEXT, fp), ("·", DIM, fp), (f"{float(r['ev']) * 100:.1f}%", CYAN, fe)],
+                  [(_price(r.get("price")), TEXT, fp), ("·", DIM, fp), (_pct(r.get("ev")), CYAN, fe)],
                   prefix=str(r.get("rank") or i + 1), sub_extra=book)
         y += h
-    local = locked_at.astimezone(ET)
-    note = f"Locked {local.strftime('%I:%M %p').lstrip('0')} ET · best book on each row · 1 unit each"
+    note = "best book on each row · 1 unit each"
+    if locked_at is not None:
+        note = f"Locked {locked_at.astimezone(ET).strftime('%I:%M %p').lstrip('0')} ET · {note}"
+    else:
+        note = note[0].upper() + note[1:]
     d.text((PAD, y + 34), ellipsize(note, font("mono", 27), W - 2 * PAD), font=font("mono", 27), fill=MUTED)
     _footer(d, "All plays + odds → truline.app", "@trulineapp")
     return _png(img)
@@ -557,17 +605,21 @@ def render_final(event: dict, records: dict, logos: dict[str, bytes | None], pla
                  faces) -> bytes:
     """Light card: logos, nicknames, records, score, and every TruLine posted play in the game."""
     img, d = _canvas(light=True)
+    event = event or {}
     sport = event.get("sport")
-    logos, faces = logos or {}, faces or {}
+    logos, faces, plays = logos or {}, faces or {}, plays or []
+    plays = [{**p, "profit_units": _num(p.get("profit_units"))} for p in plays]
     _kicker(d, "FINAL", L_BLUE)
 
-    teams = [(event["away_team"], event.get("away_score")), (event["home_team"], event.get("home_score"))]
+    teams = [(event.get("away_team"), _num(event.get("away_score"))),
+             (event.get("home_team"), _num(event.get("home_score")))]
     centers = [W * 0.27, W * 0.73]
     fnick, frec = font("sans_bold", 50), font("sans", 32)
     for (name, _), cx in zip(teams, centers):
         ab = _abbr(sport, name)
         _paste_logo(img, d, logos.get(ab), (round(cx), 270), 190, ab, light=True)
-        d.text((cx, 400), ellipsize(nickname(name).upper(), fnick, 420), font=fnick, fill=L_TEXT, anchor="mt")
+        d.text((cx, 400), ellipsize((_nick(name) or ab).upper(), fnick, 420), font=fnick, fill=L_TEXT,
+               anchor="mt")
         rec = record_label(records, ab)
         if rec:
             d.text((cx, 462), rec, font=frec, fill=L_DIM, anchor="mt")
@@ -575,13 +627,14 @@ def render_final(event: dict, records: dict, logos: dict[str, bytes | None], pla
     fs = font("sans_bold", 132)
     (a_name, a_pts), (h_name, h_pts) = teams
     d.text((W / 2, 610), "—", font=fs, fill=L_FADED, anchor="mm")
-    d.text((W / 2 - 90, 610), "" if a_pts is None else str(a_pts), font=fs, fill=L_TEXT, anchor="rm")
-    d.text((W / 2 + 90, 610), "" if h_pts is None else str(h_pts), font=fs, fill=L_TEXT, anchor="lm")
+    d.text((W / 2 - 90, 610), "" if a_pts is None else f"{a_pts:g}", font=fs, fill=L_TEXT, anchor="rm")
+    d.text((W / 2 + 90, 610), "" if h_pts is None else f"{h_pts:g}", font=fs, fill=L_TEXT, anchor="lm")
     if a_pts is not None and h_pts is not None:
         if a_pts == h_pts:
             verdict = "TIE"
         else:
-            verdict = f"{nickname(a_name if a_pts > h_pts else h_name).upper()} WIN"
+            winner = a_name if a_pts > h_pts else h_name
+            verdict = f"{(_nick(winner) or _abbr(sport, winner)).upper()} WIN"
         d.text((W / 2, 715), ellipsize(verdict, font("sans_bold", 42), W - 2 * PAD), font=font("sans_bold", 42),
                fill=L_TEXT, anchor="mm")
 
@@ -605,7 +658,7 @@ def render_final(event: dict, records: dict, logos: dict[str, bytes | None], pla
         tx = ix0 + round(fh * 1.3) + 20
         mark, color = _result_mark(p.get("result"))
         d.text((ix1, y + row_h / 2), mark, font=fm, fill=color, anchor="rm")
-        bet = f" {_bet_short(p)} {_price(p['price'])}"
+        bet = f" {_bet_short(p)} {_price(p.get('price'))}"
         name = ellipsize(last_name(p.get("player") or ""), fp,
                          max(40, ix1 - tx - fm.getlength(mark) - 24 - fp.getlength(bet)))
         d.text((tx, y + row_h / 2), name + bet, font=fp, fill=L_TEXT, anchor="lm")
@@ -643,17 +696,19 @@ def _receipt_third_tile(play: dict) -> tuple[str, str, tuple] | None:
         return ordinal(int(p["opp_vs_pos_rank"])), f"OPP vs {pos or 'POS'}"[:12], CYAN
     if p.get("opp_rank"):
         return f"{ordinal(int(p['opp_rank']))}", f"OPP vs {pos or 'POS'}"[:12], CYAN
-    if play.get("ev") is not None:
-        return f"{float(play['ev']) * 100:+.1f}%", "EDGE", CYAN
+    if _num(play.get("ev")) is not None:
+        return _pct(play["ev"], signed=True), "EDGE", CYAN
     return None
 
 
 def render_receipt(play: dict, face: bytes | None, logo: bytes | None, original: bytes | None = None) -> bytes:
     """A win: CASHED stamp, face, name, logo + matchup, bet -> stat, price/units, and the original card."""
     img, d = _canvas()
+    play = play or {}
     sport = play.get("sport")
     day = play.get("slate_date")
-    _kicker(d, "TRULINE · RECEIPT" + (f" · {_md(day)}" if isinstance(day, date) else ""), max_w=W - 2 * PAD - 260)
+    _kicker(d, "TRULINE · RECEIPT" + (f" · {_md(day)}" if isinstance(day, date) else ""),
+            max_w=W - 2 * PAD - STAMP_RESERVE)
 
     top = 140
     fw, fh = 400, 292
@@ -690,7 +745,8 @@ def render_receipt(play: dict, face: bytes | None, logo: bytes | None, original:
     fb, fr = font("sans", 56), font("sans_bold", 56)
     actual = play.get("actual")
     left = f"{_bet_short(play)}  →  "
-    right = (f"{float(actual):g} ✓" if actual is not None else "HIT ✓")
+    actual = _num(actual)
+    right = f"{actual:g} ✓" if actual is not None else "HIT ✓"
     total = fb.getlength(left) + fr.getlength(right)
     if total > W - 2 * PAD:
         fb, fr = font("sans", 44), font("sans_bold", 44)
@@ -700,12 +756,12 @@ def render_receipt(play: dict, face: bytes | None, logo: bytes | None, original:
     d.text((sx + fb.getlength(left), y), right, font=fr, fill=GREEN, anchor="ls")
     if play.get("stat_line"):
         fsl = font("sans", 32)
-        d.text((W / 2, y + 50), ellipsize(play["stat_line"], fsl, W - 2 * PAD), font=fsl, fill=MUTED,
+        d.text((W / 2, y + 50), ellipsize(str(play["stat_line"]), fsl, W - 2 * PAD), font=fsl, fill=MUTED,
                anchor="mt")
 
-    units = play.get("profit_units")
-    tiles = [(_price(play["price"]), "PRICE", TEXT),
-             (f"{float(units):+.2f}u" if units is not None else "WIN", "RESULT", GREEN)]
+    units = _num(play.get("profit_units"))
+    tiles = [(_price(play.get("price")), "PRICE", TEXT),
+             (f"{units:+.2f}u" if units is not None else "WIN", "RESULT", GREEN)]
     third = _receipt_third_tile(play)
     if third:
         tiles.append(third)

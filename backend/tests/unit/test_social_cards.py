@@ -192,3 +192,123 @@ def test_sample_cli_writes_cards(tmp_path):
             "receipt.png"} <= set(names)
     for p in tmp_path.glob("*.png"):
         check(p.read_bytes())
+
+
+# ---- fix round 1: labels, None-safety, identity ---------------------------------------------
+
+@pytest.fixture
+def drawn(monkeypatch):
+    """Every string drawn with ImageDraw.text, in order."""
+    from PIL import ImageDraw
+    out: list[str] = []
+    orig = ImageDraw.ImageDraw.text
+
+    def spy(self, xy, text, *a, **kw):
+        out.append(str(text))
+        return orig(self, xy, text, *a, **kw)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", spy)
+    return out
+
+
+def test_form_labels():
+    assert cards.form_labels(9) == ("LAST 9", "AVG L9")
+    assert cards.form_labels(10) == ("LAST 10", "AVG L10")
+    assert cards.form_labels(None) == ("LAST 10", "L10 AVG")
+
+
+def test_blind_form_tile_labels_follow_games(drawn):
+    card = BlindCard(sport="nfl", n=2, position="WR", market_label="Rec Yds", side="over", line=64.5, price=-110,
+                     ev=0.042, n_books=8, l10_hits=6, l10_games=9, l10_avg=71.2, tip_label="Tonight", panel=None)
+    cards.render_blind(card)
+    text = "".join(drawn)
+    assert "6/9" in text and "LAST 9" in text and "AVG L9" in text
+    assert "LAST 10" not in text and "L10 AVG" not in text
+
+
+def test_cheatsheet_header_says_hit_rate_and_rows_show_hits_over_games(drawn):
+    cards.render_cheatsheet("nba", SLATE, [prop(i, l10={"hits": 7, "games": 9, "rate": 0.778}) for i in range(6)], {})
+    text = "".join(drawn)
+    assert "HIT RATE" in text and "7/9" in text
+
+
+NULLABLE_PROP = ["price", "line", "ev", "fair_prob", "team", "matchup", "player", "side", "market_label", "l10",
+                 "book", "rank"]
+NULLABLE_PLAY = ["price", "line", "ev", "actual", "stat_line", "team", "matchup", "player", "profit_units",
+                 "result", "side", "market_label", "panel", "slate_date", "n", "kind", "sport"]
+NULLABLE_EVENT = ["away_team", "home_team", "away_score", "home_score", "sport"]
+NULLABLE_CARD = ["position", "market_label", "side", "line", "price", "ev", "n_books", "l10_hits", "l10_games",
+                 "l10_avg", "tip_label", "panel", "sport", "n"]
+
+
+def _variants(base: dict, fields: list[str]):
+    for f in fields:
+        yield pytest.param({**base, f: None}, id=f"{f}=None")
+        yield pytest.param({k: v for k, v in base.items() if k != f}, id=f"no-{f}")
+
+
+@pytest.mark.parametrize("field", NULLABLE_CARD)
+def test_blind_none_fields(field):
+    import dataclasses
+    check(cards.render_blind(dataclasses.replace(nba_card(NBA_PANEL), **{field: None})))
+
+
+@pytest.mark.parametrize("row", list(_variants(prop(), NULLABLE_PROP)))
+def test_cheatsheet_none_fields(row):
+    check(cards.render_cheatsheet("nba", SLATE, [row] * 6, None))
+
+
+@pytest.mark.parametrize("row", list(_variants(prop(), NULLABLE_PROP)))
+def test_value_none_fields(row):
+    check(cards.render_value("nba", SLATE, [row] * 5, None, LOCKED))
+
+
+def test_value_without_lock_time():
+    check(cards.render_value("nba", SLATE, [prop()] * 5, None, None))
+
+
+@pytest.mark.parametrize("play", list(_variants(PLAY, NULLABLE_PLAY)) + [{**PLAY, "actual": "n/a"},
+                                                                        {**PLAY, "profit_units": "x"}])
+def test_receipt_none_fields(play):
+    check(cards.render_receipt(play, None, None))
+
+
+@pytest.mark.parametrize("event", list(_variants(EVENT, NULLABLE_EVENT)))
+def test_final_none_event_fields(event):
+    check(cards.render_final(event, None, None, [PLAY], None))
+
+
+@pytest.mark.parametrize("play", list(_variants(PLAY, NULLABLE_PLAY)))
+def test_final_none_play_fields(play):
+    check(cards.render_final(EVENT, RECORDS, {}, [play], None))
+
+
+def test_final_no_plays_none_records():
+    check(cards.render_final(EVENT, None, None, None, None))
+
+
+def _blind_card_from_play(play: dict, panel) -> BlindCard:
+    from src.edge.social import blind
+    return blind.to_card({**play, "panel": panel}, {"e1": play["commence_time"], "e2": play["commence_time"]})
+
+
+def test_blind_card_draws_no_identity(drawn):
+    import dataclasses
+    tip = datetime(2026, 11, 16, 0, 30, tzinfo=timezone.utc)
+    nba = {"sport": "nba", "n": 7, "event_id": "e1", "player": "Jayson Tatum", "team": "BOS", "position": "F",
+           "home_team": "Boston Celtics", "away_team": "Miami Heat", "matchup": "Miami Heat @ Boston Celtics",
+           "market": "player_points", "market_label": "Points", "side": "over", "line": 27.5, "price": 105,
+           "ev": 0.04, "n_books": 9, "book": "fanduel", "form": {"hits": 7, "games": 10, "avg": 29.1},
+           "commence_time": tip}
+    nfl = {**nba, "sport": "nfl", "player": "Josh Allen", "team": "BUF", "position": "QB",
+           "home_team": "Kansas City Chiefs", "away_team": "Buffalo Bills",
+           "matchup": "Buffalo Bills @ Kansas City Chiefs", "market": "player_pass_yds", "market_label": "Pass Yds",
+           "line": 245.5}
+    cards.render_blind(_blind_card_from_play(nba, dataclasses.asdict(NBA_PANEL)))
+    cards.render_blind(_blind_card_from_play(nfl, NflPanel(True, 3, 0.27, None, ["def_soft"])))
+    assert drawn
+    joined = "".join(drawn)
+    forbidden = ["Jayson", "Tatum", "BOS", "MIA", "Boston", "Celtics", "Miami", "Heat",
+                 "Josh", "Allen", "BUF", "KC", "Kansas", "Chiefs", "Buffalo", "Bills"]
+    for word in forbidden:
+        assert word not in joined and word.upper() not in joined, word
