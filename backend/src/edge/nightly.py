@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from psycopg2.extras import RealDictCursor
 
+from src.config import settings
 from src.edge import views
 from src.edge.config import NBA, SportConfig
 from src.edge.engine import american_to_decimal, prob_to_american
@@ -123,9 +124,10 @@ def _locked(conn, sport: SportConfig, day: date) -> bool:
 
 
 def _blind_players(conn, sport: SportConfig, day: date) -> set[str]:
-    """Players with a blind play on the slate while social blind posting is on for the sport: the
-    Top 5 leaves them out so the Value card never names a blind play."""
-    if not social_ledger.enabled("blind", sport.slug):
+    """Players with a blind play on the slate while blind posting is live for the sport: the Top 5
+    leaves them out so the Value card never names a blind play. In dry run nothing goes out, so the
+    site's Top 5 is left alone."""
+    if settings.social_dry_run or not social_ledger.enabled("blind", sport.slug):
         return set()
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT player FROM edge_blind_plays WHERE sport = %s AND slate_date = %s",
@@ -136,7 +138,7 @@ def _blind_players(conn, sport: SportConfig, day: date) -> set[str]:
 def maybe_lock(conn, now: datetime, sport: SportConfig = NBA) -> int:
     """Lock tonight's picks once, from an hour before the first game. If the worker was down at
     lock time it locks late from the games not yet started. Today's blind-play players are left out
-    (social blind posting on). Returns legs written."""
+    (blind posting live). Returns legs written."""
     day = slate_date(now)
     when = lock_at(_tips(conn, sport, day))
     if when is None or now < when or _locked(conn, sport, day):

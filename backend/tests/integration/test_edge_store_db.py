@@ -1324,13 +1324,16 @@ def test_nightly_locks_once_then_grades_from_logged_picks(conn, monkeypatch):
                                "parlay": {"n": 1, "wins": 0, "units": -1.0}}
 
 
-@pytest.mark.parametrize("social_on", [True, False])
-def test_nightly_lock_leaves_out_todays_blind_play_players(conn, monkeypatch, social_on):
-    """Ruling 26: the Value card never names a blind play, while social blind posting is on for NBA."""
+@pytest.mark.parametrize("social_on, dry_run, excluded", [(True, False, True), (True, True, False),
+                                                           (False, False, False)])
+def test_nightly_lock_leaves_out_todays_blind_play_players(conn, monkeypatch, social_on, dry_run, excluded):
+    """Rulings 26/32: the Value card never names a blind play, while blind posting is live for NBA
+    (dry-run plays never go out, so they don't change the site's Top 5)."""
     from src.config import settings
     from src.edge import nightly, views
 
     monkeypatch.setattr(settings, "social_sports", "nba" if social_on else "nfl")
+    monkeypatch.setattr(settings, "social_dry_run", dry_run)
     monkeypatch.setattr(settings, "social_kinds", "cheatsheet,value,blind,final,receipt")
     tip = datetime(2026, 11, 12, 0, 10, tzinfo=timezone.utc)  # 7:10 pm ET on 11-11
     store.upsert_events(conn, [{"event_id": f"g{i}", "sport": "basketball_nba", "home_team": "Boston Celtics",
@@ -1351,7 +1354,7 @@ def test_nightly_lock_leaves_out_todays_blind_play_players(conn, monkeypatch, so
     conn.commit()
     nightly.maybe_lock(conn, tip - timedelta(minutes=59))
     top = [l["player"] for l in nightly.nightly(conn, tip)["tonight"]["top"]]
-    assert top == (["P1", "P2"] if social_on else ["P0", "P1", "P2"])
+    assert top == (["P1", "P2"] if excluded else ["P0", "P1", "P2"])
 
 
 def test_email_signups_store_each_address_once(conn):
