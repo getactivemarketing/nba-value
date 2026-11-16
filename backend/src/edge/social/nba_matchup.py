@@ -30,7 +30,7 @@ Definitions
   favorable when its key is missing, drtg_rank is 0, or the player has fewer than
   MIN_PLAYER_GAMES games with minutes.
 
-Only load_context touches the database.
+Only load_games (and load_context, which calls it) touch the database.
 """
 from __future__ import annotations
 
@@ -194,8 +194,8 @@ def panel(row: dict, position: str, opp: TeamRanks, usage: PlayerUsage) -> Panel
                  usage_change=usage.usage_l10 - usage.usage_season, minutes_l5=usage.minutes_l5)
 
 
-def load_context(conn, season: int) -> tuple[dict[str, TeamRanks], Callable[[int], PlayerUsage | None]]:
-    """The only DB-touching function: ranks for the season plus a bdl_player_id -> usage lookup."""
+def load_games(conn, season: int) -> list[dict]:
+    """Every stored player-game of the season, with the player's position group (NULL if unknown)."""
     with conn.cursor() as cur:
         cur.execute("""SELECT g.bdl_player_id, g.bdl_game_id, g.game_date, g.team, g.opponent, g.minutes,
                               g.pts, g.reb, g.ast, g.fg3m, g.tov, g.fga, g.fta, g.oreb, p.position
@@ -207,6 +207,12 @@ def load_context(conn, season: int) -> tuple[dict[str, TeamRanks], Callable[[int
         cols = [c[0] for c in cur.description]
         games = [dict(zip(cols, r)) for r in cur.fetchall()]
     conn.commit()
+    return games
+
+
+def load_context(conn, season: int) -> tuple[dict[str, TeamRanks], Callable[[int], PlayerUsage | None]]:
+    """Ranks for the whole season plus a bdl_player_id -> usage lookup."""
+    games = load_games(conn, season)
     totals = team_totals(games)
     by_player: dict[int, list[dict]] = defaultdict(list)
     for g in games:
