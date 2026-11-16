@@ -148,12 +148,13 @@ def _pct(x, signed: bool = False) -> str:
     return f"{v * 100:+.1f}%" if signed else f"{v * 100:.1f}%"
 
 
-def form_labels(games) -> tuple[str, str]:
-    """Tile labels for hits/games and the average: 'LAST 9' / 'AVG L9' when 9 games decided the form."""
-    g = _num(games)
-    if g is None or g <= 0:
-        return "LAST 10", "L10 AVG"
-    return f"LAST {int(g)}", f"AVG L{int(g)}"
+def form_labels(games, avg_games=None) -> tuple[str, str]:
+    """Tile labels: hits/games over `games` decided games ('LAST 9') and the average over the
+    `avg_games` played games it covers ('AVG L10'). The two counts differ when a game pushed."""
+    g, a = _num(games), _num(avg_games)
+    form = f"LAST {int(g)}" if g and g > 0 else "LAST 10"
+    avg = f"AVG L{int(a)}" if a and a > 0 else "L10 AVG"
+    return form, avg
 
 
 def _nick(name: str | None) -> str:
@@ -434,7 +435,7 @@ def render_blind(card: BlindCard) -> bytes:
 
     hits, games, avg = _num(card.l10_hits), _num(card.l10_games), _num(card.l10_avg)
     form = f"{int(hits)}/{int(games)}" if hits is not None and games else "—"
-    form_label, avg_label = form_labels(games)
+    form_label, avg_label = form_labels(games, getattr(card, "l10_avg_games", None))
     _tiles(d, 420, [(_pct(card.ev, signed=True), "EDGE", CYAN),
                     (str(card.n_books) if card.n_books is not None else "—", "BOOKS", TEXT),
                     (form, form_label, TEXT), (f"{avg:g}" if avg is not None else "—", avg_label, TEXT)])
@@ -828,10 +829,12 @@ def _samples(assets: Path | None) -> dict[str, bytes]:
     faces = {n: face(n) for n in names}
 
     nba = BlindCard(sport="nba", n=1, position="F", market_label="Pts+Reb+Ast", side="over", line=32.5, price=116,
-                    ev=0.05, n_books=9, l10_hits=5, l10_games=10, l10_avg=34.1, tip_label="1:10 PM ET",
+                    ev=0.05, n_books=9, l10_hits=5, l10_games=10, l10_avg=34.1, l10_avg_games=10,
+                    tip_label="1:10 PM ET",
                     panel=dataclasses.asdict(Panel(True, 27, 22, 6, 26.8, 2.7, 35.2)))
     nfl = BlindCard(sport="nfl", n=4, position="WR", market_label="Rec Yds", side="over", line=64.5, price=-110,
-                    ev=0.042, n_books=8, l10_hits=6, l10_games=9, l10_avg=71.2, tip_label="Tonight",
+                    ev=0.042, n_books=8, l10_hits=6, l10_games=9, l10_avg=71.2, l10_avg_games=10,
+                    tip_label="Tonight",
                     panel=NflPanel(True, 3, 0.274, None, ["def_soft"]))
     blind_png = render_blind(nba)
     event = {"sport": "nba", "away_team": "Indiana Pacers", "home_team": "Philadelphia 76ers",

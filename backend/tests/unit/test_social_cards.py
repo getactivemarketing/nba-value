@@ -1,3 +1,4 @@
+import dataclasses
 import io
 import time
 from datetime import date, datetime, timezone
@@ -212,18 +213,34 @@ def drawn(monkeypatch):
 
 
 def test_form_labels():
-    assert cards.form_labels(9) == ("LAST 9", "AVG L9")
-    assert cards.form_labels(10) == ("LAST 10", "AVG L10")
-    assert cards.form_labels(None) == ("LAST 10", "L10 AVG")
+    assert cards.form_labels(9, 10) == ("LAST 9", "AVG L10")
+    assert cards.form_labels(9, 7) == ("LAST 9", "AVG L7")
+    assert cards.form_labels(None, None) == ("LAST 10", "L10 AVG")
+    assert cards.form_labels(9) == ("LAST 9", "L10 AVG")
 
 
 def test_blind_form_tile_labels_follow_games(drawn):
     card = BlindCard(sport="nfl", n=2, position="WR", market_label="Rec Yds", side="over", line=64.5, price=-110,
-                     ev=0.042, n_books=8, l10_hits=6, l10_games=9, l10_avg=71.2, tip_label="Tonight", panel=None)
+                     ev=0.042, n_books=8, l10_hits=6, l10_games=9, l10_avg=71.2, tip_label="Tonight", panel=None,
+                     l10_avg_games=8)
     cards.render_blind(card)
     text = "".join(drawn)
-    assert "6/9" in text and "LAST 9" in text and "AVG L9" in text
-    assert "LAST 10" not in text and "L10 AVG" not in text
+    assert "6/9" in text and "LAST 9" in text and "71.2" in text and "AVG L8" in text
+    assert "LAST 10" not in text and "L10 AVG" not in text and "AVG L9" not in text
+
+
+def test_blind_avg_tile_counts_its_own_games_after_a_push(drawn):
+    # 10 played games, one push: hit rate over 9 decided games, the average still over all 10
+    card = dataclasses.replace(nba_card(NBA_PANEL), l10_hits=6, l10_games=9, l10_avg=30.2, l10_avg_games=10)
+    cards.render_blind(card)
+    text = "".join(drawn)
+    assert "LAST 9" in text and "AVG L10" in text and "AVG L9" not in text
+
+
+def test_blind_avg_tile_without_avg(drawn):
+    cards.render_blind(dataclasses.replace(nba_card(NBA_PANEL), l10_avg=None, l10_avg_games=None))
+    text = "".join(drawn)
+    assert "L10 AVG" in text and "—" in text
 
 
 def test_cheatsheet_header_says_hit_rate_and_rows_show_hits_over_games(drawn):

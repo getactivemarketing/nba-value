@@ -73,15 +73,18 @@ def _teams_of(r: dict) -> tuple[str, str]:
     return home, away
 
 
-def _l10_avg(games: list[dict], market: str) -> float | None:
+def _l10_avg(games: list[dict], market: str) -> tuple[float | None, int | None]:
+    """(average, games it covers) over the last 10 played games; (None, None) below 5 games."""
     played = sorted((g for g in games if (g["minutes"] or 0) > 0), key=lambda g: g["game_date"], reverse=True)[:10]
-    return round(sum(players.stat_for(market, g) for g in played) / len(played), 1) if len(played) >= 5 else None
+    if len(played) < 5:
+        return None, None
+    return round(sum(players.stat_for(market, g) for g in played) / len(played), 1), len(played)
 
 
 def build_panels(conn, sport: str, rows: list[dict], now: datetime) -> dict[tuple, object]:
     """Matchup panel per prop row, keyed by panel_key. Fails closed: a row whose context can't be
     built gets no panel. Also annotates each row in place with home_team, away_team, team and
-    position (and form["avg"] for NBA), which record() and the card need."""
+    position (and form["avg"] / form["avg_games"] for NBA), which record() and the card need."""
     props = [r for r in rows if r["player"] and r["market"].startswith("player_")]
     for r in props:
         r["home_team"], r["away_team"] = _teams_of(r)
@@ -115,7 +118,8 @@ def _nba_panels(conn, props: list[dict], now: datetime) -> dict[tuple, object]:
             continue
         r["team"], r["position"] = team, pos
         if r.get("form"):
-            r["form"] = {**r["form"], "avg": _l10_avg(recent.get(r["bdl_player_id"], []), r["market"])}
+            avg, avg_games = _l10_avg(recent.get(r["bdl_player_id"], []), r["market"])
+            r["form"] = {**r["form"], "avg": avg, "avg_games": avg_games}
         opp, usage = ranks.get(away if team == home else home), usage_for(r["bdl_player_id"])
         if opp is None or usage is None:
             continue
@@ -201,6 +205,7 @@ class BlindCard:
     l10_avg: float | None
     tip_label: str
     panel: dict | None
+    l10_avg_games: int | None = None  # played games behind l10_avg (pushes count; hits/games may differ)
 
 
 def tip_label(tip: datetime, slate_tips: dict[str, datetime]) -> str:
@@ -218,7 +223,8 @@ def to_card(play: dict, slate_tips: dict[str, datetime]) -> BlindCard:
         sport=play["sport"], n=play["n"], position=play.get("position"), market_label=play["market_label"],
         side=play["side"], line=float(play["line"]), price=int(play["price"]), ev=float(play["ev"]),
         n_books=play["n_books"], l10_hits=form.get("hits"), l10_games=form.get("games"),
-        l10_avg=form.get("avg"), tip_label=tip_label(_tip(play), slate_tips), panel=play.get("panel"))
+        l10_avg=form.get("avg"), tip_label=tip_label(_tip(play), slate_tips), panel=play.get("panel"),
+        l10_avg_games=form.get("avg_games"))
 
 
 def _price(p: int) -> str:

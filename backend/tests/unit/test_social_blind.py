@@ -85,7 +85,7 @@ def test_blind_card_has_no_identity_fields():
 def play(**kw):
     p = {"sport": "nba", "n": 7, "position": "F", "market_label": "Points", "side": "over", "line": 20.5,
          "price": 116, "ev": 0.1, "n_books": 9, "commence_time": TIP,
-         "form": {"hits": 8, "games": 10, "rate": 0.8, "avg": 24.3}, "panel": dataclasses.asdict(panel())}
+         "form": {"hits": 8, "games": 10, "rate": 0.8, "avg": 24.3, "avg_games": 10}, "panel": dataclasses.asdict(panel())}
     p.update(kw)
     return p
 
@@ -111,7 +111,7 @@ def test_tip_label_counts_games_not_props():
 
 def test_to_card_carries_form_and_no_identity():
     c = blind.to_card(play(), {"e1": TIP, "e2": TIP})
-    assert (c.l10_hits, c.l10_games, c.l10_avg) == (8, 10, 24.3)
+    assert (c.l10_hits, c.l10_games, c.l10_avg, c.l10_avg_games) == (8, 10, 24.3, 10)
     assert c.n == 7 and c.position == "F" and c.price == 116
     assert c.panel["opp_vs_pos_rank"] == 25
     assert blind.to_card(play(form=None), {"e1": TIP}).l10_hits is None
@@ -189,6 +189,7 @@ def test_nba_panel_uses_the_opponents_ranks_for_home_and_away(monkeypatch):
     assert (home["team"], home["position"]) == ("BOS", "F") and (away["team"], away["position"]) == ("DET", "F")
     assert home["home_team"] == "Boston Celtics" and home["away_team"] == "Detroit Pistons"
     assert home["form"]["avg"] == 24.5 and home["form"]["hits"] == 8  # mean of 20..29
+    assert home["form"]["avg_games"] == 10
 
 
 def test_nba_panels_skip_players_not_in_the_game_and_fail_closed_on_errors(monkeypatch):
