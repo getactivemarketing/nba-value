@@ -117,6 +117,7 @@ def brake_tripped(conn, sport: str, now: datetime) -> bool:
                     (day_start, now - timedelta(hours=1), sport, list(COUNTED_AS_POSTED),
                      min(day_start, now - timedelta(hours=1))))
         per_day, per_hour = cur.fetchone()
+    conn.rollback()
     return per_day >= settings.social_max_per_day or per_hour >= settings.social_max_per_hour
 
 
@@ -126,9 +127,9 @@ def find(conn, kind: str, key: str) -> dict | None:
                               post_url, detail, created_at, updated_at
                        FROM edge_social_posts WHERE kind = %s AND key = %s""", (kind, key))
         row = cur.fetchone()
-        if row is None:
-            return None
-        return dict(zip([d[0] for d in cur.description], row))
+        cols = [d[0] for d in cur.description]
+    conn.rollback()
+    return dict(zip(cols, row)) if row is not None else None
 
 
 URL_LOOKUP_WINDOW = timedelta(hours=48)
@@ -179,3 +180,12 @@ def confirm_posted(conn, row_id: int, post_url: str | None) -> bool:
     if ok:
         log.warning("social ledger: row %s confirmed published by Blotato; now posted", row_id)
     return ok
+
+
+def unknown_without_submission(conn) -> int:
+    """`unknown` rows Blotato can't be asked about: a live post lost before its submission id was stored."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM edge_social_posts WHERE status = 'unknown' AND submission_id IS NULL")
+        n = cur.fetchone()[0]
+    conn.rollback()
+    return int(n)

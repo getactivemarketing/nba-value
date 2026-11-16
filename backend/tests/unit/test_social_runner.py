@@ -58,6 +58,10 @@ class FakeLedger:
         return {k: r["status"] for (kd, k), r in self.rows.items() if kind is None or kd == kind}
 
 
+def _sheet(n, tip=TIP):
+    return [{"player": f"P{i}", "matchup": "A @ B", "commence_time": tip.isoformat()} for i in range(n)]
+
+
 class World:
     """What the faked DB helpers return."""
 
@@ -66,6 +70,9 @@ class World:
         self.final_events, self.receipts, self.cheatsheet = [], [], []
         self.recorded = []
         self.second = None  # None: the second source agrees with the event's score
+        self.clock = None   # wall clock runner._utcnow() returns (step() sets it to the pass's now)
+        self.mono = 0.0     # runner._monotonic(): the pass budget clock
+        self.unknown_noted = []
 
 
 def _play(n=1, **kw):
@@ -107,6 +114,9 @@ def world(monkeypatch):
                         else (ev["home_score"], ev["away_score"]))
     monkeypatch.setattr(runner, "_headshots_due", lambda conn, sport, now: False)
     monkeypatch.setattr(runner, "_blind_due", lambda conn, sport, now: True)
+    monkeypatch.setattr(runner, "_utcnow", lambda: w.clock)
+    monkeypatch.setattr(runner, "_monotonic", lambda: w.mono)
+    monkeypatch.setattr(runner, "_note_unknown", lambda conn, now: w.unknown_noted.append(now))
     monkeypatch.setattr(blind, "build_panels", lambda conn, sport, rows, now: {})
     monkeypatch.setattr(blind, "select", lambda rows, top5, panels, now: [r for r in rows if r.get("pick")])
 
@@ -122,10 +132,15 @@ def world(monkeypatch):
     monkeypatch.setattr(headshots, "fetch_png", no_png)
     monkeypatch.setattr(headshots, "fetch_logo", no_png)
     w.ledger = led
+    CURRENT["world"] = w
     return w
 
 
-async def step(now, p):
+CURRENT = {}
+
+
+async def step(now, p, clock=None):
+    CURRENT["world"].clock = clock or now
     return await runner.social_step(object(), now, poster=p, http=object())
 
 
@@ -137,7 +152,8 @@ async def test_dry_run_never_calls_blotato(world, monkeypatch):
     monkeypatch.setattr(poster_mod.blotato, "post_thread", lambda *a, **k: called.append("post"))
     monkeypatch.setattr(settings, "twitter_posting_enabled", True)
     monkeypatch.setattr(settings, "social_dry_run", True)
-    world.cheatsheet = [{"player": f"P{i}", "matchup": "A @ B"} for i in range(6)]
+    world.cheatsheet = _sheet(6)
+    world.clock = NOV16_11ET
     await runner.social_step(object(), NOV16_11ET, http=object())  # default poster
     assert called == []
     row = world.ledger.rows[("cheatsheet", "cheatsheet:nba:2026-11-16")]
@@ -153,7 +169,7 @@ def test_default_poster_is_dry_run_unless_both_switches_say_post(monkeypatch):
 
 async def test_brake_stops_all_posting(world):
     world.ledger.brake = True
-    world.cheatsheet = [{"player": f"P{i}", "matchup": "A @ B"} for i in range(6)]
+    world.cheatsheet = _sheet(6)
     world.blind_plays = [_play()]
     world.live_rows = [_live()]
     p = FakePoster()
@@ -182,7 +198,7 @@ async def test_blind_waits_for_gate_pass(world):
 async def test_same_key_not_posted_twice_across_ticks(world):
     world.blind_plays = [_play()]
     world.live_rows = [_live()]
-    world.cheatsheet = [{"player": f"P{i}", "matchup": "A @ B"} for i in range(6)]
+    world.cheatsheet = _sheet(6)
     p = FakePoster()
     await step(NOV16_11ET, p)
     await step(NOV16_11ET + timedelta(minutes=1), p)
@@ -193,7 +209,7 @@ async def test_same_key_not_posted_twice_across_ticks(world):
 
 @pytest.mark.parametrize("at_11", [OCT21_11ET, NOV16_11ET])
 async def test_cheatsheet_fires_at_11_et_across_dst(world, at_11):
-    world.cheatsheet = [{"player": f"P{i}", "matchup": "A @ B"} for i in range(6)]
+    world.cheatsheet = _sheet(6)
     p = FakePoster()
     await step(at_11 - timedelta(minutes=1), p)
     assert p.calls == []
@@ -339,7 +355,7 @@ async def test_render_error_marks_failed_and_other_posts_continue(world, monkeyp
     def bad(*a, **k):
         raise ValueError("font missing")
     monkeypatch.setattr(cards, "render_cheatsheet", bad)
-    world.cheatsheet = [{"player": f"P{i}", "matchup": "A @ B"} for i in range(6)]
+    world.cheatsheet = _sheet(6)
     world.blind_plays = [_play()]
     world.live_rows = [_live()]
     p = FakePoster()
@@ -458,3 +474,125 @@ async def test_unknown_key_is_never_posted_again(world):
     p = FakePoster()
     await step(NOV16_11ET, p)
     assert p.calls == [] and world.ledger.statuses("blind") == {"blind:nba:1": "unknown"}
+
+
+
+# ---- fix round 1: late posts, Blotato stalls, receipt dedupe -----------------------------------
+
+def _advance_clock_on_render(world, monkeypatch, name, by=None, mono=None):
+    """The card takes a while to draw: the wall clock (or the pass budget clock) moves on."""
+    def render(*a, **k):
+        if by is not None:
+            world.clock = world.clock + by
+        if mono is not None:
+            world.mono += mono
+        return f"png:{name}".encode()
+    monkeypatch.setattr(cards, name, render)
+
+
+async def test_blind_late_at_post_time_is_skipped_and_never_posted(world, monkeypatch):
+    world.blind_plays = [_play()]
+    world.live_rows = [_live()]
+    _advance_clock_on_render(world, monkeypatch, "render_blind", by=TIP - NOV16_11ET - timedelta(minutes=59))
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert p.calls == []
+    row = world.ledger.rows[("blind", "blind:nba:1")]
+    assert row["status"] == "skipped" and row["detail"]["reason"] == "late at post time"
+
+
+async def test_value_leg_nine_minutes_from_tip_is_skipped(world):
+    world.legs = [_leg(0), _leg(1, tip=NOV16_11ET + timedelta(minutes=9))]
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert p.calls == [] and world.ledger.statuses("value") == {"value:nba:2026-11-16": "skipped"}
+
+
+async def test_value_late_at_post_time_is_skipped(world, monkeypatch):
+    world.legs = [_leg(0), _leg(1, tip=NOV16_11ET + timedelta(minutes=30))]
+    _advance_clock_on_render(world, monkeypatch, "render_value", by=timedelta(minutes=21))
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert p.calls == [] and world.ledger.statuses("value") == {"value:nba:2026-11-16": "skipped"}
+
+
+async def test_cheatsheet_counts_only_props_tipping_ten_minutes_out(world, monkeypatch):
+    world.cheatsheet = _sheet(5) + _sheet(1, tip=NOV16_11ET + timedelta(minutes=9))
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert p.calls == [] and world.ledger.statuses("cheatsheet") == {"cheatsheet:nba:2026-11-16": "skipped"}
+
+
+async def test_cheatsheet_late_at_post_time_is_skipped(world, monkeypatch):
+    world.cheatsheet = _sheet(6, tip=NOV16_11ET + timedelta(minutes=30))
+    _advance_clock_on_render(world, monkeypatch, "render_cheatsheet", by=timedelta(minutes=21))
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert p.calls == [] and world.ledger.statuses("cheatsheet") == {"cheatsheet:nba:2026-11-16": "skipped"}
+
+
+class TimeoutPoster(FakePoster):
+    def post(self, texts, images):
+        self.calls.append((texts, images))
+        raise TimeoutError("blotato stalled")
+
+
+@pytest.mark.parametrize("bad", [FakePoster(ok=False, retryable=True), TimeoutPoster()])
+async def test_first_blotato_failure_stops_the_pass_and_leaves_the_rest_unclaimed(world, bad):
+    bad.calls = []
+    world.blind_plays = [_play(1), _play(2, player="B Two", event_id="e2")]
+    world.live_rows = [_live(), _live(player="B Two", event_id="e2")]
+    world.cheatsheet = _sheet(6)
+    world.legs = [_leg(0)]
+    await step(NOV16_11ET, bad)
+    assert len(bad.calls) == 1  # the cheat sheet, the first post; nothing after it
+    assert set(world.ledger.statuses()) == {"cheatsheet:nba:2026-11-16"}
+    assert world.recorded == []  # no blind play was numbered either
+
+
+async def test_failed_url_lookup_stops_posting_in_that_pass(world, monkeypatch):
+    monkeypatch.setattr(ledger, "unknown_submissions", lambda conn, now, limit=5: [(7, "s7")])
+    world.cheatsheet = _sheet(6)
+    p = FakePoster()  # lookup() answers UrlLookup("unknown"): Blotato didn't answer
+    await step(NOV16_11ET, p)
+    assert p.calls == [] and world.ledger.rows == {}
+
+
+async def test_pass_budget_exhausted_starts_no_more_posts(world, monkeypatch):
+    world.blind_plays = [_play(1), _play(2, player="B Two", event_id="e2")]
+    world.live_rows = [_live(), _live(player="B Two", event_id="e2")]
+    _advance_clock_on_render(world, monkeypatch, "render_blind", mono=runner.SOCIAL_PASS_BUDGET + 1)
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert len(p.calls) == 1 and world.ledger.statuses("blind") == {"blind:nba:1": "posted"}
+
+
+async def test_url_lookups_respect_the_budget(world, monkeypatch):
+    asked = []
+    monkeypatch.setattr(ledger, "unresolved", lambda conn, now, limit=5: [(1, "a"), (2, "b")])
+
+    class P(FakePoster):
+        def lookup(self, sid):
+            asked.append(sid)
+            world.mono += runner.SOCIAL_PASS_BUDGET + 1
+            return UrlLookup("pending")
+    await step(NOV16_11ET - timedelta(hours=5), P())
+    assert asked == ["a"]
+
+
+async def test_skipped_blind_play_does_not_suppress_the_value_receipt(world):
+    world.ledger.rows[("blind", "blind:nba:1")] = {"id": 98, "status": "skipped", "image": None, "post_url": None}
+    world.ledger.rows[("value", "value:nba:2026-11-16")] = {"id": 99, "status": "posted", "image": b"v",
+                                                           "post_url": None}
+    same_bet = dict(event_id="e1", player="A One", market="player_points", side="over", line=20.5)
+    world.receipts = [_receipt(**same_bet),
+                      _receipt(kind="value", n=None, rank=0, bet="A One Over 20.5 Points", **same_bet)]
+    p = FakePoster()
+    await step(NOV16_11ET + timedelta(days=1), p)
+    assert world.ledger.statuses("receipt") == {"receipt:value:nba:2026-11-16:0": "posted"}
+
+
+async def test_unknown_count_is_noted_every_pass(world):
+    await step(NOV16_11ET, FakePoster())
+    await step(NOV16_11ET, FakePoster(dry_run=True))
+    assert world.unknown_noted == [NOV16_11ET, NOV16_11ET]

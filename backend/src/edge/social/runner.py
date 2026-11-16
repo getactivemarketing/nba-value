@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time as time_mod
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Awaitable, Callable
 
 import httpx
@@ -38,6 +39,24 @@ VALUE_SPORTS = frozenset({"nba"})
 FINAL_WINDOW = timedelta(hours=36)
 RECEIPT_DAYS = 3
 BLIND_EVERY = timedelta(minutes=5)  # selection rebuilds the board and matchup panels: not every 30 s tick
+
+
+SOCIAL_PASS_BUDGET = 120  # seconds: past this a pass starts no new post or Blotato lookup
+VALUE_MIN_LEAD = timedelta(minutes=10)       # every Top-5 leg must tip at least this far out when posted
+CHEATSHEET_MIN_LEAD = timedelta(minutes=10)  # a cheat-sheet prop counts only if its game is this far out
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _monotonic() -> float:
+    return time_mod.monotonic()
+
+
+def _note_unknown(conn, now: datetime) -> None:
+    """Worker state social_unknown: lost live posts Blotato can't be asked about (no submission id)."""
+    store.set_state(conn, "social_unknown", str(ledger.unknown_without_submission(conn)), now)
 
 
 def default_poster() -> Poster:
@@ -166,7 +185,8 @@ def _final_events(conn, sport: str, now: datetime) -> list[dict]:
 _WIN = """JOIN LATERAL (
     SELECT o.result FROM edge_opportunities o
     WHERE o.event_id = x.event_id AND o.market = x.market AND o.player = x.player
-      AND o.side = x.side AND o.line = x.line AND o.result IS NOT NULL LIMIT 1) res ON res.result = 'win'"""
+      AND o.side = x.side AND o.line = x.line AND o.result IS NOT NULL ORDER BY o.id LIMIT 1) res
+    ON res.result = 'win'"""
 _EV_JOIN = """JOIN edge_events e ON e.event_id = x.event_id"""
 _EV_SELECT = ", ".join(f"e.{c} AS ev_{c}" for c in _EVENT_COLS.split(", "))
 
@@ -262,6 +282,8 @@ class Draft:
     texts: list[str]
     images: list[list[bytes]]
     detail: dict = field(default_factory=dict)
+    # Called with the wall clock right before the post goes out; False -> skipped ("late at post time").
+    recheck: Callable[[datetime], bool] | None = None
 
 
 @dataclass
@@ -279,6 +301,8 @@ class _Pass:
         self.counted = ("posted", "dry_run") if poster.dry_run else ("posted",)
         self.braked: set[str] = set()
         self.out: dict = {}
+        self.started = _monotonic()
+        self.halt: str | None = None  # why this pass stopped posting (Blotato failure or budget)
 
     def _rollback(self) -> None:
         try:
@@ -310,7 +334,22 @@ class _Pass:
         self.out.setdefault(sport, {})["brake"] = True
         return True
 
+    def stopped(self) -> bool:
+        """True once Blotato failed in this pass or the pass ran past SOCIAL_PASS_BUDGET: no new posts
+        or lookups start, and nothing more is claimed (the next tick picks it up)."""
+        if self.halt is None and _monotonic() - self.started > SOCIAL_PASS_BUDGET:
+            self.halt = "budget"
+            log.error("social pass ran past its %ss budget; no more posts this pass", SOCIAL_PASS_BUDGET)
+        return self.halt is not None
+
+    def trip(self, why: str | None) -> None:
+        if self.halt is None:
+            self.halt = f"blotato: {why}"
+            log.error("social: Blotato failed (%s); no more posts or lookups this pass", why)
+
     async def publish(self, sport: str, kind: str, key: str, build: Build) -> str:
+        if self.stopped():
+            return "stopped"
         if self.brake(sport):
             return "brake"
         c = ledger.claim(self.conn, sport, kind, key, self.now, dry_run=self.poster.dry_run)
@@ -330,11 +369,18 @@ class _Pass:
             ledger.finish(self.conn, c, "skipped", self.now, text="", detail={"reason": draft.reason})
             self._tally(sport, kind, "skipped")
             return "skipped"
+        if draft.recheck is not None and not draft.recheck(_utcnow()):
+            log.warning("social %s %s skipped: late at post time", kind, key)
+            ledger.finish(self.conn, c, "skipped", self.now, text="", detail={"reason": "late at post time"})
+            self._tally(sport, kind, "skipped")
+            return "skipped"
         try:
             res = await asyncio.to_thread(self.poster.post, draft.texts, draft.images)
         except Exception as e:  # noqa: BLE001 - outcome unknown: never retried
             log.exception("social %s %s: poster raised", kind, key)
             res = PostResult(False, None, [], None, retryable=False, error=redact(f"{type(e).__name__}: {e}")[:300])
+        if not res.ok:
+            self.trip(res.error)
         if res.ok and not self.poster.dry_run:
             try:  # first, so a worker lost before finish() leaves a row Blotato can reconcile
                 ledger.note_submission(self.conn, c, res.submission_id,
@@ -409,14 +455,19 @@ class _Pass:
         if self.settled("cheatsheet", key):
             return
 
+        def far_enough(rows: list[dict], t: datetime) -> list[dict]:
+            return [r for r in rows if safety.tip_of(r) >= t + CHEATSHEET_MIN_LEAD]
+
         async def build():
-            rows = _cheatsheet_rows(self.conn, sport, live())
-            if not rows:
-                return Skip("fewer than 6 +EV props with a last-10 hit rate")
+            rows = far_enough(_cheatsheet_rows(self.conn, sport, far_enough(live(), self.now)), self.now)
+            if len(rows) < content.CHEATSHEET_MIN:
+                return Skip("fewer than 6 +EV props with a last-10 hit rate, 10+ minutes before tip")
             _assign_teams(self.conn, sport, rows)
             png = cards.render_cheatsheet(sport, day, rows, await self.faces(sport, rows),
                                           logos=await self.logos(sport, (r.get("team") for r in rows)))
-            return Draft([content.cheatsheet_text(sport, day)], [[png]], {"rows": len(rows)})
+            # every prop on the card must still be 10+ minutes from its tip when the post goes out
+            return Draft([content.cheatsheet_text(sport, day)], [[png]], {"rows": len(rows)},
+                         recheck=lambda t: len(far_enough(rows, t)) == len(rows))
         await self.publish(sport, "cheatsheet", key, build)
 
     async def render_value(self, sport: str, day: date, legs: list[dict]) -> bytes:
@@ -435,16 +486,21 @@ class _Pass:
         if not legs:
             return  # not locked yet
 
+        def lead_ok(t: datetime) -> bool:
+            return safety.value_ok(legs, t) and all(safety.tip_of(l) >= t + VALUE_MIN_LEAD for l in legs)
+
         async def build():
-            if not safety.value_ok(legs, self.now):
-                return Skip("a Top-5 game has already started")
+            if not lead_ok(self.now):
+                return Skip("a Top-5 game starts within 10 minutes or has started")
             png = await self.render_value(sport, self.today, legs)
-            return Draft([content.value_text(sport, legs[0]["locked_at"])], [[png]], {"legs": len(legs)})
+            return Draft([content.value_text(sport, legs[0]["locked_at"])], [[png]], {"legs": len(legs)},
+                         recheck=lead_ok)
         await self.publish(sport, "value", key, build)
 
     async def blind(self, sport: str, live) -> None:
         # Gate, switch and brake are checked before record(): a play is only numbered when it can post now.
-        if not ledger.enabled("blind", sport) or _gate(self.conn, sport) != "pass" or self.brake(sport):
+        if (not ledger.enabled("blind", sport) or _gate(self.conn, sport) != "pass" or self.stopped()
+                or self.brake(sport)):
             return
         if not _blind_due(self.conn, sport, self.now):
             return
@@ -477,7 +533,8 @@ class _Pass:
             png = cards.render_blind(blind.to_card(play, tips[day]))
             n = play["n"]
             return Draft([content.blind_text(sport, n), content.blind_reply(sport, n)], [[png], []],
-                         {"n": n, "event_id": play["event_id"]})
+                         {"n": n, "event_id": play["event_id"]},
+                         recheck=lambda t: safety.pick_ok(now_row, t, now_row["ev"]))
         await self.publish(sport, "blind", key, build)
 
     def posted_in(self, sport: str, event: dict) -> list[dict]:
@@ -526,8 +583,8 @@ class _Pass:
             return
         blind_bets = set()
         cands = _receipt_candidates(self.conn, sport, self.now)
-        for r in cands:
-            if r["kind"] == "blind":
+        for r in cands:  # only a blind play that actually went out covers its bet
+            if r["kind"] == "blind" and self.was_posted("blind", f"blind:{sport}:{r['n']}"):
                 blind_bets.add(_bet_key(r))
         checked: dict[str, bool] = {}
         for r in cands:
@@ -594,6 +651,21 @@ class _Pass:
 
     # ---- post URLs ----
 
+    def ask(self, sid: str):
+        """One Blotato status lookup, or None when the pass is stopped or Blotato didn't answer
+        (which stops the pass)."""
+        if self.stopped():
+            return None
+        try:
+            found = self.poster.lookup(sid)
+        except Exception as e:  # noqa: BLE001
+            self.trip(redact(f"lookup {type(e).__name__}: {e}")[:300])
+            return None
+        if found.state == "unknown":
+            self.trip("status lookup got no answer")
+            return None
+        return found
+
     def resolve_urls(self) -> None:
         """Ask Blotato about recent posts: confirm `unknown` rows it published (they become posted;
         anything else stays unknown and is never re-posted), then fill in missing public URLs.
@@ -601,11 +673,15 @@ class _Pass:
         if self.poster.dry_run:
             return
         for row_id, sid in ledger.unknown_submissions(self.conn, self.now):
-            found = self.poster.lookup(sid)
+            found = self.ask(sid)
+            if found is None:
+                return
             if found.state == "published":
                 ledger.confirm_posted(self.conn, row_id, found.url)
         for row_id, sid in ledger.unresolved(self.conn, self.now):
-            found = self.poster.lookup(sid)
+            found = self.ask(sid)
+            if found is None:
+                return
             if found.state == "published":
                 ledger.note_lookup(self.conn, row_id, "published", found.url)
             elif found.state == "failed":
@@ -631,6 +707,11 @@ async def social_step(conn, now: datetime, poster: Poster | None = None, http=No
         if http is None:
             own_http = http = _http()
         p = _Pass(conn, now, poster, http)
+        try:
+            _note_unknown(conn, now)
+        except Exception:  # noqa: BLE001
+            log.exception("social: could not count unknown posts")
+            p._rollback()
         try:
             await asyncio.to_thread(p.resolve_urls)
         except Exception:  # noqa: BLE001

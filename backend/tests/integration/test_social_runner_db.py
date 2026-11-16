@@ -24,6 +24,20 @@ DONE_TIP = datetime(2026, 11, 17, 0, 30, tzinfo=timezone.utc)  # 7:30 PM ET 11/1
 NEXT_TIP = datetime(2026, 11, 18, 0, 0, tzinfo=timezone.utc)   # 7:00 PM ET 11/17
 
 
+_CLOCK = {}
+
+
+@pytest.fixture(autouse=True)
+def _wall_clock(monkeypatch):
+    """runner rechecks tips against the wall clock right before posting: pin it to the pass's now."""
+    monkeypatch.setattr(runner, "_utcnow", lambda: _CLOCK["now"])
+
+
+async def run(conn, now, poster):
+    _CLOCK["now"] = now
+    return await runner.social_step(conn, now, poster=poster)
+
+
 def _bet(player, event, line=20.5):
     return {"event_id": event, "market": "player_points", "player": player, "side": "over", "line": line}
 
@@ -92,7 +106,7 @@ async def test_social_step_end_to_end_dry_run(conn, monkeypatch):
             "matchup": "Atlanta Hawks @ Miami Heat", "bdl_player_id": 2, "fair_prob": 0.5, "form": None}
     monkeypatch.setattr(runner, "_live_rows", lambda c, sport, now: [dict(live)])
     p = DryRunPoster()
-    await runner.social_step(conn, NOW, poster=p)
+    await run(conn, NOW, p)
     assert _statuses(conn) == {
         "blind:nba:1": "dry_run",                  # seeded
         "blind:nba:2": "dry_run",                  # posted from edge_blind_plays, still +EV, 4 h to tip
@@ -113,7 +127,7 @@ async def test_social_step_end_to_end_dry_run(conn, monkeypatch):
     n_calls = len(p.calls)
     assert n_calls == 4
 
-    await runner.social_step(conn, NOW + timedelta(minutes=1), poster=p)
+    await run(conn, NOW + timedelta(minutes=1), p)
     assert len(p.calls) == n_calls  # nothing posts twice
     assert len(_statuses(conn)) == 6
 
@@ -147,13 +161,14 @@ async def test_crash_after_blotato_accepted_never_posts_again_and_reconciles(con
     c = ledger.claim(conn, "nba", "blind", "blind:nba:2", crashed_at)
     ledger.note_submission(conn, c, "sub-lost")
     p = _LivePoster()
-    await runner.social_step(conn, NOW, poster=p)
+    await run(conn, NOW, p)
     assert p.calls == []  # never re-posted
     assert ledger.find(conn, "blind", "blind:nba:2")["status"] == "unknown"
-    await runner.social_step(conn, NOW + timedelta(minutes=1), poster=p)  # Blotato: still in progress
+    assert store.get_state(conn).get("social_unknown") == "0"  # it has a submission id: reconcilable
+    await run(conn, NOW + timedelta(minutes=1), p)  # Blotato: still in progress
     assert ledger.find(conn, "blind", "blind:nba:2")["status"] == "unknown"
     p.published_url = "https://x.com/trulineapp/status/2"
-    await runner.social_step(conn, NOW + timedelta(minutes=2), poster=p)
+    await run(conn, NOW + timedelta(minutes=2), p)
     row = ledger.find(conn, "blind", "blind:nba:2")
     assert row["status"] == "posted" and row["post_url"] == "https://x.com/trulineapp/status/2"
     assert p.calls == []
@@ -167,7 +182,7 @@ async def test_live_post_stores_submission_and_counts_for_brakes(conn, monkeypat
             "matchup": "Atlanta Hawks @ Miami Heat", "bdl_player_id": 2, "fair_prob": 0.5, "form": None}
     monkeypatch.setattr(runner, "_live_rows", lambda c, sport, now: [dict(live)])
     p = _LivePoster()
-    await runner.social_step(conn, NOW, poster=p)
+    await run(conn, NOW, p)
     row = ledger.find(conn, "blind", "blind:nba:2")
     assert len(p.calls) == 1 and row["status"] == "posted" and row["submission_id"] == "sub-1"
 
@@ -203,8 +218,17 @@ async def test_nfl_cheatsheet_posts_from_nfl_box_scores(conn, monkeypatch):
     conn.commit()
     monkeypatch.setattr(runner, "_live_rows", lambda c, sport, now: [dict(r) for r in rows])
     p = DryRunPoster()
-    await runner.social_step(conn, NFL_SUNDAY_1030, poster=p)
+    await run(conn, NFL_SUNDAY_1030, p)
     row = ledger.find(conn, "cheatsheet", "cheatsheet:nfl:2026-11-22")
     assert row["status"] == "dry_run" and row["detail"]["rows"] == 7, row["detail"]
     assert "NFL Cheat Sheet" in row["text"] and bytes(row["image"]).startswith(b"\x89PNG")
     assert len(p.calls) == 1
+
+
+async def test_unknown_rows_without_a_submission_id_show_in_worker_state(conn):
+    for i in range(2):
+        ledger.claim(conn, "nba", "final", f"final:lost{i}", NOW - timedelta(minutes=30))
+        ledger.claim(conn, "nba", "final", f"final:lost{i}", NOW)  # stale live pending -> unknown
+    assert ledger.unknown_without_submission(conn) == 2
+    await run(conn, NOW, _LivePoster())
+    assert store.get_state(conn)["social_unknown"] == "2"
