@@ -22,6 +22,7 @@ from src.edge.client import EdgeOddsClient, OddsApiError, Usage
 from src.edge.config import LINE_MARKETS, SportConfig, enabled_sports, state_key
 from src.edge.engine import price_quotes
 from src.edge.ingest import event_row, parse_event
+from src.edge.social import runner as social_runner
 from src.utils.redact import install_redaction, redact
 from src.utils.season import current_nba_season, current_nfl_season
 
@@ -146,7 +147,23 @@ async def tick(conn, client: EdgeOddsClient, bdl, now: datetime,
         await nfl_matchups_step(conn, now)
         await nfl_injuries_step(conn, nfl_bdl, now)
 
+    out["social"] = await social_step(conn, now)
     return out
+
+
+async def social_step(conn, now: datetime) -> dict:
+    """X posts (src/edge/social/runner.py), after every sport's work. Never raises: a social error
+    lands in social_error and odds polling carries on."""
+    try:
+        return await social_runner.social_step(conn, now)
+    except Exception as e:  # noqa: BLE001 - social never blocks odds
+        log.exception("social step failed")
+        try:
+            conn.rollback()
+            store.set_state(conn, "social_error", redact(f"{type(e).__name__}: {e}")[:300], now)
+        except Exception:  # noqa: BLE001
+            pass
+        return {}
 
 
 async def nfl_stats_step(conn, nfl_bdl, now: datetime) -> int:

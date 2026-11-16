@@ -100,3 +100,29 @@ def find(conn, kind: str, key: str) -> dict | None:
         if row is None:
             return None
         return dict(zip([d[0] for d in cur.description], row))
+
+
+URL_LOOKUP_WINDOW = timedelta(hours=48)
+
+
+def unresolved(conn, now: datetime, limit: int = 5) -> list[tuple[int, str]]:
+    """(id, submission_id) of recent posted rows whose public URL is not known yet and that
+    Blotato has not reported as failed."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT id, submission_id FROM edge_social_posts
+                       WHERE status = 'posted' AND post_url IS NULL AND submission_id IS NOT NULL
+                         AND updated_at >= %s AND COALESCE(detail->>'blotato_state', '') <> 'failed'
+                       ORDER BY updated_at LIMIT %s""", (now - URL_LOOKUP_WINDOW, limit))
+        rows = cur.fetchall()
+    conn.rollback()
+    return [(r[0], r[1]) for r in rows]
+
+
+def note_lookup(conn, row_id: int, state: str, post_url: str | None = None, error: str | None = None) -> None:
+    """Store what Blotato said about a posted row: its public URL, or that publishing failed."""
+    patch = {"blotato_state": state, **({"blotato_error": error} if error else {})}
+    with conn.cursor() as cur:
+        cur.execute("""UPDATE edge_social_posts SET post_url = COALESCE(%s, post_url),
+                              detail = COALESCE(detail, '{}'::jsonb) || %s
+                       WHERE id = %s AND status = 'posted'""", (post_url, Json(patch), row_id))
+    conn.commit()

@@ -179,3 +179,34 @@ def test_worker_schema_failure_never_blocks_the_loop(monkeypatch, caplog):
     monkeypatch.setattr(worker, "init_edge_tables", boom)
     assert asyncio.run(worker.ensure_schema()) is False
     assert "edge schema" in caplog.text
+
+
+async def test_social_error_does_not_break_tick(monkeypatch, state):
+    from src.edge.social import runner
+
+    async def boom(conn, now, poster=None, http=None):
+        raise RuntimeError("social exploded")
+    monkeypatch.setattr(runner, "social_step", boom)
+    conn = _Conn()
+    assert await worker.social_step(conn, NOW) == {}
+    assert "social exploded" in state["social_error"] and conn.rolled == 1
+
+
+async def test_tick_runs_social_after_the_sports(monkeypatch, state):
+    order = []
+
+    async def social(conn, now):
+        order.append("social")
+        return {"nba": {}}
+    monkeypatch.setattr(worker, "social_step", social)
+    monkeypatch.setattr(worker.schedule, "guard_factor", lambda *a: 1)
+    monkeypatch.setattr(store, "cost_last_24h", lambda conn, now: 0)
+    monkeypatch.setattr(worker.grading, "run_grading", lambda conn, now: order.append("grade") or 0)
+    monkeypatch.setattr(worker, "prune_step", lambda conn, now: 0)
+
+    async def nothing(*a, **k):
+        return 0
+    monkeypatch.setattr(worker, "box_scores_step", nothing)
+    monkeypatch.setattr(worker, "backfill_step", nothing)
+    out = await worker.tick(_Conn(), None, None, NOW, sports=[])
+    assert order == ["grade", "social"] and out["social"] == {"nba": {}}

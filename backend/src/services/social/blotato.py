@@ -228,3 +228,22 @@ def post_thread(
         logger.error(f"Failed to post via Blotato: {e}")
         print(f"[BLOTATO-ERROR] {e}", flush=True)
         return None
+
+
+def get_post_status(submission_id: str) -> dict | None:
+    """GET /v2/posts/{postSubmissionId}: {status: in-progress|scheduled|published|failed,
+    publicUrl (when published), errorMessage (when failed)}. None on any error.
+
+    Docs: https://help.blotato.com/rest-api-reference/publish-post/get-post.md (60 requests/min).
+    """
+    if not settings.blotato_api_key or not submission_id:
+        return None
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(f"{API_BASE}/posts/{submission_id}", headers=_headers())
+            resp.raise_for_status()
+            data = resp.json()
+            return data if isinstance(data, dict) else None
+    except Exception as e:  # noqa: BLE001 - a status lookup never matters enough to raise
+        logger.warning(f"Blotato status lookup failed: {type(e).__name__}")
+        return None
