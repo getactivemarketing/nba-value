@@ -118,6 +118,15 @@ def _start_nfl_scheduler_thread():
     return thread
 
 
+def _maybe_start_legacy_social() -> None:
+    """Start the legacy MLB/NBA social thread only when LEGACY_SOCIAL_ENABLED is set."""
+    if not settings.legacy_social_enabled:
+        print("[SOCIAL-SCHEDULER] Legacy social thread disabled (LEGACY_SOCIAL_ENABLED=false)", flush=True)
+        return
+    _start_social_scheduler_thread()
+    print("[SOCIAL-SCHEDULER] Social media thread started", flush=True)
+
+
 def _start_social_scheduler_thread():
     """Create and start social scheduler thread. Returns the thread."""
     thread = threading.Thread(target=_run_social_scheduler, daemon=True, name="social-scheduler")
@@ -195,8 +204,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _mlb_scheduler_thread = _start_mlb_scheduler_thread()
         print("[MLB-SCHEDULER] MLB background thread started", flush=True)
 
-        _start_social_scheduler_thread()
-        print("[SOCIAL-SCHEDULER] Social media thread started", flush=True)
+        _maybe_start_legacy_social()
 
         # Start watchdog to auto-restart schedulers if they crash
         watchdog_thread = threading.Thread(target=_scheduler_watchdog, daemon=True, name="scheduler-watchdog")

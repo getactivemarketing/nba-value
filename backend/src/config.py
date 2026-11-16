@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     # Posting safety switch (applies to both direct Twitter and Typefully)
     twitter_posting_enabled: bool = False
 
+    # Edge social autoposting
+    legacy_social_enabled: bool = False  # old MLB/NBA social thread; off unless LEGACY_SOCIAL_ENABLED
+    social_dry_run: bool = True
+    social_sports: str = "nba"  # comma list
+    social_kinds: str = "cheatsheet,value,blind,final,receipt"  # comma list
+    social_max_per_day: int = 25
+    social_max_per_hour: int = 6
+    site_url: str = "https://www.truline.app"
+
     # API Settings
     api_v1_prefix: str = "/api/v1"
 
