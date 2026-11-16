@@ -35,13 +35,17 @@ def espn_abbr(sport: str, abbr: str) -> str | None:
     return None
 
 
-def _athletes(payload: dict) -> list[dict]:
-    """Flat list (NBA) or groups with an `items` list (NFL)."""
+def _athletes(payload) -> list[dict]:
+    """Flat list (NBA) or groups with an `items` list (NFL). Anything malformed yields fewer/no entries."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("athletes"), list):
+        return []
     out: list[dict] = []
-    for a in payload.get("athletes") or []:
-        if isinstance(a, dict) and isinstance(a.get("items"), list):
+    for a in payload["athletes"]:
+        if not isinstance(a, dict):
+            continue
+        if isinstance(a.get("items"), list):
             out.extend(x for x in a["items"] if isinstance(x, dict))
-        elif isinstance(a, dict):
+        else:
             out.append(a)
     return out
 
@@ -75,32 +79,36 @@ async def _get(http: httpx.AsyncClient, url: str) -> httpx.Response | None:
     return r
 
 
-def _odds_names(conn, sport: str, teams: set[str]) -> dict[str, set[str]]:
-    sql = ("SELECT odds_name, team FROM edge_players WHERE team = ANY(%s)" if sport == "nba"
-           else "SELECT odds_name, team FROM edge_nfl_players WHERE team = ANY(%s)")
+def _odds_names(conn, sport: str, teams: set[str]) -> tuple[dict[str, set[str]], set[str]]:
+    """({team: odds names}, names that appear on more than one team in the whole league table)."""
+    table = "edge_players" if sport == "nba" else "edge_nfl_players"
     with conn.cursor() as cur:
-        cur.execute(sql, (sorted(teams),))
+        cur.execute(f"SELECT odds_name, team FROM {table} WHERE team = ANY(%s)", (sorted(teams),))
         rows = cur.fetchall()
+        cur.execute(f"SELECT odds_name FROM {table} GROUP BY odds_name HAVING COUNT(DISTINCT team) > 1")
+        dupes = {r[0] for r in cur.fetchall()}
     out: dict[str, set[str]] = {}
     for name, team in rows:
         out.setdefault(team, set()).add(name)
-    return out
+    return out, dupes
 
 
 async def refresh(conn, sport: str, teams: set[str], now: datetime, http: httpx.AsyncClient) -> int:
-    """Re-resolve ESPN ids for teams whose rows are missing or older than 7 days. Returns rows written."""
+    """Re-resolve ESPN ids for teams with a missing or >7-day-old row. Returns rows written.
+
+    Names shared by players on two teams are stored with espn_id NULL (never risk a wrong face).
+    """
     path = PATHS.get(sport)
     if path is None or not teams:
         return 0
+    names, dupes = _odds_names(conn, sport, teams)
     with conn.cursor() as cur:
-        cur.execute("SELECT team FROM edge_headshots WHERE sport = %s AND team = ANY(%s) GROUP BY team "
-                    "HAVING MIN(checked_at) >= %s", (sport, sorted(teams), now - RECHECK))
-        fresh = {r[0] for r in cur.fetchall()}
-    todo = teams - fresh
-    names = _odds_names(conn, sport, todo) if todo else {}
+        cur.execute("SELECT odds_name, team, checked_at FROM edge_headshots WHERE sport = %s AND team = ANY(%s)",
+                    (sport, sorted(teams)))
+        have = {(n, t): c for n, t, c in cur.fetchall()}
     written = 0
-    for team in sorted(todo):
-        if not names.get(team):
+    for team in sorted(names):
+        if all(have.get((n, team)) is not None and have[(n, team)] >= now - RECHECK for n in names[team]):
             continue
         abbr = espn_abbr(sport, team)
         r = await _get(http, ROSTER_URL.format(path=path, abbr=abbr)) if abbr else None
@@ -108,12 +116,12 @@ async def refresh(conn, sport: str, teams: set[str], now: datetime, http: httpx.
             continue
         try:
             roster = _athletes(r.json())
-        except ValueError:
-            log.warning("ESPN roster for %s %s is not JSON", sport, team)
+        except (ValueError, AttributeError, TypeError):
+            log.warning("ESPN roster for %s %s is malformed", sport, team)
             continue
         if not roster:
             continue
-        rows = [(sport, n, team, match(n, team, roster), now) for n in sorted(names[team])]
+        rows = [(sport, n, team, None if n in dupes else match(n, team, roster), now) for n in sorted(names[team])]
         with conn.cursor() as cur:
             cur.executemany("""INSERT INTO edge_headshots (sport, odds_name, team, espn_id, checked_at)
                                VALUES (%s, %s, %s, %s, %s)
@@ -125,15 +133,20 @@ async def refresh(conn, sport: str, teams: set[str], now: datetime, http: httpx.
     return written
 
 
-async def fetch_png(conn, sport: str, odds_name: str, http: httpx.AsyncClient) -> bytes | None:
-    """Headshot bytes, or None (no id, non-200, network error) so the card falls back to a silhouette."""
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+async def fetch_png(conn, sport: str, odds_name: str, team: str, http: httpx.AsyncClient) -> bytes | None:
+    """Headshot bytes, or None (no id, team mismatch, non-200, non-PNG, network error) -> silhouette."""
     with conn.cursor() as cur:
-        cur.execute("SELECT espn_id FROM edge_headshots WHERE sport = %s AND odds_name = %s", (sport, odds_name))
+        cur.execute("SELECT espn_id, team FROM edge_headshots WHERE sport = %s AND odds_name = %s", (sport, odds_name))
         row = cur.fetchone()
-    if not row or row[0] is None or sport not in PATHS:
+    if not row or row[0] is None or row[1] != team or sport not in PATHS:
         return None
     r = await _get(http, HEADSHOT_URL.format(league=sport, espn_id=row[0]))
-    return r.content if r is not None else None
+    if r is None or not r.content.startswith(PNG_MAGIC):
+        return None
+    return r.content
 
 
 async def fetch_logo(sport: str, abbr: str, http: httpx.AsyncClient) -> bytes | None:

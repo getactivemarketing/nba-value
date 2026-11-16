@@ -69,3 +69,36 @@ def test_fetch_logo_network_error_is_none():
             return await headshots.fetch_logo("nfl", "BUF", c)
 
     assert asyncio.run(run()) is None
+
+
+def test_athletes_malformed_payloads_are_empty():
+    for bad in ([], "x", None, {"athletes": "x"}, {"athletes": ["x", 3, None]}):
+        assert headshots._athletes(bad) == []
+
+
+class _Cur:
+    def __init__(self, row): self.row = row
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def execute(self, *a): pass
+    def fetchone(self): return self.row
+
+
+class _Conn:
+    def __init__(self, row): self.row = row
+    def cursor(self): return _Cur(self.row)
+
+
+def test_fetch_png_network_error_and_non_png_and_team_mismatch():
+    def boom(req): raise httpx.ConnectError("down")
+    html = lambda req: httpx.Response(200, content=b"<html>nope</html>")
+    good = lambda req: httpx.Response(200, content=headshots.PNG_MAGIC + b"x")
+
+    async def run(handler, team="IND"):
+        async with _client(handler) as c:
+            return await headshots.fetch_png(_Conn((7, "IND")), "nba", "X Y", team, c)
+
+    assert asyncio.run(run(boom)) is None
+    assert asyncio.run(run(html)) is None
+    assert asyncio.run(run(good, team="BOS")) is None
+    assert asyncio.run(run(good)) == headshots.PNG_MAGIC + b"x"
