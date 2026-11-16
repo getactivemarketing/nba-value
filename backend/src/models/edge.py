@@ -391,3 +391,30 @@ class EdgeHeadshot(Base):
     team: Mapped[str] = mapped_column(String(4), nullable=False)
     espn_id: Mapped[int | None] = mapped_column(Integer)
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EdgeBlindPlay(Base):
+    """A +EV prop posted blind to X, numbered per sport (src/edge/social/blind.py). Grading is read from
+    edge_opportunities (same bet, any book), not stored here."""
+    __tablename__ = "edge_blind_plays"
+    __table_args__ = (UniqueConstraint("sport", "event_id", "market", "player", "side", "line",
+                                       name="uq_edge_blind_plays_bet"),)
+    sport: Mapped[str] = mapped_column(String(8), primary_key=True)
+    n: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slate_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    market: Mapped[str] = mapped_column(String(48), nullable=False)
+    market_label: Mapped[str] = mapped_column(String(24), nullable=False)
+    player: Mapped[str] = mapped_column(String(80), nullable=False)
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    line: Mapped[float] = mapped_column(Numeric(6, 2), nullable=False)
+    book: Mapped[str] = mapped_column(String(32), nullable=False)
+    price: Mapped[int] = mapped_column(Integer, nullable=False)
+    fair_prob: Mapped[float] = mapped_column(Numeric(6, 5), nullable=False)
+    ev: Mapped[float] = mapped_column(Numeric(7, 5), nullable=False)
+    n_books: Mapped[int] = mapped_column(Integer, nullable=False)
+    form: Mapped[dict | None] = mapped_column(JSONB)
+    position: Mapped[str | None] = mapped_column(String(4))
+    panel: Mapped[dict | None] = mapped_column(JSONB)
+    commence_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

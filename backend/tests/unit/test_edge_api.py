@@ -236,3 +236,17 @@ def test_player_route_dispatches_on_sport(monkeypatch):
     edge_api._reset_limits()
     r = TestClient(app).get(f"{P}/players/20", params={"sport": "nfl", "market": "player_receptions"})
     assert r.json() == {"sport": "nfl", "id": 20}
+
+
+def test_blind_routes(monkeypatch):
+    from src.edge.social import blind
+    monkeypatch.setattr(edge_api, "_conn", _fake_conn)
+    edge_api._cache.clear()
+    edge_api._reset_limits()
+    monkeypatch.setattr(blind, "listing", lambda c, sport: {"plays": [], "record": {"n": 0}})
+    monkeypatch.setattr(blind, "detail", lambda c, sport, n: {"n": n, "player": "A One"} if n == 1 else None)
+    client = TestClient(app)
+    assert client.get(f"{P}/blind?sport=nfl").json() == {"plays": [], "record": {"n": 0}}
+    assert client.get(f"{P}/blind/1").json()["player"] == "A One"  # the name is returned: the reveal
+    assert client.get(f"{P}/blind/99").status_code == 404
+    edge_api._cache.clear()

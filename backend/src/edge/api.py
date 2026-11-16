@@ -23,6 +23,7 @@ from src.api.deps import require_admin
 from src.config import get_sync_database_url
 from src.edge import nightly, signups, store, views
 from src.edge.config import SPORTS, SportConfig
+from src.edge.social import blind
 from src.utils.redact import redact
 
 TTL = 25.0
@@ -216,6 +217,21 @@ def get_nightly(sp: SportConfig = Depends(_sport)) -> dict:
     if sp.slug != "nba":
         raise HTTPException(status_code=404, detail="tonight's top 5 is NBA only")
     return _cached(("nightly", sp.slug), lambda c, now: nightly.nightly(c, now, sp))
+
+
+@router.get("/blind")
+def get_blind(sp: SportConfig = Depends(_sport)) -> dict:
+    return _cached(("blind", sp.slug), lambda c, now: blind.listing(c, sp.slug))
+
+
+@router.get("/blind/{n}")
+def get_blind_play(n: int, sp: SportConfig = Depends(_sport)) -> dict:
+    def build(c, now):
+        play = blind.detail(c, sp.slug, n)
+        if play is None:
+            raise HTTPException(status_code=404, detail="no such blind play")
+        return play
+    return _cached(("blind", sp.slug, n), build)
 
 
 @router.get("/health")

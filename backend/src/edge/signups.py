@@ -9,7 +9,7 @@ import re
 SIGNUP_BURST = 5
 SIGNUP_RATE_PER_S = 1 / 600
 
-SOURCES = frozenset({"edge_home", "edge_board", "edge_results", "edge_odds", "edge_player", "nfl_edge"})
+SOURCES = frozenset({"edge_home", "edge_board", "edge_results", "edge_odds", "edge_player", "nfl_edge", "blind_reveal"})
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
 

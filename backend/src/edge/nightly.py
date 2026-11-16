@@ -38,7 +38,7 @@ def eligible(rows: list[dict]) -> list[dict]:
             and not r.get("form_flag")]
 
 
-def _one_per_game(rows: list[dict], n: int) -> list[dict]:
+def one_per_game(rows: list[dict], n: int) -> list[dict]:
     games, players, out = set(), set(), []
     for r in sorted(rows, key=lambda r: r["ev"], reverse=True):
         if r["event_id"] in games or r["player"] in players:
@@ -53,7 +53,7 @@ def _one_per_game(rows: list[dict], n: int) -> list[dict]:
 
 def top_picks(rows: list[dict], n: int = TOP_N) -> list[dict]:
     """Best edge first; one pick per game and per player, so the picks don't ride on one game."""
-    return _one_per_game(rows, n)
+    return one_per_game(rows, n)
 
 
 def _parlay_price(legs: list[dict]) -> dict:
@@ -69,7 +69,7 @@ def best_parlay(rows: list[dict], n: int = TOP_N) -> dict | None:
     chances multiply."""
     best = None
     for book in sorted({r["book"] for r in rows}):
-        legs = _one_per_game([r for r in rows if r["book"] == book], n)
+        legs = one_per_game([r for r in rows if r["book"] == book], n)
         if len(legs) < MIN_PARLAY_LEGS:
             continue
         cand = {"book": book, "legs": legs, **_parlay_price(legs)}
