@@ -93,6 +93,9 @@ EDGE_COLUMN_MIGRATIONS = [
     ("edge_player_games", "fta", "INTEGER NOT NULL DEFAULT 0"),
     ("edge_player_games", "oreb", "INTEGER NOT NULL DEFAULT 0"),
     ("edge_players", "position", "VARCHAR(4)"),
+    # Social autopost: BDL final scores, the independent source a recap's score is checked against.
+    ("edge_nfl_games", "home_score", "INTEGER"),
+    ("edge_nfl_games", "away_score", "INTEGER"),
 ]
 
 

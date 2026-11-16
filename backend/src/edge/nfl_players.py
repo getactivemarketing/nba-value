@@ -49,7 +49,10 @@ def game_row(g: dict) -> dict:
     return {"bdl_game_id": g["id"], "season": g["season"], "week": g["week"],
             "game_date": date.fromisoformat(g["date"][:10]), "home": g["home_team"]["abbreviation"],
             "away": g["visitor_team"]["abbreviation"], "postseason": bool(g.get("postseason")),
-            "status_state": g.get("status_state")}
+            "status_state": g.get("status_state"),
+            # Scores only once final: a live score is never an independent check of a recap.
+            "home_score": g.get("home_team_score") if g.get("status_state") == "final" else None,
+            "away_score": g.get("visitor_team_score") if g.get("status_state") == "final" else None}
 
 
 def stat_row(s: dict) -> dict | None:
@@ -195,13 +198,15 @@ async def refresh_schedule(conn, bdl: BdlNflClient, season: int, now: datetime) 
     with conn.cursor() as cur:
         execute_values(cur, """
             INSERT INTO edge_nfl_games (bdl_game_id, season, week, game_date, home, away, postseason,
-                                        status_state, final_seen_at)
+                                        status_state, home_score, away_score, final_seen_at)
             VALUES %s
             ON CONFLICT (bdl_game_id) DO UPDATE SET
                 week = EXCLUDED.week, game_date = EXCLUDED.game_date, status_state = EXCLUDED.status_state,
+                home_score = EXCLUDED.home_score, away_score = EXCLUDED.away_score,
                 final_seen_at = COALESCE(edge_nfl_games.final_seen_at, EXCLUDED.final_seen_at)
         """, [(r["bdl_game_id"], r["season"], r["week"], r["game_date"], r["home"], r["away"], r["postseason"],
-               r["status_state"], now if r["status_state"] == "final" else None) for r in rows])
+               r["status_state"], r["home_score"], r["away_score"],
+               now if r["status_state"] == "final" else None) for r in rows])
     conn.commit()
     return len(rows)
 

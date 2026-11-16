@@ -202,6 +202,8 @@ class EdgeNflGame(Base):
     away: Mapped[str] = mapped_column(String(4), nullable=False)
     postseason: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     status_state: Mapped[str | None] = mapped_column(String(16))
+    home_score: Mapped[int | None] = mapped_column(Integer)  # BDL score, stored only once final
+    away_score: Mapped[int | None] = mapped_column(Integer)
     final_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stats_loaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     snaps_loaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

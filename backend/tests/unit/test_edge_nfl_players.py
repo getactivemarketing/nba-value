@@ -111,3 +111,11 @@ def test_anytime_td_hit_rate_and_zero_rows_use_td_columns():
               **{c: 0 for c in nfl.STAT_COLS}, "rec_tds": t} for d, t in ((1, 1), (8, 0), (15, 2))]
     r = nfl.hit_rates(games, "player_anytime_td", 0.5, "LV", True, 2026)["l5"]
     assert (r["hits"], r["misses"], r["games"]) == (2, 1, 3)
+
+
+def test_game_row_stores_scores_only_when_final():
+    games = json.load(open(f"{FIX}/bdl_nfl_games_w5.json"))["data"]
+    final = nfl.game_row(games[0])
+    assert (final["home_score"], final["away_score"]) == (16, 24)
+    live = nfl.game_row({**games[0], "status_state": "in", "home_team_score": 3, "visitor_team_score": 0})
+    assert live["home_score"] is None and live["away_score"] is None
