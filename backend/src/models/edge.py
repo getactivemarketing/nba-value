@@ -9,7 +9,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (BigInteger, Boolean, Date, DateTime, Float, Index, Integer,
                         Numeric, String, Text, UniqueConstraint, func)
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import BYTEA, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.database import Base
@@ -356,3 +356,23 @@ class EdgeBtPick(Base):
     result: Mapped[str | None] = mapped_column(String(8))
     profit: Mapped[float | None] = mapped_column(Float)
     tags: Mapped[list | None] = mapped_column(JSONB)  # [{key, direction}] point-in-time matchup tags
+
+
+class EdgeSocialPost(Base):
+    """One row per automatic X post, keyed once per (kind, key). See src/edge/social/ledger.py."""
+    __tablename__ = "edge_social_posts"
+    __table_args__ = (UniqueConstraint("kind", "key", name="uq_edge_social_posts_kind_key"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    sport: Mapped[str] = mapped_column(String(8), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    key: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False)  # pending|posted|dry_run|failed|skipped
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    text: Mapped[str | None] = mapped_column(Text)
+    image: Mapped[bytes | None] = mapped_column(BYTEA)
+    media_url: Mapped[str | None] = mapped_column(Text)
+    submission_id: Mapped[str | None] = mapped_column(String(80))
+    post_url: Mapped[str | None] = mapped_column(Text)
+    detail: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

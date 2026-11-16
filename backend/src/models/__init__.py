@@ -40,7 +40,7 @@ from src.models.nfl_prediction_snapshot import NFLPredictionSnapshot
 from src.models.edge import (EdgeApiCall, EdgeBtPick, EdgeBtSnapshot, EdgeEmailSignup, EdgeEvent, EdgeNflGame, EdgeNightlyLeg,
                              EdgeNflInjury, EdgeNflPlayer, EdgeNflPlayerGame, EdgeNflPlayerWeek,
                              EdgeNflSnap, EdgeNflTeamWeek, EdgeOpportunity, EdgePlayer,
-                             EdgePlayerGame, EdgeQuote, EdgeQuoteHistory, EdgeTagStatus, EdgeWorkerState)
+                             EdgePlayerGame, EdgeQuote, EdgeQuoteHistory, EdgeSocialPost, EdgeTagStatus, EdgeWorkerState)
 
 __all__ = [
     # NBA Models
@@ -98,4 +98,5 @@ __all__ = [
     "EdgeWorkerState",
     "EdgeNightlyLeg",
     "EdgeEmailSignup",
+    "EdgeSocialPost",
 ]

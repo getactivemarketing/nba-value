@@ -1302,3 +1302,41 @@ def test_email_signups_store_each_address_once(conn):
     rows = signups.recent(conn, 10)
     assert {r["email"] for r in rows} == {"fan@example.com", "other@example.com"}
     assert next(r for r in rows if r["email"] == "fan@example.com")["source"] == "edge_home"
+
+
+def test_claim_is_once_per_key_and_failed_retries_capped(conn):
+    from src.edge.social import ledger
+    a = ledger.claim(conn, "nba", "blind", "blind:nba:1", NOW)
+    assert a and ledger.claim(conn, "nba", "blind", "blind:nba:1", NOW) is None
+    for _ in range(3):
+        ledger.finish(conn, a, "failed", NOW, text="x")
+        a = ledger.claim(conn, "nba", "blind", "blind:nba:1", NOW) or a
+    assert ledger.claim(conn, "nba", "blind", "blind:nba:1", NOW) is None  # 3 attempts used
+    assert ledger.find(conn, "blind", "blind:nba:1")["attempts"] == 3
+    assert ledger.find(conn, "blind", "nope") is None
+
+
+def test_terminal_statuses_are_never_reclaimed_and_stale_pending_is(conn):
+    from src.edge.social import ledger
+    for st in ("posted", "dry_run", "skipped"):
+        r = ledger.claim(conn, "nba", "final", f"final:{st}", NOW)
+        ledger.finish(conn, r, st, NOW, text="x", detail={"a": 1})
+        assert ledger.claim(conn, "nba", "final", f"final:{st}", NOW + timedelta(days=1)) is None
+    r = ledger.claim(conn, "nba", "final", "final:stale", NOW)
+    assert ledger.claim(conn, "nba", "final", "final:stale", NOW + timedelta(minutes=5)) is None
+    assert ledger.claim(conn, "nba", "final", "final:stale", NOW + timedelta(minutes=16)) == r
+
+
+def test_brake_trips_at_six_an_hour(conn):
+    from src.edge.social import ledger
+    for i in range(6):
+        ledger.finish(conn, ledger.claim(conn, "nba", "final", f"final:e{i}", NOW), "posted", NOW, text="x")
+    assert ledger.brake_tripped(conn, "nba", NOW) and not ledger.brake_tripped(conn, "nfl", NOW)
+    assert not ledger.brake_tripped(conn, "nba", NOW + timedelta(hours=2))  # hour window rolled, day cap is 25
+
+
+def test_dry_run_rows_do_not_count_toward_brakes(conn):
+    from src.edge.social import ledger
+    for i in range(8):
+        ledger.finish(conn, ledger.claim(conn, "nba", "final", f"final:d{i}", NOW), "dry_run", NOW, text="x")
+    assert not ledger.brake_tripped(conn, "nba", NOW)
