@@ -44,7 +44,8 @@ def blind_reply(sport: str, n: int) -> str:
 
 def cheatsheet_text(sport: str, day: date) -> str:
     return (f"📋 {sport.upper()} Cheat Sheet · {day.strftime('%a')} {day.month}/{day.day}\n\n"
-            "Tonight's hottest props by last-10 hit rate, all priced as value on the board right now.")
+            "Tonight's hottest props by last-10 hit rate, all priced as value on the board right now.\n\n"
+            f"{link('/', 'cheatsheet')}")
 
 
 def value_text(sport: str, locked_at: datetime) -> str:
@@ -66,13 +67,14 @@ def final_text(sport: str, event: dict, w: int, l: int, pushes: int, units: floa
     away, home = event["away_team"], event["home_team"]
     return (f"FINAL\n\n{away} {event['away_score']}, {home} {event['home_score']}\n\n"
             f"TruLine plays in this game: {tail}\n\n"
-            f"#{sport.upper()} #{nickname(away)} #{nickname(home)}")
+            f"#{sport.upper()} #{nickname(away)} #{nickname(home)}\n\n{link('/', 'final')}")
 
 
 def blind_receipt_text(n: int, name: str, price: int, sport: str, post_url: str | None = None) -> str:
     url = post_url or link(f"/blind/{sport.lower()}/{n}", "receipt")
+    before = "before kickoff" if sport.lower() == "nfl" else "before tip"
     return (f"✅ CASHED. Blind Play #{n} was {name}.\n\n"
-            f"Called it before tip at {_price(price)}. Did you guess right?\n\n{url}")
+            f"Called it {before} at {_price(price)}. Did you guess right?\n\n{url}")
 
 
 def value_receipt_text(bet: str, price: int) -> str:

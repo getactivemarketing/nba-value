@@ -192,3 +192,16 @@ def unknown_without_submission(conn) -> int:
         n = cur.fetchone()[0]
     conn.rollback()
     return int(n)
+
+
+IMAGE_KEEP = timedelta(days=7)  # receipts reuse a card for RECEIPT_DAYS; after a week only the text stays
+
+
+def prune_images(conn, now: datetime) -> int:
+    """Drop card PNGs from ledger rows created more than IMAGE_KEEP ago. Returns rows cleared."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE edge_social_posts SET image = NULL WHERE image IS NOT NULL AND created_at < %s",
+                    (now - IMAGE_KEEP,))
+        n = cur.rowcount
+    conn.commit()
+    return n

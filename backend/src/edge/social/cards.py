@@ -834,7 +834,7 @@ def _samples(assets: Path | None) -> dict[str, bytes]:
                     panel=dataclasses.asdict(Panel(True, 27, 22, 6, 26.8, 2.7, 35.2)))
     nfl = BlindCard(sport="nfl", n=4, position="WR", market_label="Rec Yds", side="over", line=64.5, price=-110,
                     ev=0.042, n_books=8, l10_hits=6, l10_games=9, l10_avg=71.2, l10_avg_games=10,
-                    tip_label="Tonight",
+                    tip_label="1:00 PM ET",  # an NFL lone slot shows its kickoff time
                     panel=NflPanel(True, 3, 0.274, None, ["def_soft"]))
     blind_png = render_blind(nba)
     event = {"sport": "nba", "away_team": "Indiana Pacers", "home_team": "Philadelphia 76ers",

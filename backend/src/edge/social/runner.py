@@ -454,10 +454,10 @@ class _Pass:
     # ---- per sport ----
 
     async def run_sport(self, sport: str) -> None:
-        if _headshots_due(self.conn, sport, self.now):
+        if not self.stopped() and _headshots_due(self.conn, sport, self.now):  # inside the pass budget
             try:
                 await headshots.refresh(self.conn, sport, _today_teams(self.conn, sport, self.today), self.now,
-                                        self.http)
+                                        self.http, stop=self.stopped)
             except Exception:  # noqa: BLE001
                 log.exception("social headshots refresh failed for %s", sport)
                 self._rollback()

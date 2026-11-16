@@ -60,8 +60,10 @@ def event(**kw):
 
 def test_final_text_shows_push_and_units():
     t = content.final_text("nba", event(), 2, 1, 1, 1.35)
+    site = settings.site_url.rstrip("/")
     assert t == ("FINAL\n\nDetroit Pistons 104, Boston Celtics 110\n\n"
-                 "TruLine plays in this game: 2-1-1 ✅ +1.35u\n\n#NBA #Pistons #Celtics")
+                 "TruLine plays in this game: 2-1-1 ✅ +1.35u\n\n#NBA #Pistons #Celtics\n\n"
+                 f"{site}/?utm_source=x&utm_medium=social&utm_campaign=final")
     t = content.final_text("nba", event(), 1, 2, 0, -1.10)
     assert "1-2 -1.10u" in t and "✅" not in t and "1-2-" not in t
 

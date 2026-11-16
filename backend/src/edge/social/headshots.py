@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from typing import Callable
 
 import httpx
 
@@ -93,10 +94,12 @@ def _odds_names(conn, sport: str, teams: set[str]) -> tuple[dict[str, set[str]],
     return out, dupes
 
 
-async def refresh(conn, sport: str, teams: set[str], now: datetime, http: httpx.AsyncClient) -> int:
+async def refresh(conn, sport: str, teams: set[str], now: datetime, http: httpx.AsyncClient,
+                  stop: Callable[[], bool] | None = None) -> int:
     """Re-resolve ESPN ids for teams with a missing or >7-day-old row. Returns rows written.
 
     Names shared by players on two teams are stored with espn_id NULL (never risk a wrong face).
+    `stop` (the social pass budget) is asked before each team's roster fetch; True ends the refresh.
     """
     path = PATHS.get(sport)
     if path is None or not teams:
@@ -110,6 +113,9 @@ async def refresh(conn, sport: str, teams: set[str], now: datetime, http: httpx.
     for team in sorted(names):
         if all(have.get((n, team)) is not None and have[(n, team)] >= now - RECHECK for n in names[team]):
             continue
+        if stop is not None and stop():
+            log.warning("headshot refresh for %s stopped at %s: social pass budget", sport, team)
+            break
         abbr = espn_abbr(sport, team)
         r = await _get(http, ROSTER_URL.format(path=path, abbr=abbr)) if abbr else None
         if r is None:
@@ -150,6 +156,7 @@ async def fetch_png(conn, sport: str, odds_name: str, team: str, http: httpx.Asy
 
 
 async def fetch_logo(sport: str, abbr: str, http: httpx.AsyncClient) -> bytes | None:
+    """Team logo PNG bytes (cached per process), or None (unknown team, non-200, non-PNG, network error)."""
     key = (sport, abbr.upper())
     if key in _logo_cache:
         return _logo_cache[key]
@@ -157,7 +164,7 @@ async def fetch_logo(sport: str, abbr: str, http: httpx.AsyncClient) -> bytes | 
     if e is None or sport not in PATHS:
         return None
     r = await _get(http, LOGO_URL.format(league=sport, abbr=e))
-    if r is None:
+    if r is None or not r.content.startswith(PNG_MAGIC):
         return None
     _logo_cache[key] = r.content
     return r.content

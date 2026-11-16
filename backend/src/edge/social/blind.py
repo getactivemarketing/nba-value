@@ -225,12 +225,14 @@ class BlindCard:
     l10_avg_games: int | None = None  # played games behind l10_avg (pushes count; hits/games may differ)
 
 
-def tip_label(tip: datetime, slate_tips: dict[str, datetime]) -> str:
-    """ET tip time, unless this is the only game at that time (a time that narrows it to one game).
-    `slate_tips` maps event_id -> tip, so props from one game count once."""
-    if sum(1 for t in slate_tips.values() if t == tip) <= 1:
-        return "Tonight"
+def tip_label(tip: datetime, slate_tips: dict[str, datetime], sport: str = "nba") -> str:
+    """ET tip time, unless this is the only NBA game at that time (a time that narrows it to one
+    game): then "Tonight". An NFL game alone in its slot shows its kickoff time anyway ("tonight"
+    is wrong for a 1 PM kickoff, and the card reads "kicks off <label>"). `slate_tips` maps
+    event_id -> tip, so props from one game count once."""
     local = tip.astimezone(ET)
+    if sport != "nfl" and sum(1 for t in slate_tips.values() if t == tip) <= 1:
+        return "Tonight"
     return f"{local.strftime('%I:%M %p').lstrip('0')} ET"
 
 
@@ -240,7 +242,8 @@ def to_card(play: dict, slate_tips: dict[str, datetime]) -> BlindCard:
         sport=play["sport"], n=play["n"], position=play.get("position"), market_label=play["market_label"],
         side=play["side"], line=float(play["line"]), price=int(play["price"]), ev=float(play["ev"]),
         n_books=play["n_books"], l10_hits=form.get("hits"), l10_games=form.get("games"),
-        l10_avg=form.get("avg"), tip_label=tip_label(_tip(play), slate_tips), panel=play.get("panel"),
+        l10_avg=form.get("avg"), tip_label=tip_label(_tip(play), slate_tips, play["sport"]),
+        panel=play.get("panel"),
         l10_avg_games=form.get("avg_games"))
 
 

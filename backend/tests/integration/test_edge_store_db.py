@@ -531,6 +531,22 @@ def test_worker_prunes_once_a_day_from_its_cursor(conn):
     assert store.get_state(conn)["history_pruned_before"]
 
 
+def test_daily_prune_drops_social_card_images_after_7_days(conn):
+    """Ruling 31: ledger rows keep their card PNG for a week (receipts reuse it), then only the text."""
+    from src.edge import worker
+    with conn.cursor() as cur:
+        for key, age in (("final:old", timedelta(days=8)), ("final:new", timedelta(days=6))):
+            cur.execute("""INSERT INTO edge_social_posts (sport, kind, key, status, attempts, text, image, created_at,
+                           updated_at) VALUES ('nba','final',%s,'posted',1,'t',%s,%s,%s)""",
+                        (key, b"png-bytes", NOW - age, NOW - age))
+    conn.commit()
+    worker.prune_step(conn, NOW)
+    with conn.cursor() as cur:
+        cur.execute("SELECT key, image IS NULL, text FROM edge_social_posts ORDER BY key")
+        assert cur.fetchall() == [("final:new", False, "t"), ("final:old", True, "t")]
+    conn.rollback()
+
+
 def test_a_stale_lock_holder_is_evicted(conn):
     holder = psycopg2.connect(URL)
     try:

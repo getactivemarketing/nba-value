@@ -47,7 +47,7 @@ def test_fetch_logo_caches_and_swallows_errors():
 
     def handler(req):
         calls.append(str(req.url))
-        return httpx.Response(200, content=b"PNG") if "/gs.png" in str(req.url) else httpx.Response(404)
+        return httpx.Response(200, content=headshots.PNG_MAGIC) if "/gs.png" in str(req.url) else httpx.Response(404)
 
     async def run():
         async with _client(handler) as c:
@@ -55,7 +55,7 @@ def test_fetch_logo_caches_and_swallows_errors():
                     await headshots.fetch_logo("nba", "BOS", c))
 
     a, b, c3 = asyncio.run(run())
-    assert a == b == b"PNG" and c3 is None and len(calls) == 2
+    assert a == b == headshots.PNG_MAGIC and c3 is None and len(calls) == 2
 
 
 def test_fetch_logo_network_error_is_none():
@@ -102,3 +102,18 @@ def test_fetch_png_network_error_and_non_png_and_team_mismatch():
     assert asyncio.run(run(html)) is None
     assert asyncio.run(run(good, team="BOS")) is None
     assert asyncio.run(run(good)) == headshots.PNG_MAGIC + b"x"
+
+
+def test_fetch_logo_returns_only_png_bytes_and_does_not_cache_junk():
+    headshots._logo_cache.clear()
+    calls = []
+
+    def handler(req):
+        calls.append(str(req.url))
+        return httpx.Response(200, content=b"<html>not a logo</html>")
+
+    async def run():
+        async with _client(handler) as c:
+            return await headshots.fetch_logo("nba", "GSW", c), await headshots.fetch_logo("nba", "GSW", c)
+
+    assert asyncio.run(run()) == (None, None) and len(calls) == 2

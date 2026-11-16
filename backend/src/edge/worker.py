@@ -22,6 +22,7 @@ from src.edge.client import EdgeOddsClient, OddsApiError, Usage
 from src.edge.config import LINE_MARKETS, SportConfig, enabled_sports, state_key
 from src.edge.engine import price_quotes
 from src.edge.ingest import event_row, parse_event
+from src.edge.social import ledger as social_ledger
 from src.edge.social import runner as social_runner
 from src.utils.redact import install_redaction, redact
 from src.utils.season import current_nba_season, current_nfl_season
@@ -387,7 +388,8 @@ PRUNE_FIRST_WINDOW = timedelta(days=7)  # first run: history only exists since t
 
 
 def prune_step(conn, now: datetime) -> int:
-    """Daily: thin price history for games that tipped more than 3 days ago.
+    """Daily: thin price history for games that tipped more than 3 days ago, and drop social card
+    images older than a week (ledger.prune_images).
 
     Never raises: a failure (e.g. a statement timeout) is recorded in
     prune_error and retried the next day, so it cannot block the tick.
@@ -401,6 +403,7 @@ def prune_step(conn, now: datetime) -> int:
     after = prev_cutoff - PRUNE_OVERLAP if prev_cutoff else before - PRUNE_FIRST_WINDOW
     try:
         deleted = store.prune_history(conn, before=before, after=after)
+        social_ledger.prune_images(conn, now)
     except Exception as e:  # noqa: BLE001
         conn.rollback()
         store.set_state(conn, "prune_error", redact(f"{type(e).__name__}: {e}")[:300], now)

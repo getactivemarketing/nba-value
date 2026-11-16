@@ -692,3 +692,31 @@ async def test_final_card_records_follow_the_setting(world, monkeypatch, show):
     monkeypatch.setattr(cards, "render_final", lambda event, records, *a, **k: got.append(records) or b"png")
     await step(TIP + timedelta(hours=3), FakePoster())
     assert got == [recs if show else {}]
+
+
+async def test_headshot_refresh_runs_inside_the_pass_budget(world, monkeypatch):
+    refreshed = []
+
+    async def refresh(conn, sport, teams, now, http, stop=None):
+        refreshed.append(stop)
+        return 0
+    monkeypatch.setattr(headshots, "refresh", refresh)
+    monkeypatch.setattr(runner, "_headshots_due", lambda conn, sport, now: True)
+    await step(NOV16_11ET, FakePoster())
+    assert len(refreshed) == 1 and refreshed[0] is not None  # gets the budget check to stop between teams
+    world.unknown_noted = []
+    monkeypatch.setattr(runner, "_note_unknown", lambda conn, now: setattr(world, "mono", world.mono + 999))
+    await step(NOV16_11ET, FakePoster())
+    assert len(refreshed) == 1  # past the budget: not started
+
+
+def test_blind_receipt_and_final_and_cheatsheet_wording():
+    site = settings.site_url.rstrip("/")
+    assert content.blind_receipt_text(4, "Rb One", -110, "nfl").startswith(
+        "✅ CASHED. Blind Play #4 was Rb One.\n\nCalled it before kickoff at -110. Did you guess right?")
+    assert "before tip" in content.blind_receipt_text(4, "A One", 116, "nba")
+    ev = {"away_team": "Detroit Pistons", "home_team": "Boston Celtics", "away_score": 104, "home_score": 110}
+    assert content.final_text("nba", ev, 1, 0, 0, 1.16).endswith(
+        f"\n\n{site}/?utm_source=x&utm_medium=social&utm_campaign=final")
+    assert content.cheatsheet_text("nba", DAY).endswith(
+        f"\n\n{site}/?utm_source=x&utm_medium=social&utm_campaign=cheatsheet")

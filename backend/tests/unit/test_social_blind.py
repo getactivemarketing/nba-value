@@ -244,3 +244,29 @@ def test_nfl_panels_fill_last_10_form_from_nfl_box_scores(monkeypatch):
     assert asked == [(55, "KC", "Rb One")]
     assert r["form"] == {"hits": 7, "games": 10, "rate": 0.7, "avg": 72.5, "avg_games": 10}
     assert thin["form"] is None  # no player id: no form, the card shows "—"
+
+
+def test_nfl_lone_slot_label_is_the_kickoff_time():
+    """Ruling 31: an NFL game alone in its slot shows its kickoff time ("Tonight" is wrong at 1 PM);
+    the card draws "kicks off <label>"."""
+    sunday_1pm = datetime(2026, 11, 15, 18, 0, tzinfo=timezone.utc)
+    snf = datetime(2026, 11, 16, 1, 20, tzinfo=timezone.utc)
+    assert blind.tip_label(sunday_1pm, {"g1": sunday_1pm}, "nfl") == "1:00 PM ET"
+    assert blind.tip_label(snf, {"g1": snf}, "nfl") == "8:20 PM ET"
+    assert blind.tip_label(TIP, {"e1": TIP}, "nba") == "Tonight"  # NBA keeps hiding a lone tip time
+    nfl_play = {**play(), "sport": "nfl", "commence_time": sunday_1pm}
+    assert blind.to_card(nfl_play, {"g1": sunday_1pm}).tip_label == "1:00 PM ET"
+
+
+def test_nfl_blind_card_says_kicks_off_at_the_time(monkeypatch):
+    from PIL import ImageDraw
+
+    from src.edge.social import cards
+    drawn = []
+    orig = ImageDraw.ImageDraw.text
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text",
+                        lambda self, xy, text, *a, **kw: drawn.append(str(text)) or orig(self, xy, text, *a, **kw))
+    sunday_1pm = datetime(2026, 11, 15, 18, 0, tzinfo=timezone.utc)
+    cards.render_blind(blind.to_card({**play(), "sport": "nfl", "commence_time": sunday_1pm}, {"g1": sunday_1pm}))
+    text = "\n".join(drawn)
+    assert "kicks off 1:00 PM ET" in text and "tonight" not in text

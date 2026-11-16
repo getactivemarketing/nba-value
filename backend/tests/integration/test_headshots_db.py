@@ -124,3 +124,23 @@ def test_refresh_malformed_payloads_do_not_raise(conn):
             async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body))) as http:
                 return await headshots.refresh(conn, "nba", {"IND"}, NOW, http)
         assert asyncio.run(run()) == 0
+
+
+def test_refresh_stops_between_teams_when_told(conn):
+    """Ruling 31: the refresh runs inside the social pass budget; past it no more ESPN calls start."""
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO edge_players (odds_name, team, match_method, confidence, updated_at) "
+                    "VALUES ('Jaylen Brown', 'BOS', 'exact', 1, %s)", (NOW,))
+    conn.commit()
+    calls, asked = [], []
+
+    def stop():
+        asked.append(1)
+        return len(asked) > 1  # budget runs out after the first team
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_handler(calls))) as http:
+            return await headshots.refresh(conn, "nba", {"IND", "BOS"}, NOW, http, stop=stop)
+
+    asyncio.run(run())
+    assert sum("/roster" in c for c in calls) == 1
