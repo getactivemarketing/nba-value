@@ -518,7 +518,8 @@ class _Pass:
             return
         rows = live()
         top5 = {l["player"] for l in _top_legs(self.conn, sport, self.today)}
-        top5 |= {r["player"] for r in nightly.top_picks(nightly.eligible(rows))}  # not locked yet: today's likely 5
+        if sport in VALUE_SPORTS:  # not locked yet: today's likely 5 (no value post, nothing to keep off)
+            top5 |= {r["player"] for r in nightly.top_picks(nightly.eligible(rows))}
         panels = blind.build_panels(self.conn, sport, rows, self.now)
         picks = blind.select(rows, top5, panels, self.now)
         if picks:

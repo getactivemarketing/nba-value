@@ -610,3 +610,14 @@ async def test_cheatsheet_leaves_out_todays_blind_play_players(world):
     world.cheatsheet = _sheet(6)
     await step(NOV16_11ET, FakePoster())
     assert world.cheatsheet_exclude == {"A One"}
+
+
+@pytest.mark.parametrize("sport, excluded", [("nba", {"A One"}), ("nfl", set())])
+async def test_blind_skips_the_top5_guess_only_where_a_value_post_exists(world, monkeypatch, sport, excluded):
+    """NBA: the likely Top 5 is kept off blind plays. NFL has no value post: nothing to keep off."""
+    monkeypatch.setattr(settings, "social_sports", sport)
+    seen = []
+    monkeypatch.setattr(blind, "select", lambda rows, top5, panels, now: seen.append(set(top5)) or [])
+    world.live_rows = [_live()]
+    await step(NOV16_11ET, FakePoster())
+    assert seen == [excluded]

@@ -20,6 +20,7 @@ from src.edge.config import NBA, SportConfig
 from src.edge.engine import american_to_decimal, prob_to_american
 from src.edge.grading import profit_units
 from src.edge.players import ET, et_date
+from src.edge.social import ledger as social_ledger
 
 log = logging.getLogger(__name__)
 
@@ -121,9 +122,21 @@ def _locked(conn, sport: SportConfig, day: date) -> bool:
         return cur.fetchone() is not None
 
 
+def _blind_players(conn, sport: SportConfig, day: date) -> set[str]:
+    """Players with a blind play on the slate while social blind posting is on for the sport: the
+    Top 5 leaves them out so the Value card never names a blind play."""
+    if not social_ledger.enabled("blind", sport.slug):
+        return set()
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT player FROM edge_blind_plays WHERE sport = %s AND slate_date = %s",
+                    (sport.slug, day))
+        return {r[0] for r in cur.fetchall()}
+
+
 def maybe_lock(conn, now: datetime, sport: SportConfig = NBA) -> int:
     """Lock tonight's picks once, from an hour before the first game. If the worker was down at
-    lock time it locks late from the games not yet started. Returns legs written."""
+    lock time it locks late from the games not yet started. Today's blind-play players are left out
+    (social blind posting on). Returns legs written."""
     day = slate_date(now)
     when = lock_at(_tips(conn, sport, day))
     if when is None or now < when or _locked(conn, sport, day):
@@ -131,7 +144,8 @@ def maybe_lock(conn, now: datetime, sport: SportConfig = NBA) -> int:
     lo, hi = _day_bounds(day)
     rows = [r for r in views.ev_rows(conn, now, sport=sport)
             if lo <= datetime.fromisoformat(r["commence_time"]) < hi]
-    ok = eligible(rows)
+    blind = _blind_players(conn, sport, day)
+    ok = [r for r in eligible(rows) if r["player"] not in blind]
     top, parlay = top_picks(ok), best_parlay(ok)
     if not top:
         return 0  # nothing qualifies yet; try again next tick

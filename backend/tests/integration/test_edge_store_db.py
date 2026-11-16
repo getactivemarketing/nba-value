@@ -1294,6 +1294,36 @@ def test_nightly_locks_once_then_grades_from_logged_picks(conn, monkeypatch):
                                "parlay": {"n": 1, "wins": 0, "units": -1.0}}
 
 
+@pytest.mark.parametrize("social_on", [True, False])
+def test_nightly_lock_leaves_out_todays_blind_play_players(conn, monkeypatch, social_on):
+    """Ruling 26: the Value card never names a blind play, while social blind posting is on for NBA."""
+    from src.config import settings
+    from src.edge import nightly, views
+
+    monkeypatch.setattr(settings, "social_sports", "nba" if social_on else "nfl")
+    monkeypatch.setattr(settings, "social_kinds", "cheatsheet,value,blind,final,receipt")
+    tip = datetime(2026, 11, 12, 0, 10, tzinfo=timezone.utc)  # 7:10 pm ET on 11-11
+    store.upsert_events(conn, [{"event_id": f"g{i}", "sport": "basketball_nba", "home_team": "Boston Celtics",
+                                "away_team": "Detroit Pistons", "commence_time": tip + timedelta(hours=i)}
+                               for i in range(3)])
+    monkeypatch.setattr(views, "ev_rows", lambda conn_, now, sport=None: [
+        {"event_id": f"g{i}", "matchup": "Detroit Pistons @ Boston Celtics",
+         "commence_time": (tip + timedelta(hours=i)).isoformat(), "market": "player_points",
+         "market_label": "Points", "player": f"P{i}", "side": "over", "line": 20.5,
+         "bet": f"P{i} Over 20.5 Points", "book": "betmgm", "price": 100, "fair_prob": 0.55,
+         "ev": 0.1 - i / 100, "n_books": 8, "verify": False, "form": None, "form_flag": False} for i in range(3)])
+    with conn.cursor() as cur:  # P0 is today's blind play; P1's blind play was yesterday
+        for n, player, day in ((1, "P1", date(2026, 11, 10)), (2, "P0", date(2026, 11, 11))):
+            cur.execute("""INSERT INTO edge_blind_plays (sport, n, slate_date, event_id, market, market_label,
+                           player, side, line, book, price, fair_prob, ev, n_books, commence_time, created_at)
+                           VALUES ('nba',%s,%s,'g0','player_points','Points',%s,'over',20.5,'fanduel',110,0.5,0.05,
+                                   8,%s,%s)""", (n, day, player, tip, tip - timedelta(hours=5)))
+    conn.commit()
+    nightly.maybe_lock(conn, tip - timedelta(minutes=59))
+    top = [l["player"] for l in nightly.nightly(conn, tip)["tonight"]["top"]]
+    assert top == (["P1", "P2"] if social_on else ["P0", "P1", "P2"])
+
+
 def test_email_signups_store_each_address_once(conn):
     assert signups.add(conn, "fan@example.com", "edge_home") is True
     assert signups.add(conn, "fan@example.com", "edge_results") is False
