@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from src.config import settings
 from src.edge.social import content
@@ -101,3 +101,31 @@ def test_record_line_counts_only_graded():
              {"result": None, "profit_units": None}]
     assert content.record_line(plays) == (1, 1, 1, 0.16)
     assert content.record_line([]) == (0, 0, 0, 0.0)
+
+
+def _nfl_games(recs: list[int]):
+    """Synthetic nfl_players.load_games rows, newest first: receptions per game."""
+    return [{"game_date": date(2026, 11, 9) - timedelta(days=7 * i), "season": 2026, "week": 10 - i,
+             "opponent": "DAL", "is_home": True, "receptions": r, "rec_yds": 10 * r, "rush_yds": 0}
+            for i, r in enumerate(recs)]
+
+
+def test_nfl_cheatsheet_ranks_by_hit_rate_from_nfl_box_scores():
+    rows, games = [], {}
+    for i in range(7):
+        rows.append({"player": f"WR{i}", "market": "player_receptions", "side": "over", "line": 4.5,
+                     "ev": 0.02 + i / 1000, "verify": False, "bdl_player_id": 100 + i})
+        games[100 + i] = _nfl_games([6] * (9 - i) + [3] * (1 + i))  # WR0 hits 9 of 10, WR6 3 of 10
+    rows.append({**rows[0], "player": "Thin", "bdl_player_id": 200})
+    games[200] = _nfl_games([9, 9, 9, 9])  # under 5 games: no form
+    out = content.cheatsheet_rows(rows, games, "nfl")
+    assert [r["player"] for r in out] == [f"WR{i}" for i in range(7)]
+    assert out[0]["l10"] == {"hits": 9, "games": 10, "rate": 0.9}
+    assert content.cheatsheet_rows(rows[:5], games, "nfl") == []  # five is too thin
+
+
+def test_nfl_recent_form_handles_unders_pushes_and_unknown_markets():
+    g = _nfl_games([3, 4, 5, 4, 2, 6])
+    assert content.nfl_recent_form(g, "player_receptions", 4.0, "under") == {"hits": 2, "games": 4, "rate": 0.5}
+    assert content.nfl_recent_form(g, "player_rush_reception_yds", 45.5, "over")["hits"] == 2
+    assert content.nfl_recent_form(g, "player_points", 4.5, "over") is None

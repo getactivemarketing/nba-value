@@ -373,7 +373,7 @@ class EdgeSocialPost(Base):
     sport: Mapped[str] = mapped_column(String(8), nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     key: Mapped[str] = mapped_column(String(80), nullable=False)
-    status: Mapped[str] = mapped_column(String(10), nullable=False)  # pending|posted|dry_run|failed|skipped
+    status: Mapped[str] = mapped_column(String(10), nullable=False)  # pending|posted|dry_run|failed|skipped|unknown
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     text: Mapped[str | None] = mapped_column(Text)
     image: Mapped[bytes | None] = mapped_column(BYTEA)

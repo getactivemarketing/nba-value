@@ -21,7 +21,7 @@ import httpx
 from psycopg2.extras import RealDictCursor
 
 from src.config import settings
-from src.edge import nightly, players, store, views
+from src.edge import nfl_players, nightly, players, store, views
 from src.edge.config import SPORTS
 from src.edge.grading import profit_units
 from src.edge.players import ET, et_date
@@ -239,10 +239,20 @@ def _box_line(conn, sport: str, play: dict) -> tuple[float | None, str | None]:
 
 
 def _cheatsheet_rows(conn, sport: str, rows: list[dict]) -> list[dict]:
-    ids = sorted({r["bdl_player_id"] for r in rows if r.get("bdl_player_id")})
-    games = players.load_recent_games(conn, ids) if sport == "nba" and ids else {}
+    """Rows ranked for the sheet. NBA form from edge_player_games; NFL from nfl_players.load_games
+    (the NFL player page's games), which needs the player's team: roster team ∩ the game's teams."""
+    rows = [r for r in rows if r.get("bdl_player_id")]
+    if sport == "nfl":
+        _assign_teams(conn, sport, rows)
+        games: dict[int, list[dict]] = {}
+        for r in rows:
+            if r.get("team") and r["bdl_player_id"] not in games:
+                games[r["bdl_player_id"]] = nfl_players.load_games(conn, r["bdl_player_id"], r["team"], r["player"])
+    else:
+        ids = sorted({r["bdl_player_id"] for r in rows})
+        games = players.load_recent_games(conn, ids) if ids else {}
     conn.rollback()
-    return content.cheatsheet_rows(rows, games)
+    return content.cheatsheet_rows(rows, games, sport)
 
 
 # ---- the pass -----------------------------------------------------------------------------------
@@ -286,7 +296,7 @@ class _Pass:
 
     def settled(self, kind: str, key: str) -> bool:
         row = ledger.find(self.conn, kind, key)
-        return bool(row) and row["status"] in ("posted", "dry_run", "skipped")
+        return bool(row) and row["status"] in ("posted", "dry_run", "skipped", "unknown")
 
     def brake(self, sport: str) -> bool:
         """True (and logged loudly, once per pass) when the sport's runaway brake is tripped."""
@@ -303,7 +313,7 @@ class _Pass:
     async def publish(self, sport: str, kind: str, key: str, build: Build) -> str:
         if self.brake(sport):
             return "brake"
-        c = ledger.claim(self.conn, sport, kind, key, self.now)
+        c = ledger.claim(self.conn, sport, kind, key, self.now, dry_run=self.poster.dry_run)
         if c is None:
             return "done"
         try:
@@ -325,6 +335,13 @@ class _Pass:
         except Exception as e:  # noqa: BLE001 - outcome unknown: never retried
             log.exception("social %s %s: poster raised", kind, key)
             res = PostResult(False, None, [], None, retryable=False, error=redact(f"{type(e).__name__}: {e}")[:300])
+        if res.ok and not self.poster.dry_run:
+            try:  # first, so a worker lost before finish() leaves a row Blotato can reconcile
+                ledger.note_submission(self.conn, c, res.submission_id,
+                                       res.media_urls[0] if res.media_urls else None)
+            except Exception:  # noqa: BLE001
+                log.exception("social %s %s: could not store the submission id", kind, key)
+                self._rollback()
         if res.ok:
             status = "dry_run" if self.poster.dry_run else "posted"
         else:
@@ -578,9 +595,15 @@ class _Pass:
     # ---- post URLs ----
 
     def resolve_urls(self) -> None:
-        """Ask Blotato for the public URL of recent posts that don't have one yet (5 per tick)."""
+        """Ask Blotato about recent posts: confirm `unknown` rows it published (they become posted;
+        anything else stays unknown and is never re-posted), then fill in missing public URLs.
+        At most 5 + 5 lookups per tick (Blotato allows 60/min)."""
         if self.poster.dry_run:
             return
+        for row_id, sid in ledger.unknown_submissions(self.conn, self.now):
+            found = self.poster.lookup(sid)
+            if found.state == "published":
+                ledger.confirm_posted(self.conn, row_id, found.url)
         for row_id, sid in ledger.unresolved(self.conn, self.now):
             found = self.poster.lookup(sid)
             if found.state == "published":

@@ -1318,8 +1318,8 @@ def test_claim_is_once_per_key_and_failed_retries_capped(conn):
 
 def test_stale_finish_cannot_overwrite_reclaimed_row(conn):
     from src.edge.social import ledger
-    a = ledger.claim(conn, "nba", "final", "final:stale2", NOW)
-    b = ledger.claim(conn, "nba", "final", "final:stale2", NOW + timedelta(minutes=16))
+    a = ledger.claim(conn, "nba", "final", "final:stale2", NOW, dry_run=True)
+    b = ledger.claim(conn, "nba", "final", "final:stale2", NOW + timedelta(minutes=16), dry_run=True)
     assert b and b.id == a.id and b.attempt == 2
     assert ledger.finish(conn, b, "posted", NOW, text="x", post_url="u") is True
     assert ledger.finish(conn, a, "failed", NOW, text="late") is False
@@ -1328,15 +1328,44 @@ def test_stale_finish_cannot_overwrite_reclaimed_row(conn):
     assert ledger.claim(conn, "nba", "final", "final:stale2", NOW + timedelta(days=1)) is None
 
 
-def test_terminal_statuses_are_never_reclaimed_and_stale_pending_is(conn):
+def test_terminal_statuses_are_never_reclaimed_and_stale_dry_run_pending_is(conn):
     from src.edge.social import ledger
     for st in ("posted", "dry_run", "skipped"):
         r = ledger.claim(conn, "nba", "final", f"final:{st}", NOW)
         ledger.finish(conn, r, st, NOW, text="x", detail={"a": 1})
         assert ledger.claim(conn, "nba", "final", f"final:{st}", NOW + timedelta(days=1)) is None
-    r = ledger.claim(conn, "nba", "final", "final:stale", NOW)
-    assert ledger.claim(conn, "nba", "final", "final:stale", NOW + timedelta(minutes=5)) is None
-    assert ledger.claim(conn, "nba", "final", "final:stale", NOW + timedelta(minutes=16)).id == r.id
+    r = ledger.claim(conn, "nba", "final", "final:stale", NOW, dry_run=True)
+    assert ledger.claim(conn, "nba", "final", "final:stale", NOW + timedelta(minutes=5), dry_run=True) is None
+    assert ledger.claim(conn, "nba", "final", "final:stale", NOW + timedelta(minutes=16), dry_run=True).id == r.id
+
+
+def test_live_stale_pending_becomes_unknown_and_is_never_reclaimed(conn, caplog):
+    from src.edge.social import ledger
+    r = ledger.claim(conn, "nba", "blind", "blind:nba:7", NOW)
+    ledger.note_submission(conn, r, "sub-7")  # Blotato accepted, then the worker died before finish()
+    assert ledger.claim(conn, "nba", "blind", "blind:nba:7", NOW + timedelta(minutes=5)) is None
+    later = NOW + timedelta(minutes=16)
+    assert ledger.claim(conn, "nba", "blind", "blind:nba:7", later) is None
+    row = ledger.find(conn, "blind", "blind:nba:7")
+    assert row["status"] == "unknown" and row["submission_id"] == "sub-7"
+    assert "never re-posted" in caplog.text
+    assert ledger.claim(conn, "nba", "blind", "blind:nba:7", later + timedelta(days=1)) is None
+    assert ledger.finish(conn, r, "posted", later, text="late") is False  # the lost attempt can't finish it
+    assert ledger.unknown_submissions(conn, later) == [(row["id"], "sub-7")]
+    assert ledger.confirm_posted(conn, row["id"], "https://x.com/t/status/7") is True
+    row = ledger.find(conn, "blind", "blind:nba:7")
+    assert row["status"] == "posted" and row["post_url"] == "https://x.com/t/status/7"
+    assert ledger.confirm_posted(conn, row["id"], None) is False  # only unknown rows
+
+
+def test_unknown_rows_count_toward_brakes(conn):
+    from src.edge.social import ledger
+    for i in range(6):
+        ledger.claim(conn, "nba", "final", f"final:u{i}", NOW)
+    for i in range(6):
+        assert ledger.claim(conn, "nba", "final", f"final:u{i}", NOW + timedelta(minutes=16)) is None
+    assert ledger.find(conn, "final", "final:u0")["status"] == "unknown"
+    assert ledger.brake_tripped(conn, "nba", NOW + timedelta(minutes=16))
 
 
 def test_brake_trips_at_six_an_hour(conn):

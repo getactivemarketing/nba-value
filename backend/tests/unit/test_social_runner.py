@@ -32,7 +32,7 @@ class FakeLedger:
     def __init__(self):
         self.rows, self.brake, self.next_id = {}, False, 1
 
-    def claim(self, conn, sport, kind, key, now):
+    def claim(self, conn, sport, kind, key, now, *, dry_run=False):
         r = self.rows.get((kind, key))
         if r is None:
             r = self.rows[(kind, key)] = {"id": self.next_id, "sport": sport, "kind": kind, "key": key,
@@ -90,6 +90,8 @@ def world(monkeypatch):
         monkeypatch.setattr(ledger, name, getattr(led, name))
     monkeypatch.setattr(ledger, "brake_tripped", lambda conn, sport, now: led.brake)
     monkeypatch.setattr(ledger, "unresolved", lambda conn, now, limit=5: [])
+    monkeypatch.setattr(ledger, "unknown_submissions", lambda conn, now, limit=5: [])
+    monkeypatch.setattr(ledger, "note_submission", lambda conn, claim, sid, media_url=None: None)
     monkeypatch.setattr(runner, "_live_rows", lambda conn, sport, now: w.live_rows)
     monkeypatch.setattr(runner, "_gate", lambda conn, sport: w.gate)
     monkeypatch.setattr(runner, "_top_legs", lambda conn, sport, day: w.legs)
@@ -432,3 +434,27 @@ def test_blind_pass_runs_every_five_minutes_and_headshots_once_a_day(monkeypatch
     assert runner._blind_due(None, "nba", t + timedelta(minutes=5)) and runner._blind_due(None, "nfl", t)
     assert runner._headshots_due(None, "nba", t) and not runner._headshots_due(None, "nba", t + timedelta(hours=12))
     assert runner._headshots_due(None, "nba", t + timedelta(hours=13))  # midnight ET passed
+
+
+async def test_unknown_rows_are_reconciled_only_when_blotato_confirms(world, monkeypatch):
+    confirmed = []
+    monkeypatch.setattr(ledger, "unknown_submissions", lambda conn, now, limit=5: [(7, "s7"), (8, "s8")])
+    monkeypatch.setattr(ledger, "confirm_posted", lambda conn, i, url: confirmed.append((i, url)) or True)
+
+    class P(FakePoster):
+        def lookup(self, sid):
+            return UrlLookup("published", "https://x.com/t/status/7") if sid == "s7" else UrlLookup("pending")
+    await step(NOV16_11ET - timedelta(hours=5), P())
+    assert confirmed == [(7, "https://x.com/t/status/7")]
+    await step(NOV16_11ET - timedelta(hours=5), FakePoster(dry_run=True))  # dry run never asks Blotato
+    assert len(confirmed) == 1
+
+
+async def test_unknown_key_is_never_posted_again(world):
+    world.ledger.rows[("blind", "blind:nba:1")] = {"id": 50, "status": "unknown", "attempts": 1, "image": None,
+                                                    "post_url": None}
+    world.blind_plays = [_play()]
+    world.live_rows = [_live()]
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert p.calls == [] and world.ledger.statuses("blind") == {"blind:nba:1": "unknown"}

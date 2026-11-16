@@ -4,6 +4,11 @@
 claim() is the once-per-key gate: a (kind, key) is posted at most once, a failed
 attempt may be retried up to MAX_ATTEMPTS times, and brake_tripped() stops a
 runaway loop. dry_run rows count toward neither brake.
+
+A live row left `pending` past STALE_PENDING (the worker died mid-post) is never
+re-claimed: the post may have gone out, so it becomes `unknown` (logged at ERROR)
+and only reconcile_unknown() can turn it into `posted`, from Blotato's own answer.
+Dry runs post nothing, so a stale dry-run row may be re-claimed.
 """
 from __future__ import annotations
 
@@ -20,7 +25,8 @@ MAX_ATTEMPTS = 3
 STALE_PENDING = timedelta(minutes=15)  # a worker that died mid-post
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
-_FINISH_STATUSES = frozenset({"posted", "dry_run", "skipped", "failed"})
+_FINISH_STATUSES = frozenset({"posted", "dry_run", "skipped", "failed", "unknown"})
+COUNTED_AS_POSTED = ("posted", "pending", "unknown")  # what the brakes count
 
 
 @dataclass(frozen=True)
@@ -38,24 +44,46 @@ def enabled(kind: str, sport: str) -> bool:
     return kind in _csv(settings.social_kinds) and sport in _csv(settings.social_sports)
 
 
-def claim(conn, sport: str, kind: str, key: str, now: datetime) -> Claim | None:
-    """Insert a pending row, or re-claim a failed/stale-pending one with attempts left. None if not claimable.
+def claim(conn, sport: str, kind: str, key: str, now: datetime, *, dry_run: bool = False) -> Claim | None:
+    """Insert a pending row, or re-claim a failed one with attempts left. None if not claimable.
 
-    A stale pending row already at MAX_ATTEMPTS stays pending (fail-closed: the key is dead).
+    Live (dry_run False): a stale pending row becomes `unknown` and is never re-claimed (it may have
+    posted). Dry run: a stale pending row with attempts left is re-claimed. A stale pending row
+    already at MAX_ATTEMPTS stays pending (fail-closed: the key is dead).
     """
     with conn.cursor() as cur:
+        if not dry_run:
+            cur.execute("""UPDATE edge_social_posts SET status = 'unknown'
+                           WHERE kind = %s AND key = %s AND status = 'pending' AND updated_at < %s
+                           RETURNING id, submission_id""", (kind, key, now - STALE_PENDING))
+            lost = cur.fetchone()
+            if lost:
+                log.error("social ledger: %s %s was left pending mid-post (row %s, submission %s); marked "
+                          "unknown, never re-posted", kind, key, lost[0], lost[1])
         cur.execute("""INSERT INTO edge_social_posts (sport, kind, key, status, attempts, created_at, updated_at)
                        VALUES (%s, %s, %s, 'pending', 1, %s, %s)
                        ON CONFLICT (kind, key) DO UPDATE
                          SET status = 'pending', attempts = edge_social_posts.attempts + 1, updated_at = EXCLUDED.updated_at
                        WHERE edge_social_posts.attempts < %s
                          AND (edge_social_posts.status = 'failed'
-                              OR (edge_social_posts.status = 'pending' AND edge_social_posts.updated_at < %s))
+                              OR (%s AND edge_social_posts.status = 'pending' AND edge_social_posts.updated_at < %s))
                        RETURNING id, attempts""",
-                    (sport, kind, key, now, now, MAX_ATTEMPTS, now - STALE_PENDING))
+                    (sport, kind, key, now, now, MAX_ATTEMPTS, dry_run, now - STALE_PENDING))
         row = cur.fetchone()
     conn.commit()
     return Claim(row[0], row[1]) if row else None
+
+
+def note_submission(conn, claim: Claim, submission_id: str | None, media_url: str | None = None) -> None:
+    """Store Blotato's submission id the moment the post is accepted, before finish(), so a row the
+    worker loses after this point can still be reconciled."""
+    if not submission_id:
+        return
+    with conn.cursor() as cur:
+        cur.execute("""UPDATE edge_social_posts SET submission_id = %s, media_url = COALESCE(%s, media_url)
+                       WHERE id = %s AND status = 'pending' AND attempts = %s""",
+                    (submission_id, media_url, claim.id, claim.attempt))
+    conn.commit()
 
 
 def finish(conn, claim: Claim, status: str, now: datetime, *, text: str, image: bytes | None = None,
@@ -79,14 +107,15 @@ def finish(conn, claim: Claim, status: str, now: datetime, *, text: str, image: 
 
 
 def brake_tripped(conn, sport: str, now: datetime) -> bool:
-    """True when posted+pending rows reach the per-ET-day or per-hour cap for this sport."""
+    """True when posted+pending+unknown rows reach the per-ET-day or per-hour cap for this sport."""
     day_start = now.astimezone(ET).replace(hour=0, minute=0, second=0, microsecond=0)
     with conn.cursor() as cur:
         cur.execute("""SELECT count(*) FILTER (WHERE updated_at >= %s),
                               count(*) FILTER (WHERE updated_at >= %s)
                        FROM edge_social_posts
-                       WHERE sport = %s AND status IN ('posted', 'pending') AND updated_at >= %s""",
-                    (day_start, now - timedelta(hours=1), sport, min(day_start, now - timedelta(hours=1))))
+                       WHERE sport = %s AND status = ANY(%s) AND updated_at >= %s""",
+                    (day_start, now - timedelta(hours=1), sport, list(COUNTED_AS_POSTED),
+                     min(day_start, now - timedelta(hours=1))))
         per_day, per_hour = cur.fetchone()
     return per_day >= settings.social_max_per_day or per_hour >= settings.social_max_per_hour
 
@@ -126,3 +155,27 @@ def note_lookup(conn, row_id: int, state: str, post_url: str | None = None, erro
                               detail = COALESCE(detail, '{}'::jsonb) || %s
                        WHERE id = %s AND status = 'posted'""", (post_url, Json(patch), row_id))
     conn.commit()
+
+
+def unknown_submissions(conn, now: datetime, limit: int = 5) -> list[tuple[int, str]]:
+    """(id, submission_id) of recent `unknown` rows that Blotato can be asked about."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT id, submission_id FROM edge_social_posts
+                       WHERE status = 'unknown' AND submission_id IS NOT NULL AND updated_at >= %s
+                       ORDER BY updated_at LIMIT %s""", (now - URL_LOOKUP_WINDOW, limit))
+        rows = cur.fetchall()
+    conn.rollback()
+    return [(r[0], r[1]) for r in rows]
+
+
+def confirm_posted(conn, row_id: int, post_url: str | None) -> bool:
+    """An `unknown` row Blotato confirms as published becomes `posted`. Nothing else changes it."""
+    with conn.cursor() as cur:
+        cur.execute("""UPDATE edge_social_posts SET status = 'posted', post_url = COALESCE(%s, post_url),
+                              detail = COALESCE(detail, '{}'::jsonb) || '{"reconciled": true}'::jsonb
+                       WHERE id = %s AND status = 'unknown'""", (post_url, row_id))
+        ok = cur.rowcount == 1
+    conn.commit()
+    if ok:
+        log.warning("social ledger: row %s confirmed published by Blotato; now posted", row_id)
+    return ok

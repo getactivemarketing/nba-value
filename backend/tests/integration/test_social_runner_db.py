@@ -116,3 +116,95 @@ async def test_social_step_end_to_end_dry_run(conn, monkeypatch):
     await runner.social_step(conn, NOW + timedelta(minutes=1), poster=p)
     assert len(p.calls) == n_calls  # nothing posts twice
     assert len(_statuses(conn)) == 6
+
+
+class _LivePoster:
+    """A live (non-dry-run) poster that never touches the network."""
+    dry_run = False
+
+    def __init__(self, published_url=None):
+        self.calls, self.published_url = [], published_url
+
+    def post(self, texts, images):
+        from src.edge.social.poster import PostResult
+        self.calls.append(texts)
+        return PostResult(True, f"sub-{len(self.calls)}", [], None)
+
+    def lookup(self, sid):
+        from src.edge.social.poster import UrlLookup
+        return UrlLookup("published", self.published_url) if self.published_url else UrlLookup("pending")
+
+
+async def test_crash_after_blotato_accepted_never_posts_again_and_reconciles(conn, monkeypatch):
+    from src.config import settings
+    monkeypatch.setattr(settings, "social_kinds", "blind")
+    live = {**_bet("B Two", "next"), "book": "fanduel", "price": 110, "ev": 0.05, "n_books": 9, "verify": False,
+            "form_flag": False, "commence_time": NEXT_TIP.isoformat(), "market_label": "Points",
+            "matchup": "Atlanta Hawks @ Miami Heat", "bdl_player_id": 2, "fair_prob": 0.5, "form": None}
+    monkeypatch.setattr(runner, "_live_rows", lambda c, sport, now: [dict(live)])
+    # a live post of blind #2 that Blotato accepted; the worker died before finish()
+    crashed_at = NOW - timedelta(minutes=20)
+    c = ledger.claim(conn, "nba", "blind", "blind:nba:2", crashed_at)
+    ledger.note_submission(conn, c, "sub-lost")
+    p = _LivePoster()
+    await runner.social_step(conn, NOW, poster=p)
+    assert p.calls == []  # never re-posted
+    assert ledger.find(conn, "blind", "blind:nba:2")["status"] == "unknown"
+    await runner.social_step(conn, NOW + timedelta(minutes=1), poster=p)  # Blotato: still in progress
+    assert ledger.find(conn, "blind", "blind:nba:2")["status"] == "unknown"
+    p.published_url = "https://x.com/trulineapp/status/2"
+    await runner.social_step(conn, NOW + timedelta(minutes=2), poster=p)
+    row = ledger.find(conn, "blind", "blind:nba:2")
+    assert row["status"] == "posted" and row["post_url"] == "https://x.com/trulineapp/status/2"
+    assert p.calls == []
+
+
+async def test_live_post_stores_submission_and_counts_for_brakes(conn, monkeypatch):
+    from src.config import settings
+    monkeypatch.setattr(settings, "social_kinds", "blind")
+    live = {**_bet("B Two", "next"), "book": "fanduel", "price": 110, "ev": 0.05, "n_books": 9, "verify": False,
+            "form_flag": False, "commence_time": NEXT_TIP.isoformat(), "market_label": "Points",
+            "matchup": "Atlanta Hawks @ Miami Heat", "bdl_player_id": 2, "fair_prob": 0.5, "form": None}
+    monkeypatch.setattr(runner, "_live_rows", lambda c, sport, now: [dict(live)])
+    p = _LivePoster()
+    await runner.social_step(conn, NOW, poster=p)
+    row = ledger.find(conn, "blind", "blind:nba:2")
+    assert len(p.calls) == 1 and row["status"] == "posted" and row["submission_id"] == "sub-1"
+
+
+NFL_SUNDAY_1030 = datetime(2026, 11, 22, 15, 30, tzinfo=timezone.utc)  # 10:30 AM EST
+NFL_TIP = datetime(2026, 11, 22, 18, 0, tzinfo=timezone.utc)
+
+
+async def test_nfl_cheatsheet_posts_from_nfl_box_scores(conn, monkeypatch):
+    from src.config import settings
+    monkeypatch.setattr(settings, "social_sports", "nfl")
+    monkeypatch.setattr(settings, "social_kinds", "cheatsheet")
+    rows = []
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_events (event_id, sport, home_team, away_team, commence_time, status, completed)
+                       VALUES ('nflg','americanfootball_nfl','Philadelphia Eagles','Dallas Cowboys',%s,'scheduled',false)""",
+                    (NFL_TIP,))
+        for i in range(7):
+            team, pid = ("PHI" if i % 2 else "DAL"), 500 + i
+            cur.execute("""INSERT INTO edge_nfl_players (odds_name, team, bdl_player_id, position, match_method,
+                           confidence, updated_at) VALUES (%s,%s,%s,'WR','exact',1,%s)""",
+                        (f"Receiver {i}", team, pid, NOW))
+            for w in range(10):  # weeks 1-10: hits 9-i of the last 10 at 4.5 receptions
+                cur.execute("""INSERT INTO edge_nfl_player_games (bdl_player_id, bdl_game_id, season, week, game_date,
+                               team, opponent, is_home, receptions, rec_yds) VALUES (%s,%s,2026,%s,%s,%s,'NYG',true,%s,%s)""",
+                            (pid, 9000 + 100 * i + w, w + 1, date(2026, 9, 10) + timedelta(days=7 * w), team,
+                             6 if w >= 1 + i else 3, 60))
+            rows.append({"event_id": "nflg", "matchup": "Dallas Cowboys @ Philadelphia Eagles",
+                         "commence_time": NFL_TIP.isoformat(), "market": "player_receptions",
+                         "market_label": "Receptions", "player": f"Receiver {i}", "side": "over", "line": 4.5,
+                         "book": "fanduel", "price": 105, "fair_prob": 0.52, "ev": 0.03, "n_books": 8,
+                         "verify": False, "form_flag": False, "bdl_player_id": pid, "tags": [], "form": None})
+    conn.commit()
+    monkeypatch.setattr(runner, "_live_rows", lambda c, sport, now: [dict(r) for r in rows])
+    p = DryRunPoster()
+    await runner.social_step(conn, NFL_SUNDAY_1030, poster=p)
+    row = ledger.find(conn, "cheatsheet", "cheatsheet:nfl:2026-11-22")
+    assert row["status"] == "dry_run" and row["detail"]["rows"] == 7, row["detail"]
+    assert "NFL Cheat Sheet" in row["text"] and bytes(row["image"]).startswith(b"\x89PNG")
+    assert len(p.calls) == 1

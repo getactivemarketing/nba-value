@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from psycopg2.extras import Json, RealDictCursor
 
+from src.config import settings
 from src.edge import matchups, matchups_store, nightly, players, views
 from src.edge.engine import implied_prob
 from src.edge.grading import profit_units
@@ -256,13 +257,24 @@ def result(conn, sport: str, n: int) -> dict:
     return {"result": res, "profit_units": round(profit_units(res, int(price)), 4) if res else None}
 
 
+def public_statuses() -> list[str]:
+    """Ledger statuses that make a blind play public: posted, plus dry_run while dry-run is on.
+    A play that was recorded but never posted (skipped, failed, unknown) is not on the site."""
+    return ["posted", "dry_run"] if settings.social_dry_run else ["posted"]
+
+
+# The play's own ledger row (runner key blind:<sport>:<n>) decides whether it is public.
+_POSTED_JOIN = """JOIN edge_social_posts sp ON sp.kind = 'blind' AND sp.key = 'blind:' || b.sport || ':' || b.n
+                  AND sp.status = ANY(%s)"""
+
+
 def _plays(conn, sport: str, n: int | None, limit: int) -> list[dict]:
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(f"""SELECT b.*, e.home_team, e.away_team, res.result
-                        FROM edge_blind_plays b LEFT JOIN edge_events e ON e.event_id = b.event_id
+                        FROM edge_blind_plays b {_POSTED_JOIN} LEFT JOIN edge_events e ON e.event_id = b.event_id
                         {_RESULT_JOIN}
                         WHERE b.sport = %s AND (%s::int IS NULL OR b.n = %s) ORDER BY b.n DESC LIMIT %s""",
-                    (sport, n, n, limit))
+                    (public_statuses(), sport, n, n, limit))
         return [dict(r) for r in cur.fetchall()]
 
 
@@ -320,8 +332,8 @@ def _out(p: dict, who: tuple[str | None, int | None]) -> dict:
 
 def _record(conn, sport: str) -> dict:
     with conn.cursor() as cur:
-        cur.execute(f"""SELECT res.result, b.price FROM edge_blind_plays b {_RESULT_JOIN}
-                        WHERE b.sport = %s""", (sport,))
+        cur.execute(f"""SELECT res.result, b.price FROM edge_blind_plays b {_POSTED_JOIN} {_RESULT_JOIN}
+                        WHERE b.sport = %s""", (public_statuses(), sport))
         rows = [(r, p) for r, p in cur.fetchall() if r in ("win", "loss", "push", "void")]
     conn.rollback()
     return {"n": len(rows), "wins": sum(r == "win" for r, _ in rows), "losses": sum(r == "loss" for r, _ in rows),

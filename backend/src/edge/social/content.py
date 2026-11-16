@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from psycopg2.extras import RealDictCursor
 
 from src.config import settings
-from src.edge import nightly, players, views
+from src.edge import nfl_players, nightly, players, views
 from src.edge.grading import profit_units
 from src.edge.players import ET, et_date
 from src.edge.social.safety import tip_of
@@ -80,15 +80,34 @@ def value_receipt_text(bet: str, price: int) -> str:
 
 # ---- cheat sheet ----------------------------------------------------------------------------
 
-def cheatsheet_rows(rows: list[dict], games_by_player: dict[int, list[dict]]) -> list[dict]:
+FORM_GAMES, MIN_FORM_GAMES = 10, 5
+
+
+def nfl_recent_form(games: list[dict], market: str, line: float, side: str, n: int = FORM_GAMES) -> dict | None:
+    """NFL twin of players.recent_form: how often the bet side won in the player's last n games
+    (nfl_players.load_games rows: box scores plus zero rows for snaps without a stat). Pushes are
+    left out of `games`. None below 5 games or for a market box scores can't grade."""
+    if market not in nfl_players.NFL_STAT_PARTS:
+        return None
+    played = sorted(games, key=lambda g: g["game_date"], reverse=True)[:n]
+    if len(played) < MIN_FORM_GAMES:
+        return None
+    stats = [nfl_players.stat_for(market, g) for g in played]
+    hits = sum(1 for v in stats if (v > line if side == "over" else v < line))
+    decided = sum(1 for v in stats if v != line)
+    return {"hits": hits, "games": decided, "rate": round(hits / decided, 3)} if decided else None
+
+
+def cheatsheet_rows(rows: list[dict], games_by_player: dict[int, list[dict]], sport: str = "nba") -> list[dict]:
     """+EV player props ranked by last-10 hit rate then EV. Each row's `l10` is recomputed from the
-    player's box scores. Fewer than 6 usable rows means no post: [] (a thin sheet looks bad)."""
+    player's box scores (NBA edge_player_games, NFL nfl_players.load_games rows). Fewer than 6
+    usable rows means no post: [] (a thin sheet looks bad)."""
+    form_of = nfl_recent_form if sport == "nfl" else players.recent_form
     out = []
     for r in rows:
         if r["ev"] <= 0 or not r["market"].startswith("player_") or r.get("verify") or not r.get("bdl_player_id"):
             continue
-        form = players.recent_form(games_by_player.get(r["bdl_player_id"], []), r["market"], float(r["line"]),
-                                   r["side"])
+        form = form_of(games_by_player.get(r["bdl_player_id"], []), r["market"], float(r["line"]), r["side"])
         if form is None or form["rate"] is None:
             continue
         out.append({**r, "l10": form})
