@@ -160,7 +160,7 @@ def test_fewer_than_30_teams_never_favorable():
 
 def test_key_missing_for_a_defender_drops_key():
     rows = _league()
-    # nobody in the league ever scored against T07 from the C spot except on 29 other teams: C key covers 29 teams
+    # C-position rows exist against only 28 defenders, so the (C, PRA) ranking is short of 30 and is dropped
     rows += [_row(800 + i, "T01", TEAMS[i], "C", 10, pid=900 + i) for i in range(29) if TEAMS[i] != "T01"]
     ranks = m.build_ranks(rows)
     assert all(("C", PRA) not in r.vs_pos for r in ranks.values())
