@@ -29,9 +29,9 @@ def conn():
         cur.execute("INSERT INTO edge_events (event_id, sport, home_team, away_team, commence_time, status, completed) "
                     "VALUES ('e1','basketball_nba','Boston Celtics','Detroit Pistons',%s,'scheduled',false), "
                     "('e2','basketball_nba','Miami Heat','Atlanta Hawks',%s,'scheduled',false)", (TIP, TIP))
-        for name, team in (("A One", "BOS"), ("B Two", "MIA")):
-            cur.execute("INSERT INTO edge_players (odds_name, team, match_method, confidence, updated_at) "
-                        "VALUES (%s,%s,'exact',1,%s)", (name, team, NOW))
+        for name, team, bdl in (("A One", "BOS", 901), ("B Two", "MIA", 902)):
+            cur.execute("INSERT INTO edge_players (odds_name, bdl_player_id, team, match_method, confidence, updated_at) "
+                        "VALUES (%s,%s,%s,'exact',1,%s)", (name, bdl, team, NOW))
         # A One has a headshot row for the right team; B Two's row is for another team (traded)
         cur.execute("INSERT INTO edge_headshots (sport, odds_name, team, espn_id, checked_at) VALUES "
                     "('nba','A One','BOS',111,%s), ('nba','B Two','ATL',222,%s)", (NOW, NOW))
@@ -109,8 +109,18 @@ def test_detail_reveals_name_and_never_a_wrong_face(conn):
     assert d1["home_logo_url"].endswith("/nba/500/bos.png") and d1["away_logo_url"].endswith("/det.png")
     assert d1["panel"]["opp_vs_pos_rank"] == 25 and "9 books" in d1["explanation"]
     d2 = blind.detail(conn, "nba", 2)
+    assert d1["bdl_player_id"] == 901
+    assert d2["bdl_player_id"] == 902  # roster team MIA is in the game; only the headshot row disagrees
     assert d2["headshot_url"] is None  # headshot row says ATL, the player is a Heat player
     assert blind.detail(conn, "nba", 99) is None
+
+
+def test_no_player_id_when_roster_team_is_not_in_the_game(conn):
+    odd = pick("B Two", "e1")  # B Two is a Heat player; e1 is BOS vs DET
+    blind.record(conn, "nba", [odd], panels(odd), NOW)
+    post(conn, 1)
+    d = blind.detail(conn, "nba", 1)
+    assert d["team"] is None and d["bdl_player_id"] is None
 
 
 def test_result_joins_grading_from_any_book(conn):

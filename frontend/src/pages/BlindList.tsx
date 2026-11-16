@@ -4,8 +4,10 @@ import { Link } from 'react-router-dom';
 import { useBlindList } from '@/hooks/useEdge';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
 import { EmailSignup } from '@/components/edge/EmailSignup';
-import type { Sport } from '@/lib/edgeFormat';
-import { ResultBadge, etDateTime } from './BlindPlay';
+import { etDateTime, type Sport } from '@/lib/edgeFormat';
+import { ResultBadge } from '@/components/edge/blind';
+
+const LIST_LIMIT = 60; // the API's cap on plays returned
 
 export function BlindList() {
   const [sport, setSport] = useState<Sport>('nba');
@@ -16,6 +18,7 @@ export function BlindList() {
       <h1 className="text-3xl font-bold text-[#f1f5f9] font-display tracking-tight">Blind plays</h1>
       <p className="text-sm text-[#64748b] font-mono max-w-2xl mt-2 leading-relaxed">
         Every blind play we post on X, revealed. Wins, losses, pushes and voids all stay on this page.
+        {data && data.plays.length >= LIST_LIMIT && ` Showing the latest ${data.plays.length}; the record covers every play.`}
       </p>
       <div className="mt-3 flex gap-1">
         {(['nba', 'nfl'] as const).map((s) => (

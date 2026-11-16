@@ -82,6 +82,7 @@ export interface BlindPlayData {
   form: { hits?: number; games?: number; avg?: number | null; avg_games?: number | null } | null;
   position: string | null; panel: BlindPanel | null; commence_time: string;
   explanation: string; result: BlindResult | null; profit_units: number | null;
+  bdl_player_id: number | null;
   headshot_url: string | null; home_logo_url: string | null; away_logo_url: string | null;
 }
 export interface BlindRecord { n: number; wins: number; losses: number; pushes: number; voids: number; units: number }

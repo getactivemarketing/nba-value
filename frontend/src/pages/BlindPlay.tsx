@@ -1,42 +1,25 @@
 // frontend/src/pages/BlindPlay.tsx
 import { Link, useParams } from 'react-router-dom';
-import { useBlindPlay, useEdgeEv } from '@/hooks/useEdge';
+import { useState } from 'react';
+import { useBlindPlay } from '@/hooks/useEdge';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
 import { EmailSignup } from '@/components/edge/EmailSignup';
-import { bookLabel, edgeBase, fmtAmerican, fmtEv, type Sport } from '@/lib/edgeFormat';
-import type { BlindPanel, BlindPlayData, BlindResult } from '@/types/edge';
-
-const ordinal = (n: number) => {
-  const r = n % 100;
-  const suffix = r >= 11 && r <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th';
-  return `${n}${suffix}`;
-};
-
-// eslint-disable-next-line react-refresh/only-export-components
-export const etDateTime = (iso: string) =>
-  `${new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short',
-    day: 'numeric', hour: 'numeric', minute: '2-digit' })} ET`;
-
-const RESULT_STYLE: Record<BlindResult, string> = {
-  win: 'text-[#4ade80] border-[#4ade80]/40', loss: 'text-[#f87171] border-[#f87171]/40',
-  push: 'text-[#94a3b8] border-[#94a3b8]/40', void: 'text-[#94a3b8] border-[#94a3b8]/40',
-};
-
-export function ResultBadge({ result, units }: { result: BlindResult | null; units: number | null }) {
-  if (!result) return <span className="text-[10px] font-mono uppercase text-[#64748b]">Pending</span>;
-  const u = units == null || result === 'void' ? '' : ` ${units >= 0 ? '+' : ''}${units.toFixed(2)}u`;
-  return (
-    <span className={`text-xs font-mono font-bold uppercase border rounded px-2 py-0.5 ${RESULT_STYLE[result]}`}>
-      {result}{u}
-    </span>
-  );
-}
+import { bookLabel, edgeBase, etDateTime, fmtAmerican, fmtEv, ordinal, type Sport } from '@/lib/edgeFormat';
+import { NotFound, ResultBadge } from '@/components/edge/blind';
+import type { BlindPanel, BlindPlayData } from '@/types/edge';
 
 function Logo({ url, name }: { url: string | null; name: string | null }) {
   const label = name ?? '?';
   return url
     ? <img src={url} alt={label} className="w-12 h-12 object-contain" />
     : <div className="w-12 h-12 grid place-items-center rounded bg-[#191c22] border border-[#1e293b] text-[10px] font-mono font-bold text-[#94a3b8] text-center leading-tight p-1">{label.split(' ').pop()}</div>;
+}
+
+function Headshot({ url, name }: { url: string | null; name: string }) {
+  const [broken, setBroken] = useState(false);
+  return url && !broken
+    ? <img src={url} alt={name} onError={() => setBroken(true)} className="w-full h-full object-cover" />
+    : <Silhouette />;
 }
 
 function Silhouette() {
@@ -47,42 +30,34 @@ function Silhouette() {
   );
 }
 
-function panelStats(sport: Sport, p: BlindPanel | null): [string, string][] {
+type StatRow = [label: string, value: string, note?: string];
+
+// Ranks match the X card. NBA vs-position and defensive-rating ranks run 1..30, so the direction is spelled out.
+function panelStats(sport: Sport, p: BlindPanel | null): StatRow[] {
   if (!p) return [];
-  const out: [string, string | null][] = sport === 'nfl'
-    ? [['Opponent vs position', p.opp_rank != null ? `${ordinal(p.opp_rank)} most yards allowed` : null],
-       ['Share, last 4 games', p.share_l4 != null ? `${Math.round(p.share_l4 * 100)}%` : null],
-       ['Snap share', p.snap_share != null ? `${Math.round(p.snap_share * 100)}%` : null]]
-    : [['Opponent vs position', p.opp_vs_pos_rank != null ? `${ordinal(p.opp_vs_pos_rank)} most allowed` : null],
-       ['Opponent defense', p.drtg_rank != null ? `${ordinal(p.drtg_rank)} defensive rating` : null],
-       ['Opponent pace', p.pace_rank != null ? `${ordinal(p.pace_rank)} fastest` : null],
-       ['Usage, last 10', p.usage_l10 != null ? `${p.usage_l10.toFixed(1)}%` : null],
-       ['Minutes, last 5', p.minutes_l5 != null ? p.minutes_l5.toFixed(1) : null]];
-  return out.filter((r): r is [string, string] => r[1] != null);
+  const rows: (StatRow | null)[] = sport === 'nfl'
+    ? [p.opp_rank != null ? ['Opponent vs position', `${ordinal(p.opp_rank)} most yards allowed`] : null,
+       p.share_l4 != null ? ['Share, last 4 games', `${Math.round(p.share_l4 * 100)}%`] : null,
+       p.snap_share != null ? ['Snap share', `${Math.round(p.snap_share * 100)}%`] : null]
+    : [p.opp_vs_pos_rank != null ? ['Opponent vs position', `${ordinal(p.opp_vs_pos_rank)} of 30`, '30th = allows the most'] : null,
+       p.drtg_rank != null ? ['Opponent defensive rating', `${ordinal(p.drtg_rank)} of 30`, '1st = best defense'] : null,
+       p.pace_rank != null ? ['Opponent pace', `${ordinal(p.pace_rank)} fastest`] : null,
+       p.usage_l10 != null ? ['Usage, last 10', `${p.usage_l10.toFixed(1)}%`] : null,
+       p.minutes_l5 != null ? ['Minutes, last 5', p.minutes_l5.toFixed(1)] : null];
+  return rows.filter((r): r is StatRow => r != null);
 }
 
-function Stat({ k, v }: { k: string; v: string }) {
+function Stat({ k, v, note }: { k: string; v: string; note?: string }) {
   return (
     <div className="bg-[#0b0e14] rounded-lg p-3 border border-[#1e293b]">
       <div className="text-[10px] text-[#64748b] uppercase font-bold tracking-widest">{k}</div>
       <div className="text-base font-black font-mono text-[#f1f5f9]">{v}</div>
-    </div>
-  );
-}
-
-export function NotFound() {
-  return (
-    <div className="text-center py-12 font-mono">
-      <h1 className="text-xl font-black text-[#f1f5f9]">We couldn't find that play</h1>
-      <p className="mt-2 text-sm text-[#94a3b8]">The link may be old or mistyped.</p>
-      <Link to="/blind" className="inline-block mt-4 text-sm text-[#a4e6ff] hover:underline">See every blind play</Link>
+      {note && <div className="text-[10px] font-mono text-[#64748b]">{note}</div>}
     </div>
   );
 }
 
 function Reveal({ play, sport }: { play: BlindPlayData; sport: Sport }) {
-  const { data: evRows } = useEdgeEv({ event_id: play.event_id }, sport);
-  const bdl = evRows?.find((r) => r.player === play.player && r.bdl_player_id)?.bdl_player_id;
   const stats = panelStats(sport, play.panel);
   const form = play.form;
   return (
@@ -93,9 +68,7 @@ function Reveal({ play, sport }: { play: BlindPlayData; sport: Sport }) {
       <div className="mt-3 bg-[#0b0e14] rounded-xl border border-[#1e293b] p-5">
         <div className="flex items-center gap-4">
           <div className="w-24 h-24 shrink-0 rounded-full overflow-hidden bg-[#191c22] border border-[#1e293b]">
-            {play.headshot_url
-              ? <img src={play.headshot_url} alt={play.player} className="w-full h-full object-cover" />
-              : <Silhouette />}
+            <Headshot url={play.headshot_url} name={play.player} />
           </div>
           <div className="min-w-0">
             <h1 className="text-2xl font-black text-[#f1f5f9] font-display tracking-tight">{play.player}</h1>
@@ -126,15 +99,15 @@ function Reveal({ play, sport }: { play: BlindPlayData; sport: Sport }) {
         <section className="mt-6" aria-label="Matchup">
           <h2 className="text-[10px] text-[#64748b] uppercase font-bold tracking-widest mb-2">Why the matchup helps</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {stats.map(([k, v]) => <Stat key={k} k={k} v={v} />)}
+            {stats.map(([k, v, note]) => <Stat key={k} k={k} v={v} note={note} />)}
           </div>
         </section>
       )}
       <div className="mt-6 flex flex-wrap gap-3 text-sm font-mono">
         <Link to={`${edgeBase(sport)}/odds/${play.event_id}?market=${play.market}`}
               className="text-[#a4e6ff] hover:underline">Compare every book on the odds screen</Link>
-        {bdl != null && (
-          <Link to={`${edgeBase(sport)}/player/${bdl}?market=${play.market}`}
+        {play.bdl_player_id != null && (
+          <Link to={`${edgeBase(sport)}/player/${play.bdl_player_id}?market=${play.market}`}
                 className="text-[#a4e6ff] hover:underline">Game log and trends for {play.player}</Link>
         )}
       </div>
@@ -145,8 +118,9 @@ function Reveal({ play, sport }: { play: BlindPlayData; sport: Sport }) {
 }
 
 export function BlindPlay() {
-  const { sport = '', n = '' } = useParams();
-  const valid = (sport === 'nba' || sport === 'nfl') && /^\d+$/.test(n);
+  const { sport: rawSport = '', n = '' } = useParams();
+  const sport = rawSport.toLowerCase();
+  const valid = (sport === 'nba' || sport === 'nfl') && /^[1-9]\d*$/.test(n);
   const { data, isLoading, isError } = useBlindPlay(valid ? (sport as Sport) : 'nba', valid ? Number(n) : 0);
   if (!valid || isError) return <NotFound />;
   if (isLoading || !data) return <div className="text-center py-8 text-[#64748b] font-mono text-sm">Loading…</div>;

@@ -53,3 +53,13 @@ export function outcomeLabel(market: string, side: string, line: number,
   if (market === 'player_anytime_td') return side === 'over' ? 'Yes' : 'No'; // stored as over/under 0.5
   return `${side === 'over' ? 'Over' : 'Under'} ${line}`;
 }
+
+export const ordinal = (n: number) => {
+  const r = n % 100;
+  const suffix = r >= 11 && r <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th';
+  return `${n}${suffix}`;
+};
+
+export const etDateTime = (iso: string) =>
+  `${new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short',
+    day: 'numeric', hour: 'numeric', minute: '2-digit' })} ET`;

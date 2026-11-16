@@ -278,30 +278,33 @@ def _plays(conn, sport: str, n: int | None, limit: int) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
-def _identity(conn, sport: str, plays: list[dict]) -> dict[int, tuple[str | None, int | None]]:
-    """{play n: (team, espn_id)} for the plays' players. Both are None unless the roster team and
-    the headshot row's team agree and are one of the game's teams: never a wrong face."""
+def _identity(conn, sport: str, plays: list[dict]) -> dict[int, tuple[str | None, int | None, int | None]]:
+    """{play n: (team, espn_id, bdl_player_id)} for the plays' players. All are None unless the roster
+    team is one of the game's teams (and, for espn_id, matches the headshot row's team): never a wrong face
+    or player page."""
     names = sorted({p["player"] for p in plays})
     if not names:
         return {}
     table = "edge_players" if sport == "nba" else "edge_nfl_players"
     with conn.cursor() as cur:
-        cur.execute(f"SELECT odds_name, team FROM {table} WHERE odds_name = ANY(%s)", (names,))
-        rosters: dict[str, set[str]] = {}
-        for name, team in cur.fetchall():
-            rosters.setdefault(name, set()).add(team)
+        cur.execute(f"SELECT odds_name, team, bdl_player_id FROM {table} WHERE odds_name = ANY(%s)", (names,))
+        rosters: dict[str, dict[str, int | None]] = {}
+        for name, team, bdl_id in cur.fetchall():
+            rosters.setdefault(name, {})[team] = bdl_id
         cur.execute("SELECT odds_name, team, espn_id FROM edge_headshots WHERE sport = %s AND odds_name = ANY(%s)",
                     (sport, names))
         shots = {name: (team, eid) for name, team, eid in cur.fetchall()}
     conn.rollback()
     abbr = ABBR_BY_NAME if sport == "nba" else NFL_ABBR_BY_NAME
-    out: dict[int, tuple[str | None, int | None]] = {}
+    out: dict[int, tuple[str | None, int | None, int | None]] = {}
     for p in plays:
         in_game = {abbr.get(p["home_team"]), abbr.get(p["away_team"])}
-        cands = rosters.get(p["player"], set()) & in_game
+        roster = rosters.get(p["player"], {})
+        cands = set(roster) & in_game
         team = next(iter(cands)) if len(cands) == 1 else None
         shot = shots.get(p["player"])
-        out[p["n"]] = (team, shot[1] if shot and team and shot[0] == team else None)
+        out[p["n"]] = (team, shot[1] if shot and team and shot[0] == team else None,
+                       roster.get(team) if team else None)
     return out
 
 
@@ -311,8 +314,8 @@ def _logo(sport: str, name: str | None) -> str | None:
     return headshots.LOGO_URL.format(league=sport, abbr=espn) if espn else None
 
 
-def _out(p: dict, who: tuple[str | None, int | None]) -> dict:
-    team, espn_id = who
+def _out(p: dict, who: tuple[str | None, int | None, int | None]) -> dict:
+    team, espn_id, bdl_id = who
     sport, res = p["sport"], p["result"]
     return {
         "sport": sport, "n": p["n"], "slate_date": p["slate_date"].isoformat(), "event_id": p["event_id"],
@@ -325,6 +328,7 @@ def _out(p: dict, who: tuple[str | None, int | None]) -> dict:
         "commence_time": p["commence_time"].astimezone(timezone.utc).isoformat(),
         "explanation": explain(p), "result": res,
         "profit_units": round(profit_units(res, int(p["price"])), 4) if res else None,
+        "bdl_player_id": bdl_id,
         "headshot_url": headshots.HEADSHOT_URL.format(league=sport, espn_id=espn_id) if espn_id else None,
         "home_logo_url": _logo(sport, p["home_team"]), "away_logo_url": _logo(sport, p["away_team"]),
     }
