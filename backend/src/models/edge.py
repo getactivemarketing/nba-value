@@ -66,6 +66,7 @@ class EdgePlayer(Base):
     odds_name: Mapped[str] = mapped_column(String(80), primary_key=True)
     bdl_player_id: Mapped[int | None] = mapped_column(Integer, index=True)
     team: Mapped[str | None] = mapped_column(String(4))
+    position: Mapped[str | None] = mapped_column(String(4))  # G|F|C group, see players.position_group
     match_method: Mapped[str] = mapped_column(String(12), nullable=False)  # exact|normalized|fuzzy|manual|unmatched
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -91,6 +92,10 @@ class EdgePlayerGame(Base):
     stl: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     blk: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tov: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fgm: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    fga: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    fta: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    oreb: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
 class EdgeOpportunity(Base):

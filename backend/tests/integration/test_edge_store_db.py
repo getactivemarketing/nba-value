@@ -1352,3 +1352,44 @@ def test_dry_run_rows_do_not_count_toward_brakes(conn):
     for i in range(8):
         ledger.finish(conn, ledger.claim(conn, "nba", "final", f"final:d{i}", NOW), "dry_run", NOW, text="x")
     assert not ledger.brake_tripped(conn, "nba", NOW)
+
+
+def _box_fields(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT fgm, fga, fta, oreb FROM edge_player_games WHERE bdl_player_id = 434")
+        return cur.fetchone()
+
+
+@pytest.mark.asyncio
+async def test_box_fields_are_stored_and_a_reload_updates_old_rows(conn):
+    from src.edge import players
+
+    class Bdl(_BoxBdl):
+        async def stats_for_date(self, d):
+            rows = await super().stats_for_date(d)
+            for r in rows:
+                r.update(fgm=9, fga=18, fta=6, oreb=2) if self.tatum_pts == 31 else None
+            return rows
+
+    bdl, d = Bdl(), date(2026, 10, 20)
+    bdl.ready.add(d)
+    await players.ingest_box_scores(conn, bdl, d)
+    assert _box_fields(conn) == (0, 0, 0, 0)  # row written before BDL fields were stored
+    bdl.tatum_pts = 31
+    await players.ingest_box_scores(conn, bdl, d)
+    assert _box_fields(conn) == (9, 18, 6, 2)
+
+
+@pytest.mark.asyncio
+async def test_resolve_new_players_stores_position_group(conn):
+    from src.edge import players
+
+    class Bdl:
+        async def roster(self, team):
+            return {"BOS": [{"id": 434, "first_name": "Jayson", "last_name": "Tatum", "team_abbr": "BOS",
+                             "position": "F-G"}], "DET": []}[team]
+
+    await players.resolve_new_players(conn, Bdl(), [q()], _event(), NOW)
+    with conn.cursor() as cur:
+        cur.execute("SELECT bdl_player_id, position FROM edge_players WHERE odds_name = 'Jayson Tatum'")
+        assert cur.fetchone() == (434, "F")

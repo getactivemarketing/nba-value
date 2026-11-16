@@ -60,11 +60,39 @@ def test_box_row():
     stat = {"player": {"id": 434}, "team": {"id": 2, "abbreviation": "BOS"},
             "game": {"id": 99, "date": "2026-04-10", "season": 2025, "home_team_id": 2, "visitor_team_id": 9,
                      "status": "Final"},
-            "min": "36", "pts": 31, "reb": 8, "ast": 6, "fg3m": 4, "stl": 1, "blk": 0, "turnover": 3}
+            "min": "36", "pts": 31, "reb": 8, "ast": 6, "fg3m": 4, "stl": 1, "blk": 0, "turnover": 3,
+            "fgm": 11, "fga": 20, "fta": 5, "oreb": 1}
     row = p.box_row(stat, {2: "BOS", 9: "DET"})
     assert row == {"bdl_player_id": 434, "bdl_game_id": 99, "season": 2025, "game_date": date(2026, 4, 10),
                    "team": "BOS", "opponent": "DET", "is_home": True, "minutes": 36.0,
-                   "pts": 31, "reb": 8, "ast": 6, "fg3m": 4, "stl": 1, "blk": 0, "tov": 3}
+                   "pts": 31, "reb": 8, "ast": 6, "fg3m": 4, "stl": 1, "blk": 0, "tov": 3,
+                   "fgm": 11, "fga": 20, "fta": 5, "oreb": 1}
+
+
+def _stat(**extra):
+    return {"player": {"id": 434}, "team": {"id": 2, "abbreviation": "BOS"},
+            "game": {"id": 99, "date": "2026-04-10", "season": 2025, "home_team_id": 2, "visitor_team_id": 9,
+                     "status": "Final"},
+            "min": "36", "pts": 31, "reb": 8, "ast": 6, "fg3m": 4, "stl": 1, "blk": 0, "turnover": 3, **extra}
+
+
+TEAMS = {2: "BOS", 9: "DET"}
+
+
+def test_box_row_keeps_shooting_fields():
+    r = p.box_row(_stat(fgm=9, fga=18, fta=6, oreb=2), TEAMS)
+    assert (r["fgm"], r["fga"], r["fta"], r["oreb"]) == (9, 18, 6, 2)
+
+
+def test_box_row_missing_shooting_fields_are_zero():
+    r = p.box_row(_stat(fgm=None), TEAMS)
+    assert (r["fgm"], r["fga"], r["fta"], r["oreb"]) == (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize("raw,want", [("G", "G"), ("F-C", "F"), ("G-F", "G"), ("C", "C"), ("", None), (None, None),
+                                      ("X", None)])
+def test_position_group(raw, want):
+    assert p.position_group(raw) == want
 
 
 def test_box_row_skips_games_still_in_progress():
@@ -161,12 +189,13 @@ async def test_roster_fetch_is_two_calls_per_event_and_cached():
         tid = request.url.params["team_ids[]"]
         abbr = {"2": "BOS", "9": "DET"}[tid]
         return httpx.Response(200, json={"data": [{"id": int(tid) * 100, "first_name": "P", "last_name": tid,
-                                                   "team": {"abbreviation": abbr}}], "meta": {}})
+                                                   "team": {"abbreviation": abbr}, "position": None}], "meta": {}})
 
     bdl = p.BdlClient(api_key="k", transport=httpx.MockTransport(handler))
     first = await bdl.roster("BOS")
     again = await bdl.roster("BOS")
-    assert first == again == [{"id": 200, "first_name": "P", "last_name": "2", "team_abbr": "BOS"}]
+    assert first == again == [{"id": 200, "first_name": "P", "last_name": "2", "team_abbr": "BOS",
+                                  "position": None}]
     assert sum("/players" in c for c in calls) == 1  # cached
 
 
@@ -228,3 +257,23 @@ def test_recent_form_needs_five_games_and_a_stat_market():
     games = [g(date(2026, 11, 10 - i), 20) for i in range(4)]
     assert p.recent_form(games, "player_points", 15.5, "over") is None
     assert p.recent_form(games * 2, "player_blocks", 0.5, "over") is None
+
+
+def test_backfill_script_position_updates_skip_blank_positions():
+    from src.edge.scripts import backfill_box_fields as b
+    rosters = {"BOS": [{"id": 1, "position": "F-G"}, {"id": 2, "position": ""}],
+               "DET": [{"id": 3, "position": "C"}, {"id": 4}]}
+    assert b.position_updates(rosters) == {1: "F", 3: "C"}
+
+
+@pytest.mark.asyncio
+async def test_backfill_script_dry_run_makes_no_calls_or_writes(monkeypatch):
+    from src.edge.scripts import backfill_box_fields as b
+
+    class Boom:
+        def __getattr__(self, name):
+            raise AssertionError(f"dry run touched {name}")
+
+    monkeypatch.setattr(b, "matched_teams", lambda conn: ["BOS", "DET"])
+    out = await b.run(Boom(), Boom(), date(2026, 10, 1), date(2026, 10, 10), dry_run=True)
+    assert out == {"days": 10, "teams": 2, "box_rows": 0, "positions": 0}

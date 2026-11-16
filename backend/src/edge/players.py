@@ -101,6 +101,12 @@ def parse_minutes(v) -> float:
         return 0.0
 
 
+def position_group(bdl_position: str | None) -> str | None:
+    """G, F or C from BallDontLie's position ("G-F" -> "G"), or None when it is blank or unknown."""
+    first = (bdl_position or "").strip()[:1].upper()
+    return first if first in ("G", "F", "C") else None
+
+
 def box_row(stat: dict, abbr_by_team_id: dict[int, str]) -> dict | None:
     """One player's line from a finished game, or None.
 
@@ -122,6 +128,8 @@ def box_row(stat: dict, abbr_by_team_id: dict[int, str]) -> dict | None:
             "pts": stat.get("pts") or 0, "reb": stat.get("reb") or 0, "ast": stat.get("ast") or 0,
             "fg3m": stat.get("fg3m") or 0, "stl": stat.get("stl") or 0, "blk": stat.get("blk") or 0,
             "tov": stat.get("turnover") or 0,
+            "fgm": stat.get("fgm") or 0, "fga": stat.get("fga") or 0,
+            "fta": stat.get("fta") or 0, "oreb": stat.get("oreb") or 0,
         }
     except (KeyError, TypeError, ValueError):
         return None
@@ -220,7 +228,8 @@ class BdlClient:
             # /players/active, not /players: the latter is every player whose last team was this franchise.
             data = await self._get("players/active", params)
             out += [{"id": x["id"], "first_name": x["first_name"], "last_name": x["last_name"],
-                     "team_abbr": (x.get("team") or {}).get("abbreviation")} for x in data["data"]]
+                     "team_abbr": (x.get("team") or {}).get("abbreviation"),
+                     "position": x.get("position")} for x in data["data"]]
             cursor = (data.get("meta") or {}).get("next_cursor")
             if not cursor:
                 break
@@ -267,18 +276,21 @@ async def resolve_new_players(conn, bdl: BdlClient, quotes: list[Quote], event: 
         # poll retries them. Never let player lookup break odds ingestion.
         log.warning("edge player resolve skipped: %s", e)
         return 0
+    position_by_id = {c["id"]: position_group(c.get("position")) for c in candidates}
     rows = []
     for name in new:
         m = match_player(name, candidates, teams)
         rows.append((name, m.bdl_player_id if m else None, m.team if m else None,
-                     m.method if m else "unmatched", m.confidence if m else 0.0, now))
+                     m.method if m else "unmatched", m.confidence if m else 0.0, now,
+                     position_by_id.get(m.bdl_player_id) if m else None))
     if rows:
         with conn.cursor() as cur:
             execute_values(cur, """INSERT INTO edge_players (odds_name, bdl_player_id, team, match_method,
-                                   confidence, updated_at) VALUES %s
+                                   confidence, updated_at, position) VALUES %s
                                    ON CONFLICT (odds_name) DO UPDATE SET bdl_player_id = EXCLUDED.bdl_player_id,
                                    team = EXCLUDED.team, match_method = EXCLUDED.match_method,
-                                   confidence = EXCLUDED.confidence, updated_at = EXCLUDED.updated_at
+                                   confidence = EXCLUDED.confidence, updated_at = EXCLUDED.updated_at,
+                                   position = EXCLUDED.position
                                    WHERE edge_players.match_method = 'unmatched'""", rows)
         conn.commit()
     return len(rows)

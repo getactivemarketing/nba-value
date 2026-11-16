@@ -87,6 +87,12 @@ EDGE_COLUMN_MIGRATIONS = [
     ("edge_nfl_player_games", "ret_tds", "INTEGER NOT NULL DEFAULT 0"),
     ("edge_bt_picks", "tags", "JSONB"),
     ("edge_opportunities", "tags", "JSONB"),
+    # Edge NBA usage/pace/defense: shooting volume on box scores, and a G/F/C group per player.
+    ("edge_player_games", "fgm", "INTEGER NOT NULL DEFAULT 0"),
+    ("edge_player_games", "fga", "INTEGER NOT NULL DEFAULT 0"),
+    ("edge_player_games", "fta", "INTEGER NOT NULL DEFAULT 0"),
+    ("edge_player_games", "oreb", "INTEGER NOT NULL DEFAULT 0"),
+    ("edge_players", "position", "VARCHAR(4)"),
 ]
 
 
