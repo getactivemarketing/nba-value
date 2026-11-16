@@ -66,3 +66,23 @@ export interface NightlyResponse {
   record: { top: { n: number; wins: number; losses: number; units: number };
             parlay: { n: number; wins: number; units: number } };
 }
+
+export interface BlindPanel {
+  favorable: boolean;
+  opp_vs_pos_rank?: number | null; drtg_rank?: number | null; pace_rank?: number | null;
+  usage_l10?: number | null; usage_change?: number | null; minutes_l5?: number | null;
+  opp_rank?: number | null; share_l4?: number | null; snap_share?: number | null;
+}
+export type BlindResult = 'win' | 'loss' | 'push' | 'void';
+export interface BlindPlayData {
+  sport: string; n: number; slate_date: string; event_id: string;
+  player: string; team: string | null; home_team: string | null; away_team: string | null;
+  bet: string; market: string; market_label: string; side: string; line: number;
+  book: string; price: number; fair_prob: number; ev: number; n_books: number;
+  form: { hits?: number; games?: number; avg?: number | null; avg_games?: number | null } | null;
+  position: string | null; panel: BlindPanel | null; commence_time: string;
+  explanation: string; result: BlindResult | null; profit_units: number | null;
+  headshot_url: string | null; home_logo_url: string | null; away_logo_url: string | null;
+}
+export interface BlindRecord { n: number; wins: number; losses: number; pushes: number; voids: number; units: number }
+export interface BlindListResponse { plays: BlindPlayData[]; record: BlindRecord }

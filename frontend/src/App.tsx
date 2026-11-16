@@ -5,6 +5,8 @@ import { EdgeFinder } from '@/pages/EdgeFinder';
 import { EdgeOdds } from '@/pages/EdgeOdds';
 import { EdgePlayer } from '@/pages/EdgePlayer';
 import { EdgeResults } from '@/pages/EdgeResults';
+import { BlindPlay } from '@/pages/BlindPlay';
+import { BlindList } from '@/pages/BlindList';
 import { Trends } from '@/pages/Trends';
 import { MLBPicks } from '@/pages/MLBPicks';
 import { NRFI } from '@/pages/NRFI';
@@ -23,6 +25,8 @@ function App() {
         <Route path="/edge/odds/:eventId" element={<EdgeOdds key="nba" />} />
         <Route path="/edge/player/:id" element={<EdgePlayer key="nba" />} />
         <Route path="/edge/results" element={<EdgeResults key="nba" />} />
+        <Route path="/blind" element={<BlindList />} />
+        <Route path="/blind/:sport/:n" element={<BlindPlay />} />
         <Route path="/mlb" element={<MLBPicks />} />
         <Route path="/mlb/performance" element={<MLBEvaluation />} />
         <Route path="/nrfi" element={<NRFI />} />

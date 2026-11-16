@@ -19,3 +19,8 @@ export const useEdgeHealth = (sport: Sport = 'nba') =>
   useQuery({ queryKey: ['edge', sport, 'health'], queryFn: () => edgeApi.health(sport), refetchInterval: 60000 });
 export const useEdgeNightly = () =>
   useQuery({ queryKey: ['edge', 'nba', 'nightly'], queryFn: () => edgeApi.nightly(), refetchInterval: 120000 });
+export const useBlindList = (sport: Sport = 'nba') =>
+  useQuery({ queryKey: ['edge', sport, 'blind'], queryFn: () => edgeApi.blind(sport), staleTime: 60000 });
+export const useBlindPlay = (sport: Sport, n: number) =>
+  useQuery({ queryKey: ['edge', sport, 'blind', n], queryFn: () => edgeApi.blindPlay(sport, n),
+    enabled: n > 0, retry: false, staleTime: 60000 });

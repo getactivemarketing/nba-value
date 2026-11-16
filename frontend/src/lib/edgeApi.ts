@@ -1,11 +1,11 @@
 // frontend/src/lib/edgeApi.ts
 import axios from 'axios';
-import type { EdgeGame, EvRow, NightlyResponse, OddsResponse, PlayerResponse, ResultsResponse } from '@/types/edge';
+import type { BlindListResponse, BlindPlayData, EdgeGame, EvRow, NightlyResponse, OddsResponse, PlayerResponse, ResultsResponse } from '@/types/edge';
 import type { Sport } from './edgeFormat';
 
 const client = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api/v1' });
 
-export type SignupSource = 'edge_home' | 'edge_results';
+export type SignupSource = 'edge_home' | 'edge_results' | 'blind_reveal';
 
 export interface EvParams { market?: string; book?: string; min_ev?: number; event_id?: string; }
 
@@ -29,6 +29,12 @@ export const edgeApi = {
   },
   async nightly(): Promise<NightlyResponse> {
     return (await client.get<NightlyResponse>('/edge/nightly', { params: { sport: 'nba' } })).data;
+  },
+  async blind(sport: Sport = 'nba'): Promise<BlindListResponse> {
+    return (await client.get<BlindListResponse>('/edge/blind', { params: { sport } })).data;
+  },
+  async blindPlay(sport: Sport, n: number): Promise<BlindPlayData> {
+    return (await client.get<BlindPlayData>(`/edge/blind/${n}`, { params: { sport } })).data;
   },
   async signup(email: string, source: SignupSource, website = ''): Promise<void> {
     await client.post('/edge/signup', { email, source, website });
