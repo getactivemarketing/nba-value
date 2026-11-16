@@ -7,6 +7,8 @@ runaway loop. dry_run rows count toward neither brake.
 """
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -16,8 +18,16 @@ from src.config import settings
 
 MAX_ATTEMPTS = 3
 STALE_PENDING = timedelta(minutes=15)  # a worker that died mid-post
+log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
-_TERMINAL = frozenset({"posted", "dry_run", "skipped", "failed"})
+_FINISH_STATUSES = frozenset({"posted", "dry_run", "skipped", "failed"})
+
+
+@dataclass(frozen=True)
+class Claim:
+    """Proof of a claim: finish() only applies while this exact attempt still owns the row."""
+    id: int
+    attempt: int
 
 
 def _csv(raw: str) -> set[str]:
@@ -28,8 +38,11 @@ def enabled(kind: str, sport: str) -> bool:
     return kind in _csv(settings.social_kinds) and sport in _csv(settings.social_sports)
 
 
-def claim(conn, sport: str, kind: str, key: str, now: datetime) -> int | None:
-    """Insert a pending row, or re-claim a failed/stale-pending one with attempts left. None if not claimable."""
+def claim(conn, sport: str, kind: str, key: str, now: datetime) -> Claim | None:
+    """Insert a pending row, or re-claim a failed/stale-pending one with attempts left. None if not claimable.
+
+    A stale pending row already at MAX_ATTEMPTS stays pending (fail-closed: the key is dead).
+    """
     with conn.cursor() as cur:
         cur.execute("""INSERT INTO edge_social_posts (sport, kind, key, status, attempts, created_at, updated_at)
                        VALUES (%s, %s, %s, 'pending', 1, %s, %s)
@@ -38,26 +51,31 @@ def claim(conn, sport: str, kind: str, key: str, now: datetime) -> int | None:
                        WHERE edge_social_posts.attempts < %s
                          AND (edge_social_posts.status = 'failed'
                               OR (edge_social_posts.status = 'pending' AND edge_social_posts.updated_at < %s))
-                       RETURNING id""",
+                       RETURNING id, attempts""",
                     (sport, kind, key, now, now, MAX_ATTEMPTS, now - STALE_PENDING))
         row = cur.fetchone()
     conn.commit()
-    return row[0] if row else None
+    return Claim(row[0], row[1]) if row else None
 
 
-def finish(conn, row_id: int, status: str, now: datetime, *, text: str, image: bytes | None = None,
+def finish(conn, claim: Claim, status: str, now: datetime, *, text: str, image: bytes | None = None,
            media_url: str | None = None, submission_id: str | None = None, post_url: str | None = None,
-           detail: dict | None = None) -> None:
-    if status not in _TERMINAL:
+           detail: dict | None = None) -> bool:
+    """Record the outcome. False (nothing written) if the claim was superseded or already finished."""
+    if status not in _FINISH_STATUSES:
         raise ValueError(f"bad status {status!r}")
     with conn.cursor() as cur:
         cur.execute("""UPDATE edge_social_posts
                        SET status = %s, text = %s, image = %s, media_url = %s, submission_id = %s,
                            post_url = %s, detail = %s, updated_at = %s
-                       WHERE id = %s""",
+                       WHERE id = %s AND status = 'pending' AND attempts = %s""",
                     (status, text, image, media_url, submission_id, post_url,
-                     Json(detail) if detail is not None else None, now, row_id))
+                     Json(detail) if detail is not None else None, now, claim.id, claim.attempt))
+        updated = cur.rowcount == 1
     conn.commit()
+    if not updated:
+        log.warning("social ledger: stale finish ignored for row %s attempt %s", claim.id, claim.attempt)
+    return updated
 
 
 def brake_tripped(conn, sport: str, now: datetime) -> bool:
