@@ -24,6 +24,11 @@ def test_gate_boundaries():
     assert out["pass"] and out["n_fav"] == 250 and out["fav_ci95"][0] > 0
 
 
+def test_gate_min_n_parameter():
+    assert mg.gate([0.02] * 5, [0.0] * 5, min_n=5)["pass"]
+    assert not mg.gate([0.02] * 5, [0.0] * 5)["pass"]  # default stays 200
+
+
 def test_gate_empty_groups_fail():
     assert not mg.gate([], [0.01] * 5)["pass"]
     assert not mg.gate([0.02] * 300, [])["pass"]

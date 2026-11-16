@@ -58,7 +58,7 @@ def _mean_ci(clv: list[float]) -> tuple[float | None, list[float] | None]:
     return statistics.fmean(clv), ci
 
 
-def gate(fav_clv: list[float], rest_clv: list[float]) -> dict:
+def gate(fav_clv: list[float], rest_clv: list[float], min_n: int = MIN_FAV_BETS) -> dict:
     fav_mean, fav_ci = _mean_ci(fav_clv)
     rest_mean, rest_ci = _mean_ci(rest_clv)
     n_fav = len(fav_clv)
@@ -70,8 +70,8 @@ def gate(fav_clv: list[float], rest_clv: list[float]) -> dict:
             reasons.append(f"favorable trails the rest by more than {TOLERANCE:.4f}")
     if fav_ci is None or fav_ci[0] <= 0:
         reasons.append("favorable CLV 95% CI does not exclude 0")
-    if n_fav < MIN_FAV_BETS:
-        reasons.append(f"only {n_fav} favorable bets (need {MIN_FAV_BETS})")
+    if n_fav < min_n:
+        reasons.append(f"only {n_fav} favorable bets (need {min_n})")
     return {"pass": not reasons, "n_fav": n_fav, "n_rest": len(rest_clv), "fav_mean": fav_mean,
             "rest_mean": rest_mean, "fav_ci95": fav_ci, "rest_ci95": rest_ci, "failed": reasons}
 
@@ -85,7 +85,7 @@ def position_coverage(games: list[dict]) -> float | None:
 
 
 def load_opportunities(conn, season: int) -> list[dict]:
-    """Graded NBA player-prop opportunities with CLV, joined to the event and player mapping."""
+    """Closed, graded (win/loss/push) NBA player-prop opportunities with CLV, joined to the event and player mapping."""
     from src.utils.season import nba_season_start
     with conn.cursor() as cur:
         cur.execute("""SELECT o.event_id, o.market, o.player, o.side, o.line, o.book, o.clv, o.result,
@@ -94,7 +94,8 @@ def load_opportunities(conn, season: int) -> list[dict]:
                        FROM edge_opportunities o
                        JOIN edge_events e ON e.event_id = o.event_id
                        LEFT JOIN edge_players p ON p.odds_name = o.player
-                       WHERE e.sport = 'basketball_nba' AND o.clv IS NOT NULL AND o.player <> ''
+                       WHERE e.sport = 'basketball_nba' AND o.closing_done AND o.clv IS NOT NULL
+                         AND o.result IN ('win', 'loss', 'push') AND o.player <> ''
                          AND e.commence_time >= %s AND o.market = ANY(%s)""",
                     (datetime.combine(nba_season_start(season), datetime.min.time(), tzinfo=timezone.utc),
                      list(players.STAT_PARTS)))
@@ -155,12 +156,7 @@ def evaluate(conn, season: int, min_n: int = MIN_FAV_BETS) -> dict:
     bets = classify(dedupe(raw), games)
     fav = [b for b in bets if b["favorable"]]
     rest = [b for b in bets if not b["favorable"]]
-    res = gate([b["clv"] for b in fav], [b["clv"] for b in rest])
-    if min_n != MIN_FAV_BETS:  # test-only override: re-apply the same rule with the smaller n
-        res["failed"] = [x for x in res["failed"] if not x.startswith("only ")]
-        if res["n_fav"] < min_n:
-            res["failed"].append(f"only {res['n_fav']} favorable bets (need {min_n})")
-        res["pass"] = not res["failed"]
+    res = gate([b["clv"] for b in fav], [b["clv"] for b in rest], min_n)
     last = max((players.et_date(b["commence_time"]) for b in bets), default=None)
     window = [g for g in games if last is None or g["game_date"] < last]
     return {"gate": res, "fav": fav, "rest": rest, "raw_rows": len(raw), "bets": len(bets),

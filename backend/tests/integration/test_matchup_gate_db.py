@@ -56,7 +56,8 @@ def _seed_league(conn):
     conn.commit()
 
 
-def _bet(conn, eid, player, side, clv, book="fanduel", seen=T0, home=0, away=29, day=20):
+def _bet(conn, eid, player, side, clv, book="fanduel", seen=T0, home=0, away=29, day=20, result="win",
+         closed=True):
     with conn.cursor() as cur:
         cur.execute("""INSERT INTO edge_events (event_id, sport, home_team, away_team, commence_time, status, completed)
                        VALUES (%s, 'basketball_nba', %s, %s, %s, 'scheduled', TRUE) ON CONFLICT DO NOTHING""",
@@ -64,8 +65,8 @@ def _bet(conn, eid, player, side, clv, book="fanduel", seen=T0, home=0, away=29,
         cur.execute("""INSERT INTO edge_opportunities (event_id, market, player, side, line, book, price,
                        first_seen_at, last_seen_at, fair_prob, ev, max_ev, n_books, devig_method, closing_done,
                        clv, result, profit_units)
-                       VALUES (%s,'player_points',%s,%s,20.5,%s,-110,%s,%s,0.5,0.05,0.05,5,'power',TRUE,%s,'win',0.9)""",
-                    (eid, player, side, book, seen, seen, clv))
+                       VALUES (%s,'player_points',%s,%s,20.5,%s,-110,%s,%s,0.5,0.05,0.05,5,'power',%s,%s,%s,0.9)""",
+                    (eid, player, side, book, seen, seen, closed, clv, result))
     conn.commit()
 
 
@@ -79,6 +80,10 @@ def test_gate_end_to_end_small_dataset(conn, tmp_path, monkeypatch):
     for n in range(4):  # rest: Under is not favorable against that defender; a G has no vs-position edge
         _bet(conn, f"rest{n}", hero, "under", 0.00 + 0.001 * n, day=20 + n)
     _bet(conn, "nopos", "Nobody Known", "over", -0.01)
+    # not part of the gate's input: ungraded, void, and not yet closed
+    _bet(conn, "ungraded", hero, "over", 0.40, result=None, day=21)
+    _bet(conn, "void", hero, "over", 0.40, result="void", day=22)
+    _bet(conn, "open", hero, "over", 0.40, closed=False, day=23)
 
     out = mg.evaluate(conn, 2026, min_n=3)
     g = out["gate"]
