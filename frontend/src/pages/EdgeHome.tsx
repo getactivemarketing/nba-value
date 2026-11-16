@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useEdgeGames, useEdgeNightly } from '@/hooks/useEdge';
 import { EdgeFinder } from '@/pages/EdgeFinder';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
+import { EmailSignup } from '@/components/edge/EmailSignup';
 import { NightlyCard } from '@/components/edge/NightlyCard';
 
 export function EdgeHome() {
@@ -29,6 +30,7 @@ export function EdgeHome() {
         <Link to="/edge" className="text-xs font-mono text-[#a4e6ff]">See all →</Link>
       </div>
       <EdgeFinder limit={10} />
+      <EmailSignup source="edge_home" />
       <EdgeFooter />
     </div>
   );

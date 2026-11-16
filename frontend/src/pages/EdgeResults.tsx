@@ -2,6 +2,7 @@
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useEdgeResults } from '@/hooks/useEdge';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
+import { EmailSignup } from '@/components/edge/EmailSignup';
 import { tagGroupLabel } from '@/components/edge/TagChips';
 import { bookLabel, fmtPct, marketLabel, type Sport } from '@/lib/edgeFormat';
 import type { ResultsBlock } from '@/types/edge';
@@ -79,6 +80,7 @@ export function EdgeResults({ sport = 'nba' }: { sport?: Sport }) {
           <Breakdown title="By tag" data={data.by_tag} label={tagGroupLabel} />
         </div>
       )}
+      <EmailSignup source="edge_results" />
       <EdgeFooter />
     </div>
   );

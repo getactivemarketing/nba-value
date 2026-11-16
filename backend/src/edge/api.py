@@ -14,13 +14,14 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from pydantic import BaseModel
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 
 from src.api.admin import _verify_cron_key
 from src.api.deps import require_admin
 from src.config import get_sync_database_url
-from src.edge import nightly, store, views
+from src.edge import nightly, signups, store, views
 from src.edge.config import SPORTS, SportConfig
 from src.utils.redact import redact
 
@@ -67,21 +68,32 @@ PEER_RATE_PER_S = 20.0
 PEER_BURST = 600
 _limiter = RateLimiter(RATE_PER_S, RATE_BURST)
 _peer_limiter = RateLimiter(PEER_RATE_PER_S, PEER_BURST)
+_signup_limiter = RateLimiter(signups.SIGNUP_RATE_PER_S, signups.SIGNUP_BURST)
 
 
 def _reset_limits() -> None:
     _limiter.reset()
     _peer_limiter.reset()
+    _signup_limiter.reset()
+
+
+def _client_keys(request: Request) -> tuple[str, str]:
+    """(connecting peer, best guess at the end user)."""
+    peer = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    return peer, forwarded or peer
+
+
+def _too_many() -> HTTPException:
+    return HTTPException(status_code=429, detail="Too many requests", headers={"Retry-After": "5"})
 
 
 def rate_limit(request: Request, x_cron_key: str | None = Header(None)) -> None:
     if x_cron_key and _verify_cron_key(x_cron_key):
         return
-    peer = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
-    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    client = forwarded or peer
+    peer, client = _client_keys(request)
     if not _peer_limiter.allow(peer) or not _limiter.allow(client):
-        raise HTTPException(status_code=429, detail="Too many requests", headers={"Retry-After": "5"})
+        raise _too_many()
 
 
 router = APIRouter(prefix="/edge", tags=["Edge"], dependencies=[Depends(rate_limit)])
@@ -209,6 +221,37 @@ def get_nightly(sp: SportConfig = Depends(_sport)) -> dict:
 @router.get("/health")
 def get_public_health(sp: SportConfig = Depends(_sport)) -> dict:
     return _cached(("health", sp.slug), lambda c, now: views.public_status(c, now, sp))
+
+
+class SignupIn(BaseModel):
+    email: str = ""
+    source: str | None = None
+    website: str = ""  # honeypot: hidden from people, filled in by form bots
+
+
+@router.post("/signup")
+def post_signup(body: SignupIn, request: Request) -> dict:
+    if not _signup_limiter.allow(_client_keys(request)[1]):
+        raise _too_many()
+    email = signups.normalize_email(body.email)
+    if email is None:
+        raise HTTPException(status_code=422, detail="Enter a valid email address")
+    if body.website:
+        return {"ok": True}  # look successful so the bot moves on
+    try:
+        with _conn() as conn:
+            signups.add(conn, email, signups.normalize_source(body.source))
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"signup unavailable: {redact(e)[:200]}") from None
+    return {"ok": True}  # same answer for new and existing addresses
+
+
+@router.get("/signups", dependencies=[Depends(require_admin)])
+def get_signups(limit: int = Query(200, ge=1, le=5000)) -> dict:
+    with _conn() as conn:
+        return {"count": signups.count(conn), "signups": signups.recent(conn, limit)}
 
 
 @router.get("/status", dependencies=[Depends(require_admin)])

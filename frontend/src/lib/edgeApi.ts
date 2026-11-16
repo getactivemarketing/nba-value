@@ -5,6 +5,8 @@ import type { Sport } from './edgeFormat';
 
 const client = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api/v1' });
 
+export type SignupSource = 'edge_home' | 'edge_results';
+
 export interface EvParams { market?: string; book?: string; min_ev?: number; event_id?: string; }
 
 export const edgeApi = {
@@ -27,6 +29,9 @@ export const edgeApi = {
   },
   async nightly(): Promise<NightlyResponse> {
     return (await client.get<NightlyResponse>('/edge/nightly', { params: { sport: 'nba' } })).data;
+  },
+  async signup(email: string, source: SignupSource, website = ''): Promise<void> {
+    await client.post('/edge/signup', { email, source, website });
   },
   async health(sport: Sport = 'nba'): Promise<{ delayed: boolean }> {
     return (await client.get<{ delayed: boolean }>('/edge/health', { params: { sport } })).data;

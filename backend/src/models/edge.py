@@ -159,6 +159,15 @@ class EdgeNightlyLeg(Base):
     form: Mapped[dict | None] = mapped_column(JSONB)
 
 
+class EdgeEmailSignup(Base):
+    """Email list from the signup form on the Edge pages (src/edge/signups.py)."""
+    __tablename__ = "edge_email_signups"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(254), nullable=False, unique=True)
+    source: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class EdgeWorkerState(Base):
     __tablename__ = "edge_worker_state"
     key: Mapped[str] = mapped_column(String(40), primary_key=True)

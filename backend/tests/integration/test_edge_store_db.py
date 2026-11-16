@@ -14,7 +14,7 @@ from sqlalchemy import create_engine
 
 from src.database import Base
 import src.models  # noqa: F401  registers the edge tables
-from src.edge import opportunities, store
+from src.edge import opportunities, signups, store
 from src.edge.engine import Fair, Priced
 from src.edge.quotes import Quote
 
@@ -1292,3 +1292,13 @@ def test_nightly_locks_once_then_grades_from_logged_picks(conn, monkeypatch):
     assert later["tonight"] is None and len(later["history"]) == 1
     assert later["record"] == {"top": {"n": 3, "wins": 2, "losses": 1, "units": 1.0},
                                "parlay": {"n": 1, "wins": 0, "units": -1.0}}
+
+
+def test_email_signups_store_each_address_once(conn):
+    assert signups.add(conn, "fan@example.com", "edge_home") is True
+    assert signups.add(conn, "fan@example.com", "edge_results") is False
+    assert signups.add(conn, "other@example.com", "other") is True
+    assert signups.count(conn) == 2
+    rows = signups.recent(conn, 10)
+    assert {r["email"] for r in rows} == {"fan@example.com", "other@example.com"}
+    assert next(r for r in rows if r["email"] == "fan@example.com")["source"] == "edge_home"
