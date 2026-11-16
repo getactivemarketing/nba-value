@@ -381,3 +381,13 @@ class EdgeSocialPost(Base):
     detail: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EdgeHeadshot(Base):
+    """ESPN player id per odds-feed name (NULL = no unique roster match, so cards show a silhouette)."""
+    __tablename__ = "edge_headshots"
+    sport: Mapped[str] = mapped_column(String(8), primary_key=True)
+    odds_name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    team: Mapped[str] = mapped_column(String(4), nullable=False)
+    espn_id: Mapped[int | None] = mapped_column(Integer)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
