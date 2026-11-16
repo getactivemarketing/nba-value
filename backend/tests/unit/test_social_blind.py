@@ -218,3 +218,29 @@ def test_nfl_panel_is_favorable_on_def_soft_tailwind(monkeypatch):
     assert out[blind.panel_key(good)].favorable is True
     assert out[blind.panel_key(flat)].favorable is False
     assert (good["team"], good["position"]) == ("KC", "RB")
+
+
+def test_nfl_panels_fill_last_10_form_from_nfl_box_scores(monkeypatch):
+    """Ruling 29: the NFL blind card's form tiles come from content.nfl_recent_form (hits/games) and
+    the same games' average."""
+    from datetime import date
+
+    from src.edge import nfl_players
+    ctx = matchups.build_context([], [], {}, 2026, 99)
+    monkeypatch.setattr(matchups_store, "load", lambda conn, seasons: ([], []))
+    monkeypatch.setattr(matchups, "build_context", lambda *a: ctx)
+    monkeypatch.setattr(matchups, "resolve_player", lambda c, player, teams: ("k", "KC", "RB", "DET"))
+    yards = [80, 90, 40, 75, 100, 60, 30, 85, 70, 95, 200]  # newest first; the 11th game is outside the last 10
+    games = [{"game_date": date(2026, 11, 9) - timedelta(days=7 * i), "season": 2026, "week": 10 - i,
+              "rush_yds": y, "rec_yds": 0, "receptions": 0} for i, y in enumerate(yards)]
+    asked = []
+    monkeypatch.setattr(nfl_players, "load_games",
+                        lambda conn, pid, team, name: asked.append((pid, team, name)) or games)
+    r = row("Rb One", "e1", market="player_rush_yds", line=64.5, tags=[], form=None, bdl_player_id=55,
+            matchup="Detroit Lions @ Kansas City Chiefs")
+    thin = row("Rb Two", "e2", market="player_rush_yds", line=64.5, tags=[], form=None, bdl_player_id=None,
+               matchup="Detroit Lions @ Kansas City Chiefs")
+    blind.build_panels(FakeConn(), "nfl", [r, thin], NOW)
+    assert asked == [(55, "KC", "Rb One")]
+    assert r["form"] == {"hits": 7, "games": 10, "rate": 0.7, "avg": 72.5, "avg_games": 10}
+    assert thin["form"] is None  # no player id: no form, the card shows "—"

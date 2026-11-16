@@ -14,11 +14,11 @@ from datetime import date, datetime, timedelta, timezone
 
 from psycopg2.extras import Json, RealDictCursor
 
-from src.edge import matchups, matchups_store, nightly, players, views
+from src.edge import matchups, matchups_store, nfl_players, nightly, players, views
 from src.edge.engine import implied_prob
 from src.edge.grading import profit_units
 from src.edge.players import ET, et_date
-from src.edge.social import headshots, nba_matchup, nfl_matchup
+from src.edge.social import content, headshots, nba_matchup, nfl_matchup
 from src.edge.tagging import ALL_STORED_WEEKS, event_teams
 from src.edge.teams import ABBR_BY_NAME, NFL_ABBR_BY_NAME
 from src.utils.season import current_nba_season, current_nfl_season
@@ -132,14 +132,31 @@ def _nfl_panels(conn, props: list[dict], now: datetime) -> dict[tuple, object]:
     team_games, player_games = matchups_store.load(conn, [season - 1, season])
     ctx = matchups.build_context(team_games, player_games, {}, season, ALL_STORED_WEEKS)
     out = {}
+    games: dict[int, list[dict]] = {}
     for r in props:
         teams = event_teams(r["home_team"], r["away_team"])
         who = matchups.resolve_player(ctx, r["player"], teams) if teams else None
         if who is None:
             continue
         r["team"], r["position"] = who[1], who[2]
+        pid = r.get("bdl_player_id")
+        if pid:
+            if pid not in games:
+                games[pid] = nfl_players.load_games(conn, pid, r["team"], r["player"])
+            r["form"] = _nfl_form(games[pid], r)
         out[panel_key(r)] = nfl_matchup.panel(r, ctx)
+    conn.rollback()
     return out
+
+
+def _nfl_form(games: list[dict], r: dict) -> dict | None:
+    """Last-10 hits/games (content.nfl_recent_form) plus the average over the same games."""
+    form = content.nfl_recent_form(games, r["market"], float(r["line"]), r["side"])
+    if form is None:
+        return None
+    played = sorted(games, key=lambda g: g["game_date"], reverse=True)[:content.FORM_GAMES]
+    avg = round(sum(nfl_players.stat_for(r["market"], g) for g in played) / len(played), 1)
+    return {**form, "avg": avg, "avg_games": len(played)}
 
 
 # ---- storage --------------------------------------------------------------------------------
