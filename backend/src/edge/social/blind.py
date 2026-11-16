@@ -14,7 +14,6 @@ from datetime import date, datetime, timedelta, timezone
 
 from psycopg2.extras import Json, RealDictCursor
 
-from src.config import settings
 from src.edge import matchups, matchups_store, nightly, players, views
 from src.edge.engine import implied_prob
 from src.edge.grading import profit_units
@@ -258,9 +257,10 @@ def result(conn, sport: str, n: int) -> dict:
 
 
 def public_statuses() -> list[str]:
-    """Ledger statuses that make a blind play public: posted, plus dry_run while dry-run is on.
-    A play that was recorded but never posted (skipped, failed, unknown) is not on the site."""
-    return ["posted", "dry_run"] if settings.social_dry_run else ["posted"]
+    """Ledger statuses that make a blind play public: posted only, whatever the dry-run setting.
+    A dry-run play never went to X, and a recorded play that never posted (skipped, failed,
+    unknown) is not on the site either: the record matches what followers saw."""
+    return ["posted"]
 
 
 # The play's own ledger row (runner key blind:<sport>:<n>) decides whether it is public.

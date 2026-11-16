@@ -167,7 +167,7 @@ def test_only_posted_plays_are_public(conn, monkeypatch, dry_run):
     assert blind.record(conn, "nba", picks, panels(*picks), NOW) == [1, 2, 3, 4]
     post(conn, 1, "posted"), post(conn, 2, "dry_run"), post(conn, 3, "skipped")  # 4: no ledger row at all
     _graded_win(conn, "A One", "e1"), _graded_win(conn, "B Two", "e2"), _graded_win(conn, "C Three", "e3")
-    visible = [1, 2] if dry_run else [1]
+    visible = [1]  # dry_run plays are never public, whatever the setting (Ruling 24)
     out = blind.listing(conn, "nba")
     assert sorted(p["n"] for p in out["plays"]) == visible
     assert out["record"]["n"] == len(visible) and out["record"]["wins"] == len(visible)
@@ -197,3 +197,93 @@ def test_api_404s_a_never_posted_play(conn, monkeypatch):
     assert [x["n"] for x in c.get(f"{p}/edge/blind").json()["plays"]] == [1]
     edge_api._cache.clear()
     edge_api._pool.closeall()
+
+
+# ---- reset-dry-run (Ruling 24) --------------------------------------------------------------
+
+def _ledger(conn, sport, kind, key, status, at=NOW):
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_social_posts (sport, kind, key, status, attempts, created_at, updated_at)
+                       VALUES (%s,%s,%s,%s,1,%s,%s)""", (sport, kind, key, status, at, at))
+    conn.commit()
+
+
+def _keys(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT kind, key, status FROM edge_social_posts ORDER BY kind, key")
+        ledger_rows = cur.fetchall()
+        cur.execute("SELECT sport, n, player FROM edge_blind_plays ORDER BY sport, n")
+        plays = cur.fetchall()
+    conn.rollback()
+    return ledger_rows, plays
+
+
+def test_reset_dry_run_deletes_unposted_plays_and_dry_run_rows(conn, monkeypatch, capsys):
+    from src.config import settings
+    from src.edge.social import __main__ as cli
+    monkeypatch.setattr(settings, "social_dry_run", True)
+    tomorrow = (TIP + timedelta(days=1)).isoformat()
+    picks = [pick("A One", "e1"), pick("B Two", "e2"), {**pick("C Three", "e3"), "commence_time": tomorrow},
+             {**pick("D Four", "e4"), "commence_time": tomorrow}]
+    assert blind.record(conn, "nba", picks, panels(*picks), NOW) == [1, 2, 3, 4]
+    assert blind.record(conn, "nfl", [picks[0]], panels(picks[0]), NOW) == [1]
+    _ledger(conn, "nba", "blind", "blind:nba:1", "posted")
+    _ledger(conn, "nba", "blind", "blind:nba:2", "dry_run")
+    _ledger(conn, "nba", "blind", "blind:nba:3", "skipped")  # 4: no ledger row at all
+    _ledger(conn, "nba", "receipt", "receipt:blind:nba:3", "skipped")
+    _ledger(conn, "nba", "cheatsheet", "cheatsheet:nba:2026-11-16", "dry_run")
+    _ledger(conn, "nba", "value", "value:nba:2026-11-15", "posted")
+    _ledger(conn, "nfl", "blind", "blind:nfl:1", "dry_run")
+    out = cli.reset_dry_run(conn, "nba")
+    assert out == {"plays": 3, "ledger": 4}
+    ledger_rows, plays = _keys(conn)
+    assert plays == [("nba", 1, "A One"), ("nfl", 1, "A One")]  # the posted play and the other sport stay
+    assert ledger_rows == [("blind", "blind:nba:1", "posted"), ("blind", "blind:nfl:1", "dry_run"),
+                           ("value", "value:nba:2026-11-15", "posted")]
+    # live numbering continues after the last real post, and the freed key posts again
+    nxt = {**pick("E Five", "e5"), "commence_time": (TIP + timedelta(days=2)).isoformat()}
+    assert blind.record(conn, "nba", [nxt], panels(nxt), NOW) == [2]
+
+
+def test_reset_dry_run_cli_prints_counts(conn, monkeypatch, capsys):
+    from src.config import settings
+    from src.edge import store
+    from src.edge.social import __main__ as cli
+    monkeypatch.setattr(settings, "social_dry_run", True)
+    a = pick()
+    blind.record(conn, "nba", [a], panels(a), NOW)
+    _ledger(conn, "nba", "blind", "blind:nba:1", "dry_run")
+    monkeypatch.setattr(store, "connect", lambda: psycopg2.connect(URL))
+    cli.main(["reset-dry-run", "--sport", "nba"])
+    assert "deleted 1 blind play(s) and 1 ledger row(s) for nba" in capsys.readouterr().out
+    assert _keys(conn) == ([], [])
+
+
+def test_reset_dry_run_refuses_in_live_mode_after_a_live_post(conn, monkeypatch):
+    from src.config import settings
+    from src.edge.social import __main__ as cli
+    monkeypatch.setattr(settings, "social_dry_run", False)
+    a, b = pick("A One", "e1"), pick("B Two", "e2")
+    blind.record(conn, "nba", [a, b], panels(a, b), NOW)
+    _ledger(conn, "nba", "blind", "blind:nba:1", "dry_run", NOW)
+    _ledger(conn, "nba", "cheatsheet", "cheatsheet:nba:2026-11-16", "posted", NOW + timedelta(hours=1))
+    before = _keys(conn)
+    with pytest.raises(cli.ResetRefused):
+        cli.reset_dry_run(conn, "nba")
+    assert _keys(conn) == before  # nothing deleted
+    # a live post older than everything it would delete is fine
+    with conn.cursor() as cur:
+        cur.execute("UPDATE edge_social_posts SET created_at = %s WHERE status = 'posted'", (NOW - timedelta(days=1),))
+    conn.commit()
+    assert cli.reset_dry_run(conn, "nba") == {"plays": 2, "ledger": 1}
+
+
+def test_reset_dry_run_keeps_a_play_with_a_live_post_in_flight(conn, monkeypatch):
+    from src.config import settings
+    from src.edge.social import __main__ as cli
+    monkeypatch.setattr(settings, "social_dry_run", True)
+    a, b = pick("A One", "e1"), pick("B Two", "e2")
+    blind.record(conn, "nba", [a, b], panels(a, b), NOW)
+    _ledger(conn, "nba", "blind", "blind:nba:1", "unknown")
+    _ledger(conn, "nba", "blind", "blind:nba:2", "pending")
+    assert cli.reset_dry_run(conn, "nba") == {"plays": 0, "ledger": 0}
