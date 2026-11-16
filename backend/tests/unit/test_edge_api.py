@@ -250,3 +250,11 @@ def test_blind_routes(monkeypatch):
     assert client.get(f"{P}/blind/1").json()["player"] == "A One"  # the name is returned: the reveal
     assert client.get(f"{P}/blind/99").status_code == 404
     edge_api._cache.clear()
+
+
+def test_blind_play_number_out_of_range_is_a_client_error(monkeypatch):
+    monkeypatch.setattr(edge_api, "_conn", _fake_conn)
+    edge_api._reset_limits()
+    client = TestClient(app)
+    assert client.get(f"{P}/blind/0").status_code == 422
+    assert client.get(f"{P}/blind/{2**40}").status_code == 422

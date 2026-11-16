@@ -13,7 +13,7 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
@@ -225,7 +225,7 @@ def get_blind(sp: SportConfig = Depends(_sport)) -> dict:
 
 
 @router.get("/blind/{n}")
-def get_blind_play(n: int, sp: SportConfig = Depends(_sport)) -> dict:
+def get_blind_play(n: int = Path(ge=1, le=2**31 - 1), sp: SportConfig = Depends(_sport)) -> dict:
     def build(c, now):
         play = blind.detail(c, sp.slug, n)
         if play is None:

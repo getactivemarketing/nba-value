@@ -55,10 +55,41 @@ def test_record_numbers_per_sport_and_never_duplicates_a_bet(conn):
     a, b = pick("A One", "e1"), pick("B Two", "e2")
     assert blind.record(conn, "nba", [a, b], panels(a, b), NOW) == [1, 2]
     again = {**a, "book": "betmgm", "price": 120}  # same bet at another book
-    c = pick("A One", "e1", line=21.5)
-    assert blind.record(conn, "nba", [again, c], panels(c), NOW) == [3]
-    assert blind.record(conn, "nba", [a, b, c], panels(a, b, c), NOW) == []
+    assert blind.record(conn, "nba", [again], panels(a), NOW) == []
+    assert blind.record(conn, "nba", [a, b], panels(a, b), NOW) == []
     assert blind.record(conn, "nfl", [a], panels(a), NOW) == [1]  # numbering is per sport
+
+
+def test_one_play_per_game_across_ticks(conn):
+    a = pick("A One", "e1")
+    other = pick("C Three", "e1")  # same game, other player
+    assert blind.record(conn, "nba", [a], panels(a), NOW) == [1]
+    assert blind.record(conn, "nba", [other], panels(other), NOW) == []
+
+
+def test_one_play_per_player_per_slate_across_ticks(conn):
+    a = pick("A One", "e1")
+    again = pick("A One", "e2", line=21.5)  # same player, same slate, different game/line
+    assert blind.record(conn, "nba", [a], panels(a), NOW) == [1]
+    assert blind.record(conn, "nba", [again], panels(again), NOW) == []
+    tomorrow = {**again, "commence_time": (TIP + timedelta(days=1)).isoformat()}
+    assert blind.record(conn, "nba", [tomorrow], panels(tomorrow), NOW) == [2]
+
+
+def test_slate_stops_at_three_plays(conn):
+    picks = [pick(f"P{i}", f"g{i}") for i in range(5)]
+    assert blind.record(conn, "nba", picks[:2], panels(*picks), NOW) == [1, 2]
+    assert blind.record(conn, "nba", picks[2:], panels(*picks), NOW) == [3]
+    nxt = {**picks[0], "player": "Q", "event_id": "g9", "commence_time": (TIP + timedelta(days=1)).isoformat()}
+    assert blind.record(conn, "nba", [nxt], panels(nxt), NOW) == [4]  # a new slate starts fresh
+
+
+def test_failed_insert_rolls_back_and_raises(conn):
+    a = pick("A One", "e1")
+    bad = {**pick("B Two", "e2"), "price": None}  # NOT NULL violation
+    with pytest.raises(psycopg2.Error):
+        blind.record(conn, "nba", [a, bad], panels(a, bad), NOW)
+    assert blind.record(conn, "nba", [a], panels(a), NOW) == [1]  # the connection is usable and nothing leaked
 
 
 def test_detail_reveals_name_and_never_a_wrong_face(conn):
@@ -86,7 +117,7 @@ def test_result_joins_grading_from_any_book(conn):
     r = blind.result(conn, "nba", 1)
     assert r["result"] == "win" and r["profit_units"] == pytest.approx(1.16)
     out = blind.listing(conn, "nba")
-    assert out["record"] == {"n": 1, "wins": 1, "losses": 0, "pushes": 0, "units": 1.16}
+    assert out["record"] == {"n": 1, "wins": 1, "losses": 0, "pushes": 0, "voids": 0, "units": 1.16}
     assert out["plays"][0]["result"] == "win"
 
 

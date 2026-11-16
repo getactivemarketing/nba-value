@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 
 MIN_BEFORE_TIP = timedelta(minutes=60)
 MAX_PLAYS = 3
+MAX_PER_SLATE = 3  # plays per (sport, slate_date), across ticks
 LIST_LIMIT = 60
 BOOK_NAMES = {
     "draftkings": "DraftKings", "fanduel": "FanDuel", "betmgm": "BetMGM", "williamhill_us": "Caesars",
@@ -89,8 +90,8 @@ def build_panels(conn, sport: str, rows: list[dict], now: datetime) -> dict[tupl
             return _nba_panels(conn, props, now)
         if sport == "nfl":
             return _nfl_panels(conn, props, now)
-    except Exception as e:  # noqa: BLE001 - no context, no blind plays
-        log.error("blind panels unavailable for %s: %s", sport, e)
+    except Exception:  # noqa: BLE001 - no context, no blind plays
+        log.exception("blind panels unavailable for %s", sport)
         try:
             conn.rollback()
         except Exception:  # noqa: BLE001
@@ -140,31 +141,44 @@ def _nfl_panels(conn, props: list[dict], now: datetime) -> dict[tuple, object]:
 # ---- storage --------------------------------------------------------------------------------
 
 def record(conn, sport: str, picks: list[dict], panels: dict[tuple, object], now: datetime) -> list[int]:
-    """Store picks as the next play numbers of `sport` and return the new numbers. A bet already
-    recorded (any book) is skipped, so a re-run never double-posts a number."""
+    """Store picks as the next play numbers of `sport` and return the new numbers. Skipped: a bet
+    already recorded (any book), a game or a player that already has a play that slate, and anything
+    past MAX_PER_SLATE plays for the slate, so repeated ticks never exceed the daily limits."""
     new: list[int] = []
-    with conn.cursor() as cur:
-        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"edge_blind_plays:{sport}",))
-        for r in picks:
-            cur.execute("""SELECT 1 FROM edge_blind_plays WHERE sport = %s AND event_id = %s AND market = %s
-                           AND player = %s AND side = %s AND line = %s""",
-                        (sport, r["event_id"], r["market"], r["player"], r["side"], r["line"]))
-            if cur.fetchone():
-                continue
-            cur.execute("SELECT COALESCE(MAX(n), 0) + 1 FROM edge_blind_plays WHERE sport = %s", (sport,))
-            n = cur.fetchone()[0]
-            panel = panels.get(panel_key(r))
-            tip = _tip(r)
-            cur.execute(
-                """INSERT INTO edge_blind_plays (sport, n, slate_date, event_id, market, market_label, player,
-                       side, line, book, price, fair_prob, ev, n_books, form, position, panel, commence_time,
-                       created_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (sport, n, et_date(tip), r["event_id"], r["market"], r["market_label"], r["player"], r["side"],
-                 r["line"], r["book"], r["price"], r["fair_prob"], r["ev"], r["n_books"],
-                 Json(r["form"]) if r.get("form") else None, r.get("position"),
-                 Json(dataclasses.asdict(panel)) if panel is not None else None, tip, now))
-            new.append(n)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"edge_blind_plays:{sport}",))
+            for r in picks:
+                tip = _tip(r)
+                day = et_date(tip)
+                cur.execute("""SELECT
+                    count(*) FILTER (WHERE slate_date = %s),
+                    count(*) FILTER (WHERE event_id = %s),
+                    count(*) FILTER (WHERE slate_date = %s AND player = %s),
+                    count(*) FILTER (WHERE event_id = %s AND market = %s AND player = %s AND side = %s
+                                     AND line = %s)
+                    FROM edge_blind_plays WHERE sport = %s""",
+                            (day, r["event_id"], day, r["player"], r["event_id"], r["market"], r["player"],
+                             r["side"], r["line"], sport))
+                slate, game, player, same = cur.fetchone()
+                if slate >= MAX_PER_SLATE or game or player or same:
+                    continue
+                cur.execute("SELECT COALESCE(MAX(n), 0) + 1 FROM edge_blind_plays WHERE sport = %s", (sport,))
+                n = cur.fetchone()[0]
+                panel = panels.get(panel_key(r))
+                cur.execute(
+                    """INSERT INTO edge_blind_plays (sport, n, slate_date, event_id, market, market_label,
+                           player, side, line, book, price, fair_prob, ev, n_books, form, position, panel,
+                           commence_time, created_at)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (sport, n, day, r["event_id"], r["market"], r["market_label"], r["player"], r["side"],
+                     r["line"], r["book"], r["price"], r["fair_prob"], r["ev"], r["n_books"],
+                     Json(r["form"]) if r.get("form") else None, r.get("position"),
+                     Json(dataclasses.asdict(panel)) if panel is not None else None, tip, now))
+                new.append(n)
+    except Exception:
+        conn.rollback()
+        raise
     conn.commit()
     return new
 
@@ -189,15 +203,16 @@ class BlindCard:
     panel: dict | None
 
 
-def tip_label(tip: datetime, slate_tips: list[datetime]) -> str:
-    """ET tip time, unless this is the only game at that time (a time that narrows it to one game)."""
-    if sum(1 for t in slate_tips if t == tip) <= 1:
+def tip_label(tip: datetime, slate_tips: dict[str, datetime]) -> str:
+    """ET tip time, unless this is the only game at that time (a time that narrows it to one game).
+    `slate_tips` maps event_id -> tip, so props from one game count once."""
+    if sum(1 for t in slate_tips.values() if t == tip) <= 1:
         return "Tonight"
     local = tip.astimezone(ET)
     return f"{local.strftime('%I:%M %p').lstrip('0')} ET"
 
 
-def to_card(play: dict, slate_tips: list[datetime]) -> BlindCard:
+def to_card(play: dict, slate_tips: dict[str, datetime]) -> BlindCard:
     form = play.get("form") or {}
     return BlindCard(
         sport=play["sport"], n=play["n"], position=play.get("position"), market_label=play["market_label"],
@@ -245,8 +260,8 @@ def _plays(conn, sport: str, n: int | None, limit: int) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
-def _identity(conn, sport: str, plays: list[dict]) -> dict[str, tuple[str | None, int | None]]:
-    """{odds_name: (team, espn_id)} for the plays' players. Both are None unless the roster team and
+def _identity(conn, sport: str, plays: list[dict]) -> dict[int, tuple[str | None, int | None]]:
+    """{play n: (team, espn_id)} for the plays' players. Both are None unless the roster team and
     the headshot row's team agree and are one of the game's teams: never a wrong face."""
     names = sorted({p["player"] for p in plays})
     if not names:
@@ -262,13 +277,13 @@ def _identity(conn, sport: str, plays: list[dict]) -> dict[str, tuple[str | None
         shots = {name: (team, eid) for name, team, eid in cur.fetchall()}
     conn.rollback()
     abbr = ABBR_BY_NAME if sport == "nba" else NFL_ABBR_BY_NAME
-    out: dict[str, tuple[str | None, int | None]] = {}
+    out: dict[int, tuple[str | None, int | None]] = {}
     for p in plays:
         in_game = {abbr.get(p["home_team"]), abbr.get(p["away_team"])}
         cands = rosters.get(p["player"], set()) & in_game
         team = next(iter(cands)) if len(cands) == 1 else None
         shot = shots.get(p["player"])
-        out[p["player"]] = (team, shot[1] if shot and team and shot[0] == team else None)
+        out[p["n"]] = (team, shot[1] if shot and team and shot[0] == team else None)
     return out
 
 
@@ -304,18 +319,18 @@ def _record(conn, sport: str) -> dict:
         rows = [(r, p) for r, p in cur.fetchall() if r in ("win", "loss", "push", "void")]
     conn.rollback()
     return {"n": len(rows), "wins": sum(r == "win" for r, _ in rows), "losses": sum(r == "loss" for r, _ in rows),
-            "pushes": sum(r == "push" for r, _ in rows),
+            "pushes": sum(r == "push" for r, _ in rows), "voids": sum(r == "void" for r, _ in rows),
             "units": round(sum(profit_units(r, int(p)) for r, p in rows), 2)}
 
 
 def listing(conn, sport: str) -> dict:
     plays = _plays(conn, sport, None, LIST_LIMIT)
     who = _identity(conn, sport, plays)
-    return {"plays": [_out(p, who[p["player"]]) for p in plays], "record": _record(conn, sport)}
+    return {"plays": [_out(p, who[p["n"]]) for p in plays], "record": _record(conn, sport)}
 
 
 def detail(conn, sport: str, n: int) -> dict | None:
     plays = _plays(conn, sport, n, 1)
     if not plays:
         return None
-    return _out(plays[0], _identity(conn, sport, plays)[plays[0]["player"]])
+    return _out(plays[0], _identity(conn, sport, plays)[plays[0]["n"]])
