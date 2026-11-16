@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     social_kinds: str = "cheatsheet,value,blind,final,receipt"  # comma list
     social_max_per_day: int = 25
     social_max_per_hour: int = 6
+    social_show_records: bool = True  # W-L records on final cards; off if they disagree with real standings
     site_url: str = "https://www.truline.app"
 
     # API Settings

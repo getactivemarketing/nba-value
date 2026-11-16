@@ -675,3 +675,20 @@ async def test_a_skipped_blind_play_does_not_use_up_the_pass(world):
     p = FakePoster(dry_run=True)
     await step(NOV16_11ET, p)
     assert world.ledger.statuses("blind") == {"blind:nba:1": "skipped", "blind:nba:2": "dry_run"}
+
+
+@pytest.mark.parametrize("show", [True, False])
+async def test_final_card_records_follow_the_setting(world, monkeypatch, show):
+    """Ruling 30: SOCIAL_SHOW_RECORDS off draws no W-L records (they may not match real standings)."""
+    monkeypatch.setattr(settings, "social_show_records", show)
+    world.ledger.rows[("blind", "blind:nba:1")] = {"id": 99, "status": "posted", "image": None, "post_url": None}
+    world.final_events = [_event()]
+    monkeypatch.setattr(content, "posted_plays", lambda conn, eid: [
+        {"kind": "blind", "sport": "nba", "n": 1, "player": "A One", "market": "player_points",
+         "market_label": "Points", "side": "over", "line": 20.5, "price": 116, "result": "win", "profit_units": 1.16}])
+    recs = {"BOS": {"w": 9, "l": 3, "t": 0, "games": 12, "label": "9-3"}}
+    monkeypatch.setattr(content, "team_records", lambda conn, sport, start: recs)
+    got = []
+    monkeypatch.setattr(cards, "render_final", lambda event, records, *a, **k: got.append(records) or b"png")
+    await step(TIP + timedelta(hours=3), FakePoster())
+    assert got == [recs if show else {}]

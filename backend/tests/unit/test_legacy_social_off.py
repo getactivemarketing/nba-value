@@ -21,6 +21,7 @@ def test_legacy_social_thread_starts_only_when_flag_on(monkeypatch):
 def test_social_defaults():
     s = Settings()
     assert s.social_dry_run is True and s.social_max_per_day == 25 and s.social_max_per_hour == 6
+    assert s.social_show_records is True
     assert s.legacy_social_enabled is False
     assert s.social_sports == "nba"
     assert s.social_kinds == "cheatsheet,value,blind,final,receipt"

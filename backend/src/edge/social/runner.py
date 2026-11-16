@@ -603,8 +603,9 @@ class _Pass:
                 continue  # nothing of ours in it, or not graded yet: wait
             if not safety.final_ok(event, _second_source(self.conn, sport, event)):
                 continue  # not final or the scores disagree: wait, never post
-            if not records:
-                records.append(content.team_records(self.conn, sport, content.SEASON_START[sport]))
+            if not records:  # SOCIAL_SHOW_RECORDS off: the card draws no W-L records
+                records.append(content.team_records(self.conn, sport, content.SEASON_START[sport])
+                               if settings.social_show_records else {})
             await self.guarded(key, self.final_one, sport, key, event, plays, records[0])
 
     async def final_one(self, sport: str, key: str, event: dict, plays: list[dict], records: dict) -> None:
