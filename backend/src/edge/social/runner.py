@@ -533,8 +533,10 @@ class _Pass:
         return last is None or self.now - last >= BLIND_MIN_GAP
 
     async def blind(self, sport: str, live) -> None:
-        # Gate, switch, brake, window and spacing are checked before record(): a play is only
-        # numbered when it can post now. Staggered: one blind post per pass, BLIND_MIN_GAP apart.
+        """At most one blind post per pass, BLIND_MIN_GAP apart, inside BLIND_WINDOW. Gate, switch,
+        brake, window and spacing are checked before anything is numbered. A play recorded on an
+        earlier pass but never settled (the worker died before posting) goes first; otherwise the
+        best qualifying candidate is recorded, alone, right before it is posted."""
         if (not ledger.enabled("blind", sport) or _gate(self.conn, sport) != "pass" or self.stopped()
                 or self.brake(sport)):
             return
@@ -543,23 +545,32 @@ class _Pass:
         if not _blind_due(self.conn, sport, self.now):
             return
         rows = live()
+        current = {(*_bet_key(r), r["book"]): r for r in rows}
+        tips: dict[date, dict] = {}
+        if await self.post_recorded(sport, current, tips) or self.stopped():
+            return
         top5 = {l["player"] for l in _top_legs(self.conn, sport, self.today)}
         if sport in VALUE_SPORTS:  # not locked yet: today's likely 5 (no value post, nothing to keep off)
             top5 |= {r["player"] for r in nightly.top_picks(nightly.eligible(rows))}
         panels = blind.build_panels(self.conn, sport, rows, self.now)
-        picks = blind.select(rows, top5, panels, self.now)
-        if picks:
-            blind.record(self.conn, sport, picks, panels, self.now)
-        current = {(*_bet_key(r), r["book"]): r for r in rows}
-        tips: dict[date, dict] = {}
+        for pick in blind.select(rows, top5, panels, self.now):
+            if blind.record(self.conn, sport, [pick], panels, self.now):  # [] = refused (slate limits)
+                await self.post_recorded(sport, current, tips)
+                return
+
+    async def post_recorded(self, sport: str, current: dict, tips: dict) -> bool:
+        """Post the first recorded, unsettled, not-yet-started blind play that goes out; earlier ones
+        that fail their checks are skipped. True once one was posted (or dry-run posted)."""
         for play in _blind_to_post(self.conn, sport, self.now):
-            n = play["n"]
-            key = f"blind:{sport}:{n}"
+            key = f"blind:{sport}:{play['n']}"
             if self.settled("blind", key):
                 continue
             status = await self.guarded(key, self.blind_one, sport, key, play, current, tips)
             if status in ("posted", "dry_run"):
-                return  # one blind post per pass; the next waits BLIND_MIN_GAP
+                return True
+            if self.stopped():
+                return False
+        return False
 
     async def blind_one(self, sport: str, key: str, play: dict, current: dict, tips: dict) -> str:
         async def build():

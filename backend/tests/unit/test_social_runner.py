@@ -75,6 +75,7 @@ class World:
         self.unknown_noted = []
         self.blind_players_today, self.cheatsheet_exclude = set(), None
         self.last_blind = None  # when the sport's last blind play went out (posted or dry run)
+        self.record_calls, self.record_rejects = [], set()
 
 
 def _play(n=1, **kw):
@@ -128,8 +129,12 @@ def world(monkeypatch):
     monkeypatch.setattr(blind, "select", lambda rows, top5, panels, now: [r for r in rows if r.get("pick")])
 
     def record(conn, sport, picks, panels, now):
-        w.recorded.extend(picks)
-        return [len(w.recorded)] if picks else []
+        w.record_calls.append([p["player"] for p in picks])
+        ok = [p for p in picks if p["player"] not in w.record_rejects]  # record()'s cross-tick limits
+        w.recorded.extend(ok)
+        ns = list(range(len(w.recorded) - len(ok) + 1, len(w.recorded) + 1))
+        w.blind_plays.extend(_play(n, player=p["player"], event_id=p["event_id"]) for n, p in zip(ns, ok))
+        return ns
     monkeypatch.setattr(blind, "record", record)
     for name in ("render_blind", "render_cheatsheet", "render_value", "render_final", "render_receipt"):
         monkeypatch.setattr(cards, name, lambda *a, _n=name, **k: f"png:{_n}".encode())
@@ -193,7 +198,6 @@ async def test_blind_waits_for_gate_pass(world):
         await step(NOV16_11ET, p)
         assert world.recorded == [] and p.calls == []
     world.gate = "pass"
-    world.blind_plays = [_play()]
     await step(NOV16_11ET, p)
     assert len(world.recorded) == 1
     assert world.ledger.statuses("blind") == {"blind:nba:1": "posted"}
@@ -720,3 +724,60 @@ def test_blind_receipt_and_final_and_cheatsheet_wording():
         f"\n\n{site}/?utm_source=x&utm_medium=social&utm_campaign=final")
     assert content.cheatsheet_text("nba", DAY).endswith(
         f"\n\n{site}/?utm_source=x&utm_medium=social&utm_campaign=cheatsheet")
+
+
+
+# ---- Ruling 33: record one blind play per pass, right before posting it -----------------------
+
+def _three_candidates(world):
+    world.live_rows = [_live(pick=True), _live(pick=True, player="B Two", event_id="e2"),
+                       _live(pick=True, player="C Three", event_id="e3")]
+
+
+async def test_three_candidates_record_one_play_per_pass(world):
+    _three_candidates(world)
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert world.record_calls == [["A One"]] and [r["player"] for r in world.recorded] == ["A One"]
+    assert world.ledger.statuses("blind") == {"blind:nba:1": "posted"}  # recorded and posted in one pass
+    world.last_blind = NOV16_11ET
+    world.record_rejects = {"A One"}  # record() refuses a player already on the slate
+    await step(NOV16_11ET + timedelta(minutes=20), p)
+    assert world.record_calls == [["A One"], ["A One"], ["B Two"]]
+    assert [r["player"] for r in world.recorded] == ["A One", "B Two"]  # one more, not two
+    assert world.ledger.statuses("blind") == {"blind:nba:1": "posted", "blind:nba:2": "posted"}
+
+
+async def test_record_is_called_with_one_pick_and_tries_the_next_when_refused(world):
+    _three_candidates(world)
+    world.record_rejects = {"A One"}  # e.g. A One already has a play this slate
+    await step(NOV16_11ET, FakePoster())
+    assert world.record_calls == [["A One"], ["B Two"]]
+    assert [r["player"] for r in world.recorded] == ["B Two"]
+
+
+async def test_the_recorded_play_posts_in_the_same_pass(world):
+    _three_candidates(world)
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert len(world.recorded) == 1 and len(p.calls) == 1 and "Blind Play #1" in p.calls[0][0][0]
+    assert world.ledger.statuses("blind") == {"blind:nba:1": "posted"}
+
+
+async def test_an_unposted_recorded_play_posts_before_anything_new_is_recorded(world):
+    """Crash-safe: a play recorded on an earlier pass (worker died before posting) goes first."""
+    _three_candidates(world)
+    world.blind_plays = [_play(1)]
+    p = FakePoster()
+    await step(NOV16_11ET, p)
+    assert world.record_calls == [] and world.ledger.statuses("blind") == {"blind:nba:1": "posted"}
+
+
+@pytest.mark.parametrize("opens, closes", WINDOW_EDGES)
+async def test_nothing_recorded_outside_the_window_or_inside_the_gap(world, opens, closes):
+    _three_candidates(world)
+    await step(opens - timedelta(minutes=1), FakePoster())
+    await step(closes, FakePoster())
+    world.last_blind = opens + timedelta(hours=1)
+    await step(opens + timedelta(hours=1, minutes=19), FakePoster())
+    assert world.record_calls == [] and world.recorded == []
