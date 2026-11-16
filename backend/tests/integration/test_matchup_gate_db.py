@@ -103,3 +103,36 @@ def test_gate_end_to_end_small_dataset(conn, tmp_path, monkeypatch):
     assert rc == 0
     assert "Position coverage: 100.00%" in report.read_text() and "Verdict: PASS" in report.read_text()
     assert store.get_state(conn)["social_blind_gate:nba"] == "pass"
+
+
+def _nfl_bet(conn, eid, player, clv, tags, sport="americanfootball_nfl", result="win", closed=True, clv_null=False):
+    import json
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO edge_events (event_id, sport, home_team, away_team, commence_time, status, completed)
+                       VALUES (%s, %s, 'Denver Broncos', 'Kansas City Chiefs', %s, 'scheduled', TRUE)
+                       ON CONFLICT DO NOTHING""", (eid, sport, datetime(2026, 11, 8, 18, tzinfo=timezone.utc)))
+        cur.execute("""INSERT INTO edge_opportunities (event_id, market, player, side, line, book, price,
+                       first_seen_at, last_seen_at, fair_prob, ev, max_ev, n_books, devig_method, closing_done,
+                       clv, result, profit_units, tags)
+                       VALUES (%s,'player_pass_yds',%s,'over',250.5,'fanduel',-110,%s,%s,0.5,0.05,0.05,5,'power',
+                               %s,%s,%s,0.9,%s::jsonb)""",
+                    (eid, player, T0, T0, closed, None if clv_null else clv, result, json.dumps(tags)))
+    conn.commit()
+
+
+def test_nfl_loader_and_evaluate(conn):
+    soft = [{"key": "def_soft", "direction": "tailwind", "detail": "x"}]
+    other = [{"key": "usage_up", "direction": "tailwind", "detail": "x"}]
+    _nfl_bet(conn, "n1", "Fav QB", 0.03, soft)
+    _nfl_bet(conn, "n2", "Rest QB", -0.01, other)
+    _nfl_bet(conn, "n3", "Ungraded QB", 0.5, soft, result=None)
+    _nfl_bet(conn, "n4", "Void QB", 0.5, soft, result="void")
+    _nfl_bet(conn, "n5", "Open QB", 0.5, soft, closed=False)
+    _nfl_bet(conn, "n6", "NoClv QB", 0.5, soft, clv_null=True)
+    _nfl_bet(conn, "n7", "NBA Guy", 0.5, soft, sport="basketball_nba")
+    rows = mg.load_nfl_opportunities(conn, 2026)
+    assert sorted(r["player"] for r in rows) == ["Fav QB", "Rest QB"]
+    out = mg.evaluate_nfl(conn, 2026)
+    assert [b["player"] for b in out["fav"]] == ["Fav QB"]
+    assert [b["player"] for b in out["rest"]] == ["Rest QB"]
+    assert out["gate"]["pass"] and out["gate"]["n_fav"] == 1

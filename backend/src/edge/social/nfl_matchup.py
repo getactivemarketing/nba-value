@@ -29,6 +29,7 @@ class NflPanel:
 
 
 def panel(row: dict, ctx: matchups.TagContext) -> NflPanel:
+    """Context numbers for one row. Uses the context's current week (live use), not the row's game week."""
     tags = [t["key"] for t in row.get("tags") or []]
     opp_rank = share_l4 = None
     teams = tagging.event_teams(row.get("home_team", ""), row.get("away_team", ""))
