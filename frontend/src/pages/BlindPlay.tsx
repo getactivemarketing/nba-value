@@ -1,6 +1,7 @@
 // frontend/src/pages/BlindPlay.tsx
 import { Link, useParams } from 'react-router-dom';
 import { useState } from 'react';
+import { isAxiosError } from 'axios';
 import { useBlindPlay } from '@/hooks/useEdge';
 import { EdgeFooter } from '@/components/edge/EdgeFooter';
 import { EmailSignup } from '@/components/edge/EmailSignup';
@@ -117,12 +118,30 @@ function Reveal({ play, sport }: { play: BlindPlayData; sport: Sport }) {
   );
 }
 
+function LoadError({ onRetry, retrying }: { onRetry: () => void; retrying: boolean }) {
+  return (
+    <div className="text-center py-12 font-mono">
+      <h1 className="text-xl font-black text-[#f1f5f9]">Couldn't load this play — try again</h1>
+      <p className="mt-2 text-sm text-[#94a3b8]">Something went wrong on our end or with the connection.</p>
+      <button type="button" onClick={onRetry} disabled={retrying}
+              className="mt-4 px-4 py-2 rounded border border-[#1e293b] text-sm text-[#a4e6ff] hover:bg-[#191c22] disabled:opacity-50">
+        {retrying ? 'Loading…' : 'Try again'}
+      </button>
+    </div>
+  );
+}
+
+const isNotFound = (error: unknown) => isAxiosError(error) && error.response?.status === 404;
+
 export function BlindPlay() {
   const { sport: rawSport = '', n = '' } = useParams();
   const sport = rawSport.toLowerCase();
   const valid = (sport === 'nba' || sport === 'nfl') && /^[1-9]\d*$/.test(n);
-  const { data, isLoading, isError } = useBlindPlay(valid ? (sport as Sport) : 'nba', valid ? Number(n) : 0);
-  if (!valid || isError) return <NotFound />;
+  const { data, isLoading, isError, error, refetch, isFetching } =
+    useBlindPlay(valid ? (sport as Sport) : 'nba', valid ? Number(n) : 0);
+  if (!valid || (isError && isNotFound(error))) return <NotFound />;
+  // 5xx or network: the play may exist, so offer a retry instead of "not found"
+  if (isError) return <LoadError onRetry={() => { void refetch(); }} retrying={isFetching} />;
   if (isLoading || !data) return <div className="text-center py-8 text-[#64748b] font-mono text-sm">Loading…</div>;
   return <Reveal play={data} sport={sport as Sport} />;
 }

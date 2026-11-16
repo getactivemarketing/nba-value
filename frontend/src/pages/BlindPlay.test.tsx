@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AxiosError, type AxiosResponse } from 'axios';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -90,9 +91,26 @@ describe('BlindPlay', () => {
   });
 
   it('shows a friendly not-found state on 404', async () => {
-    vi.spyOn(edgeApi, 'blindPlay').mockRejectedValue(new Error('404'));
+    vi.spyOn(edgeApi, 'blindPlay').mockRejectedValue(
+      new AxiosError('Request failed with status code 404', 'ERR_BAD_REQUEST', undefined, undefined,
+        { status: 404 } as AxiosResponse));
     wrap('/blind/nba/99');
     await waitFor(() => expect(screen.getByText(/couldn't find that play/i)).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /try again/i })).toBeNull();
+  });
+
+  it.each([
+    ['a server error', new AxiosError('Request failed with status code 503', 'ERR_BAD_RESPONSE', undefined, undefined,
+      { status: 503 } as AxiosResponse)],
+    ['a network error', new AxiosError('Network Error', 'ERR_NETWORK')],
+  ])('offers a retry, not not-found, on %s', async (_, err) => {
+    const spy = vi.spyOn(edgeApi, 'blindPlay').mockRejectedValueOnce(err).mockResolvedValue(play());
+    wrap('/blind/nba/7');
+    await waitFor(() => expect(screen.getByText(/couldn't load this play — try again/i)).toBeTruthy());
+    expect(screen.queryByText(/couldn't find that play/i)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+    await waitFor(() => screen.getByRole('heading', { name: /jalen brunson/i }));
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 
   it('signs visitors up with source blind_reveal', async () => {
