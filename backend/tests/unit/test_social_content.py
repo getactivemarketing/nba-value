@@ -154,10 +154,23 @@ def test_cheatsheet_lists_a_bet_offered_at_several_books_once_at_its_best_price(
     assert len(out) == 6
     star = [r for r in out if r["player"] == "Star"]
     assert len(star) == 1 and (star[0]["book"], star[0]["price"]) == ("draftkings", 120)
-    # a different line or side for the same player is a different bet
+    # a different line or side for the same player is a different bet, but the sheet names a player once
     rows.append(_ev_row("Star", "fanduel", 100, 0.02, 1, line=24.5))
-    assert len([r for r in content.cheatsheet_rows(rows, g) if r["player"] == "Star"]) == 2
+    assert len([r for r in content.cheatsheet_rows(rows, g) if r["player"] == "Star"]) == 1
 
+
+def test_cheatsheet_names_each_player_once_keeping_the_best_ranked_row():
+    g = {i: games(8) for i in range(1, 7)}
+    g[1] = games(9)  # Star: over 20.5 and over 14.5 hit 9/10, under 20.5 hits 1/10
+    star = [_ev_row("Star", "fanduel", 100, 0.03, 1, line=20.5), _ev_row("Star", "fanduel", 100, 0.08, 1, line=14.5),
+            _ev_row("Star", "fanduel", 100, 0.05, 1, side="under")]
+    others = [_ev_row(f"P{i}", "fanduel", 100, 0.02, i, event_id=f"e{i}") for i in range(2, 6)]
+    assert content.cheatsheet_rows(star + others, g) == []  # 5 players: Star's extra bets don't pad it
+    others.append(_ev_row("P6", "fanduel", 100, 0.02, 6, event_id="e6"))
+    out = content.cheatsheet_rows(star + others, g)
+    assert len(out) == 6 and len({r["player"] for r in out}) == 6
+    kept = [r for r in out if r["player"] == "Star"][0]
+    assert (kept["line"], kept["side"]) == (14.5, "over")  # best hit rate, then best EV
 
 def test_cheatsheet_excludes_todays_blind_play_players():
     rows, g = sheet(7)

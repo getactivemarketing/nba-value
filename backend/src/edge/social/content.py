@@ -123,7 +123,7 @@ def cheatsheet_rows(rows: list[dict], games_by_player: dict[int, list[dict]], sp
                     exclude_players: set[str] | frozenset[str] = frozenset()) -> list[dict]:
     """+EV player props ranked by last-10 hit rate then EV. Each row's `l10` is recomputed from the
     player's box scores (NBA edge_player_games, NFL nfl_players.load_games rows). A bet listed at
-    several books counts once, at its best price; `exclude_players` (today's blind plays) are left
+    several books counts once, at its best price, and a player appears once; `exclude_players` (today's blind plays) are left
     out so the sheet never names a blind play. Fewer than 6 usable rows means no post: [] (a thin
     sheet looks bad)."""
     form_of = nfl_recent_form if sport == "nfl" else players.recent_form
@@ -136,7 +136,8 @@ def cheatsheet_rows(rows: list[dict], games_by_player: dict[int, list[dict]], sp
             continue
         out.append({**r, "l10": form})
     out.sort(key=lambda r: (r["l10"]["rate"], r["ev"]), reverse=True)
-    out = out[:CHEATSHEET_MAX]
+    seen: set[str] = set()  # one row per player (their best-ranked bet): repeats read as spam
+    out = [r for r in out if not (r["player"] in seen or seen.add(r["player"]))][:CHEATSHEET_MAX]
     return out if len(out) >= CHEATSHEET_MIN else []
 
 
