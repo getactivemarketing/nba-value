@@ -7,7 +7,7 @@ from src.edge import nightly
 NOW = datetime(2026, 11, 11, 23, 0, tzinfo=timezone.utc)  # 6 pm ET
 
 
-def row(player, game, book="betmgm", ev=0.05, price=110, fair=0.5, n_books=8, flag=False, verify=False,
+def row(player, game, book="betmgm", ev=0.05, price=-150, fair=0.62, n_books=8, flag=False, verify=False,
         market="player_points"):
     return {"event_id": game, "matchup": f"{game} matchup", "commence_time": "2026-11-12T00:10:00+00:00",
             "market": market, "market_label": "Points", "player": player, "side": "over", "line": 20.5,
@@ -20,6 +20,15 @@ def test_eligible_keeps_only_well_priced_props_that_are_not_cold():
     rows = [row("A", "g1"), row("B", "g2", n_books=4), row("C", "g3", flag=True), row("D", "g4", verify=True),
             row("", "g5", market="h2h")]
     assert [r["player"] for r in nightly.eligible(rows)] == ["A"]
+
+
+def test_top5_eligible_keeps_likely_winners_and_drops_suspect_big_edges():
+    # Top 5 is for a high hit rate: the model must give the bet 55%+, and edges over 10% are
+    # mostly stale or wrong lines (they hit about 5 points under their fair price).
+    rows = [row("A", "g1", fair=0.55), row("B", "g2", fair=0.549), row("C", "g3", ev=0.10),
+            row("D", "g4", ev=0.101), row("E", "g5", n_books=4)]
+    assert [r["player"] for r in nightly.top5_eligible(rows)] == ["A", "C"]
+    assert [r["player"] for r in nightly.eligible(rows)] == ["A", "B", "C", "D"]  # blind plays: no hit-rate rule
 
 
 def test_top_picks_take_the_best_edge_per_game_and_per_player():

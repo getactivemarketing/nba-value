@@ -87,7 +87,7 @@ def _play(n=1, **kw):
 
 def _live(**kw):
     return {"event_id": "e1", "market": "player_points", "player": "A One", "side": "over", "line": 20.5,
-            "book": "fanduel", "price": 116, "ev": 0.06, "commence_time": TIP.isoformat(), "n_books": 9,
+            "book": "fanduel", "price": 116, "ev": 0.06, "fair_prob": 0.49, "commence_time": TIP.isoformat(), "n_books": 9,
             "verify": False, "form_flag": False, **kw}
 
 
@@ -624,7 +624,7 @@ async def test_blind_skips_the_top5_guess_only_where_a_value_post_exists(world, 
     monkeypatch.setattr(settings, "social_sports", sport)
     seen = []
     monkeypatch.setattr(blind, "select", lambda rows, top5, panels, now: seen.append(set(top5)) or [])
-    world.live_rows = [_live()]
+    world.live_rows = [_live(fair_prob=0.6)]  # a likely winner: Top 5 material
     await step(NOV16_11ET, FakePoster())
     assert seen == [excluded]
 

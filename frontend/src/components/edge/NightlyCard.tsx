@@ -86,7 +86,7 @@ export function NightlyCard({ data }: { data: NightlyResponse }) {
         {tonight && <span className="text-[10px] font-mono text-[#64748b]">Locked {fmtTime(tonight.locked_at)}</span>}
       </div>
       <p className="mt-1 text-xs text-[#94a3b8]">
-        The night's best props: 5+ books behind the price, one per game, no cold picks.
+        The night's best likely winners: props the market gives 55%+ to hit, 5+ books behind the price, one per game, no cold picks.
         {!tonight && <> Tonight's picks lock an hour before the first game{locks_at ? ` (${fmtTime(locks_at)})` : ''}.</>}
       </p>
       {tonight && <div className="mt-3"><CardBody card={tonight} /></div>}

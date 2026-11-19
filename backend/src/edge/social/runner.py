@@ -551,7 +551,7 @@ class _Pass:
             return
         top5 = {l["player"] for l in _top_legs(self.conn, sport, self.today)}
         if sport in VALUE_SPORTS:  # not locked yet: today's likely 5 (no value post, nothing to keep off)
-            top5 |= {r["player"] for r in nightly.top_picks(nightly.eligible(rows))}
+            top5 |= {r["player"] for r in nightly.top_picks(nightly.top5_eligible(rows))}
         panels = blind.build_panels(self.conn, sport, rows, self.now)
         for pick in blind.select(rows, top5, panels, self.now):
             if blind.record(self.conn, sport, [pick], panels, self.now):  # [] = refused (slate limits)

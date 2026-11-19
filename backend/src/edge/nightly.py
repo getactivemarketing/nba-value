@@ -3,7 +3,9 @@
 the first game and graded like every other pick.
 
 Picks come from the same board rows (views.ev_rows). A pick qualifies when 5+ books set its fair
-price, it isn't marked "verify", and recent form isn't cold. Results come from the matching
+price, it isn't marked "verify", recent form isn't cold, the model gives it 55%+ to win (the card is
+built for hit rate, not the longest prices) and its edge is 10% or less (bigger edges are mostly stale
+or wrong lines: they hit about 5 points under their fair price). Results come from the matching
 edge_opportunities row: a prop's result is the same at every book and price.
 """
 from __future__ import annotations
@@ -27,6 +29,8 @@ log = logging.getLogger(__name__)
 
 LOCK_BEFORE_FIRST_TIP = timedelta(minutes=60)
 MIN_BOOKS = 5
+MIN_FAIR_PROB = 0.55
+MAX_EV = 0.10
 TOP_N = 5
 MIN_PARLAY_LEGS = 3
 LEG_FIELDS = ("event_id", "matchup", "commence_time", "market", "market_label", "player", "side", "line",
@@ -36,8 +40,14 @@ LEG_FIELDS = ("event_id", "matchup", "commence_time", "market", "market_label", 
 # ---- pure selection -------------------------------------------------------------------------
 
 def eligible(rows: list[dict]) -> list[dict]:
+    """Well-priced props that aren't cold (blind plays start from these too)."""
     return [r for r in rows if r["player"] and r["n_books"] >= MIN_BOOKS and not r["verify"]
             and not r.get("form_flag")]
+
+
+def top5_eligible(rows: list[dict]) -> list[dict]:
+    """Eligible props the Top 5 and its parlay may use: likely winners with a believable edge."""
+    return [r for r in eligible(rows) if r["fair_prob"] >= MIN_FAIR_PROB and r["ev"] <= MAX_EV]
 
 
 def one_per_game(rows: list[dict], n: int) -> list[dict]:
@@ -147,7 +157,7 @@ def maybe_lock(conn, now: datetime, sport: SportConfig = NBA) -> int:
     rows = [r for r in views.ev_rows(conn, now, sport=sport)
             if lo <= datetime.fromisoformat(r["commence_time"]) < hi]
     blind = _blind_players(conn, sport, day)
-    ok = [r for r in eligible(rows) if r["player"] not in blind]
+    ok = [r for r in top5_eligible(rows) if r["player"] not in blind]
     top, parlay = top_picks(ok), best_parlay(ok)
     if not top:
         return 0  # nothing qualifies yet; try again next tick
